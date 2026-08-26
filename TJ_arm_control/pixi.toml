@@ -1,0 +1,28 @@
+[workspace]
+name = "tj-arm-control"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+cmake = ">=3.24"
+ninja = ">=1.11"
+cxx-compiler = ">=1.9"
+libmujoco = ">=3.6,<4"
+glfw = ">=3.4,<4"
+eigen = ">=3.4,<4"
+libpinocchio = ">=3.8,<4"
+libosqp = ">=1.0,<2"
+qpoases = ">=3.2,<4"
+yaml-cpp = ">=0.8,<1"
+gtest = ">=1.15,<2"
+
+[tasks]
+configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"
+build = "cmake --build build --parallel"
+test = "ctest --test-dir build --output-on-failure"
+inspect = "./build/tianji_inspect_model models/marvin_m6_qp_test.xml"
+viewer = "./build/tianji_qp_ik_viewer --config config/qp_ik_hierarchical.yaml"
+benchmark = "./build/tianji_qp_ik_benchmark --config config/qp_ik.yaml"
+ik-ab = "./build/tianji_hierarchical_ik_benchmark --config config/qp_ik_hierarchical.yaml"
+otg-velocity-ab = "./build/tianji_cartesian_otg_benchmark --config config/qp_ik_cartesian_otg_velocity.yaml"
+pico-teleop-viewer = "./build/tianji_qp_ik_viewer --config config/qp_ik_pico_teleop.yaml --model models/marvin_m6_qp_pico_fast.xml --pico-teleop"

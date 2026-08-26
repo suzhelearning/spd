@@ -1,0 +1,3 @@
+[submodule "module/sdk_api"]
+	path = module/sdk_api
+	url = https://git.manifoldtech.cn/manifoldtech-sdk/odin-sdk2.git

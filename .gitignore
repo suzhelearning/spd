@@ -1,0 +1,51 @@
+# Build and generated environments
+**/build/
+**/install/
+**/log/
+**/.pixi/
+**/Testing/
+**/compile_commands.json
+**/*.mjb
+**/*.py[cod]
+**/__pycache__/
+**/*.egg-info/
+**/dist/
+**/*.egg
+**/*.whl
+
+# Runtime logs and temporary files
+**/*.log
+**/*.tmp
+MUJOCO_LOG.TXT
+
+# Local editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local robotics captures and generated recordings
+PICO_tracker/recordings/
+PICO_tracker/local_data/
+PICO_tracker/data/
+PICO_tracker/**/*.h5
+PICO_tracker/**/*.hdf5
+PICO_tracker/**/*.mp4
+data/spd_vr/episodes/
+data/spd_vr/checkpoints/
+
+# User-provided samples: keep contract, not payloads
+data/pico_hand_samples/raw/*
+!data/pico_hand_samples/raw/.gitkeep
+
+# Calibration and benchmark outputs
+**/calibration_user/
+**/calibration_local/
+**/benchmark_results/
+**/checkpoints/
+
+# Future long-duration collection
+**/*75h*/
+**/75h/

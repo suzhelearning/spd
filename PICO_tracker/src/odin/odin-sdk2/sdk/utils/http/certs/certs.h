@@ -1,0 +1,88 @@
+#pragma once
+
+namespace http {
+namespace certs {
+
+/* CA certificate for verifying peer certificates (mTLS) */
+static const char *TLS_CA =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDrzCCApegAwIBAgICEAAwDQYJKoZIhvcNAQELBQAwZzELMAkGA1UEBhMCQ04x\n"
+    "ETAPBgNVBAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFuZ2hhaTENMAsGA1UECgwE\n"
+    "T0RJTjERMA8GA1UECwwIU2VjdXJpdHkxEDAOBgNVBAMMB09ESU4tQ0EwIBcNNTAw\n"
+    "MTAxMDAwMDAwWhgPMjA5OTEyMzEyMzU5NTlaMGcxCzAJBgNVBAYTAkNOMREwDwYD\n"
+    "VQQIDAhTaGFuZ2hhaTERMA8GA1UEBwwIU2hhbmdoYWkxDTALBgNVBAoMBE9ESU4x\n"
+    "ETAPBgNVBAsMCFNlY3VyaXR5MRAwDgYDVQQDDAdPRElOLUNBMIIBIjANBgkqhkiG\n"
+    "9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr/LAYO0nVJpffxL2JyZzniF4n7BmK069yYlJ\n"
+    "KTTeeB54jaLDujMEjOPnfu5ojFbC5FCJKYnXQPSDy2YGpaB1PIad52fb9grUN9rO\n"
+    "eOFoPINtHfu/ZQhqRYjffA0u3CXBVY+Odx64i9iC0xp80l24fOGpac0j47TH/41U\n"
+    "KA+3fiMTGyOJ2uWKLq4EFIrIEcHW/S6ucva6OEOX0OjL4K/AyKTzzcSbV8oGS61O\n"
+    "BY2cRa9/+akq4XEfjujpJq1I0dhV4xSAqoK8lIytPJFtKi1LEEW1z6+pgceAIOEc\n"
+    "C3sRl6JOvl+d1K5HswEf8XYGiXyDhf3UV3sMBq0akShdpGElIwIDAQABo2MwYTAP\n"
+    "BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjAdBgNVHQ4EFgQUakhrO5G6\n"
+    "mvCcZPQGwQjKZvt/V2gwHwYDVR0jBBgwFoAUakhrO5G6mvCcZPQGwQjKZvt/V2gw\n"
+    "DQYJKoZIhvcNAQELBQADggEBAFjmZgxT0ipyuAFze2miDr1H6uDiieHxdn+bXxA5\n"
+    "xjvU9QNXR6rdtKkJF5AEm3SxpSSTRm8q68ak8iCEiktgbnThtpRRXt69F/oV0gQ2\n"
+    "3z9gcL2/e9vl7dNm1yyDVHlMJdpC3OCsyo1kkW1+FLSo7isB2WpuvFYsaZlW2EmC\n"
+    "gf5GSPAIH0HIEj8Y+nNd2WLAWg0PlR5cZ1dIajNDrVVM994fIDXG2U+ESfd9EUpx\n"
+    "ZKzkI56hQbiCsoF5R2lph+DqA+7ZE4pkKTC+wVIN/cahxjNSvhgEmwneGg+xSNCz\n"
+    "8CFKhfbxrxH39kyzjDyNehtY5wxgUW0jjJjNPfTYmUfiYNE=\n"
+    "-----END CERTIFICATE-----\n";
+
+/* Client TLS certificate (for mTLS authentication) */
+static const char *TLS_CLIENT_CERT =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDpDCCAoygAwIBAgIBAjANBgkqhkiG9w0BAQsFADBnMQswCQYDVQQGEwJDTjER\n"
+    "MA8GA1UECAwIU2hhbmdoYWkxETAPBgNVBAcMCFNoYW5naGFpMQ0wCwYDVQQKDARP\n"
+    "RElOMREwDwYDVQQLDAhTZWN1cml0eTEQMA4GA1UEAwwHT0RJTi1DQTAgFw01MDAx\n"
+    "MDEwMDAwMDBaGA8yMDk5MTIzMTIzNTk1OVowaTELMAkGA1UEBhMCQ04xETAPBgNV\n"
+    "BAgMCFNoYW5naGFpMREwDwYDVQQHDAhTaGFuZ2hhaTENMAsGA1UECgwET0RJTjEP\n"
+    "MA0GA1UECwwGQ2xpZW50MRQwEgYDVQQDDAtPRElOLUNsaWVudDCCASIwDQYJKoZI\n"
+    "hvcNAQEBBQADggEPADCCAQoCggEBAKk+8bESOdTotI6WG+zw6ouBtzQkE3CseoTt\n"
+    "vibtGR3RaKZFMktbBfDsLBU0PCLUe+bA5VM2Z2/hYWi3cpEmoJ0e/qvLU2Y1lEeQ\n"
+    "ILDcwjylNd05s58aHN/pXW6vr9+zw5STs6cHwlAbRxpLFJzGh6QssiSrCVkxlSay\n"
+    "UyYh5MpymfWQlq8VE0+hB9Qo6183t/ZkDnHS1nSov+5Om3B6VMLMNcfQdkMjkxWA\n"
+    "2l9LJroqpoAHmAqZZVD71PDBnCraoIyh0oyuCvfnaf46UUpb6ipSx5O8kR647MxG\n"
+    "xLMSz2BcUCjgQFnWuO6jNBCFaq1X2vuE+DFVvaDvoqQ5ZZPEnTsCAwEAAaNXMFUw\n"
+    "EwYDVR0lBAwwCgYIKwYBBQUHAwIwHQYDVR0OBBYEFAp61ikgXrYr53X2x6IRo/PJ\n"
+    "2Tz1MB8GA1UdIwQYMBaAFGpIazuRuprwnGT0BsEIymb7f1doMA0GCSqGSIb3DQEB\n"
+    "CwUAA4IBAQB/+Etc0s3CpJGX+yLLECiEdcsQCgrHbFWPSvcU2MQm5+NcwLgBOvPO\n"
+    "k0Bwl2NvwAa3VGNDI29l+dUL1/ETxlICHWzG4JsQ/yCo0a76VlilvO6o37b9Dn/k\n"
+    "0OM9M2aP7g/x/As4khmQ4J3ave2zdsi63Z8wW457NlCoknifdgNbE/AT0I4/Ff/Q\n"
+    "F41KgNBFrre8IBhbjnrA/Xv854Da/Ux/R8xSEi8GPE8X3q/bg4fXA3/VydjwFtg/\n"
+    "0+xxHxUph4jHj0e8TZhi+efMxo/GbdByeTwNjwafqtV3bfLP+1pdcK/gXVyeeqzn\n"
+    "DYFsrP2Fr9Gjlj2IpoDII8oqQ3P/8wJt\n"
+    "-----END CERTIFICATE-----\n";
+
+/* Client TLS private key */
+static const char *TLS_CLIENT_KEY =
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCpPvGxEjnU6LSO\n"
+    "lhvs8OqLgbc0JBNwrHqE7b4m7Rkd0WimRTJLWwXw7CwVNDwi1HvmwOVTNmdv4WFo\n"
+    "t3KRJqCdHv6ry1NmNZRHkCCw3MI8pTXdObOfGhzf6V1ur6/fs8OUk7OnB8JQG0ca\n"
+    "SxScxoekLLIkqwlZMZUmslMmIeTKcpn1kJavFRNPoQfUKOtfN7f2ZA5x0tZ0qL/u\n"
+    "TptwelTCzDXH0HZDI5MVgNpfSya6KqaAB5gKmWVQ+9TwwZwq2qCModKMrgr352n+\n"
+    "OlFKW+oqUseTvJEeuOzMRsSzEs9gXFAo4EBZ1rjuozQQhWqtV9r7hPgxVb2g76Kk\n"
+    "OWWTxJ07AgMBAAECggEAEtXH9RJXsEujiHjJK9HV8GejuWBIb5IqYm/I6TEayfg7\n"
+    "osFxqvQ60YifEU8KYD/weApAm0WjNk7JVeuQivnXBxVjdz/+DJJq6ZnvIW+4CCLE\n"
+    "v1WEGXFBBGRGuyI/OvCZFAhqBm01IVAf1hvD8/yeLNWyj6UfObdsZ22SFlzQRv1S\n"
+    "jl87bF+JhkVjJLR5gKgi+zkzehFcNC89mzqUfd23IRHzQAP7Ft2dusFHros+J9Pj\n"
+    "ZNyggOLSwvTPyt77ajmTjbC/bjoU9dOiyVhm/p4tYEb6bc0bwADeitAG6BIsdth4\n"
+    "JGgxAsfb+0T0DOLBEhelLkLRsqAuLdzB3CA/JsrnGQKBgQDhRnND7iPU4yFHvgs1\n"
+    "FMtfGzFyQeCxtZEtaihl1RKQNu9AMDFmPh1ZZE6iZRuma7zkjlIFJ375QeJn5EhK\n"
+    "GXoc7OS9UkrQntW4yitoeSOhGuUMHNke89bnns6JoWuh63kXQqukobH0u/TCbXrX\n"
+    "XcK37UHolqqOjRriZkXkhMyhYwKBgQDAVDawpE1m3Y7zl49OHCynXJqjg4Gspq6h\n"
+    "pTBqaqCBtNbbuZb8Z31MQ7PBqYdrR3W8KVd1YqTrp3/2Dd5GY9OdL021CcGoP5nS\n"
+    "lXiQt1hm4QyoHVkCwcpBj3K63RscXMJDl2mToTpg7m6oDBENiJgy1ho0z9TfJ2JD\n"
+    "7Dw4l/qISQKBgAewfOy7qzNwEUm+nelQ7WQwrG5m+0F1nh/7uKdJL5oGlgIN4xHH\n"
+    "Wv8bImf+pYP3t3nhtcEBSR8+9XhwXVtSJU3pdCFWNsGKOmdVV0f4opO0NE9GiM66\n"
+    "qgI79HbUMLVVMUvu9abn8ggVhlRAomnJhIT8rzw+MFIvVNSXgxk6wzVbAoGAaVq4\n"
+    "SrL2I28iq5VOTv9oBpXXr9KN6kG0T5/pkaGvIt4pBFv5tXILVQeRJHj1UXLnr5cF\n"
+    "7auHo/8xPVwDcpOki+opqw4ZI00TuiNe1AdbSZ/mCwFojPYTES6/LlWIUFUPpW7/\n"
+    "ynr7O7Xgr/VMMhmtJcvatytR9JviXErAAlBeUOECgYAhYaPdg37GC9lwGCg2E0j1\n"
+    "D7NwrN1bly9YDbUO9QEGxzRRBM8hLwCKu6ipdKhR4Og8RUJCLy/JCDdjA0aT7eKd\n"
+    "yLKztaQWSY6nQdxdApgaBxHN2/uanIDTtMmJpXHPRS120qDaZdB+LkBWLtjtXUx1\n"
+    "L8rXs8G8k+8eHQkHbog+Lg==\n"
+    "-----END PRIVATE KEY-----\n";
+
+}  /* namespace certs */
+}  /* namespace http */

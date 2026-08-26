@@ -1,0 +1,3 @@
+[submodule "docs/protocol"]
+	path = docs/protocol
+	url = http://192.168.0.119:1080/o2/protocol
