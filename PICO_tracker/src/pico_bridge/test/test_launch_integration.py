@@ -265,6 +265,7 @@ def test_tianji_teleop_launch_exposes_exact_transport_contract():
     assert arguments == {
         "skeleton_topic": "/pico/smpl_palm_corrected_ik",
         "status_topic": "/pico/smpl_palm_corrected/status",
+        "record_flag_topic": "/pico/record_flag",
         "diagnostics_topic": "/pico/tianji_mujoco_teleop/status",
         "destination_address": "127.0.0.1",
         "destination_port": "15000",
@@ -291,6 +292,7 @@ def test_tianji_teleop_launch_starts_one_parameterized_bridge():
     context.launch_configurations.update({
         "skeleton_topic": "/test/corrected_ik",
         "status_topic": "/test/corrected_status",
+        "record_flag_topic": "/test/record_flag",
         "diagnostics_topic": "/test/teleop_status",
         "destination_address": "192.0.2.1",
         "destination_port": "16000",
@@ -303,6 +305,7 @@ def test_tianji_teleop_launch_starts_one_parameterized_bridge():
     assert parameters == {
         "skeleton_topic": "/test/corrected_ik",
         "status_topic": "/test/corrected_status",
+        "record_flag_topic": "/test/record_flag",
         "diagnostics_topic": "/test/teleop_status",
         "destination_address": "192.0.2.1",
         "destination_port": 16000,

@@ -262,8 +262,9 @@ def band_energy_ratio(values: np.ndarray, time_seconds: np.ndarray,
     )
     total_mask = frequencies > 0.0
     band_mask = (frequencies >= low_hz) & (frequencies <= high_hz)
-    total = float(np.trapz(power[total_mask], frequencies[total_mask]))
-    band = float(np.trapz(power[band_mask], frequencies[band_mask]))
+    integrate = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+    total = float(integrate(power[total_mask], frequencies[total_mask]))
+    band = float(integrate(power[band_mask], frequencies[band_mask]))
     return band / total if total > 0.0 else 0.0
 
 

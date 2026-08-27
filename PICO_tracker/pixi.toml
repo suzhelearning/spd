@@ -69,14 +69,20 @@ h5py = "*"
 numpy = "*"
 pyyaml = "*"
 mujoco = "*"
+nlopt = "*"
+pinocchio = ">=3.6,<4"
+scipy = ">=1.11.0"
 tmux = ">=3.7b_,<4"
+
+[pypi-dependencies]
+wuji-retargeting = { path = "../wuji-retargeting", editable = true }
 
 [tasks]
 # CMake's FindPython doesn't auto-detect conda envs; pass Python_ROOT_DIR so
 # rosidl_generator_py can find the env's interpreter + numpy headers.
-build-core = "colcon build --base-paths src --symlink-install --packages-select imu_ros2 pico_bridge fisheye_camera data_collector --cmake-args -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY"
-build = "bash -lc 'export ROS_VERSION=2; bash src/odin/scripts/ensure_odin_sdk.sh && colcon build --base-paths src --symlink-install --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin --cmake-args -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY && bash src/odin/scripts/fix_ament_hook.sh'"
-test = "bash -lc 'export ROS_VERSION=2; colcon test --base-paths src --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin --event-handlers console_direct+'"
+build-core = "colcon build --base-paths src --symlink-install --packages-select imu_ros2 pico_bridge fisheye_camera data_collector spd_vr --cmake-args -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY"
+build = "bash -lc 'export ROS_VERSION=2; bash src/odin/scripts/ensure_odin_sdk.sh && colcon build --base-paths src --symlink-install --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin spd_vr --cmake-args -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY && bash src/odin/scripts/fix_ament_hook.sh'"
+test = "bash -lc 'export ROS_VERSION=2; colcon test --base-paths src --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin spd_vr --event-handlers console_direct+'"
 clean = "rm -rf build install log"
 odin = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=original'"
 odin-lite = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=lite'"

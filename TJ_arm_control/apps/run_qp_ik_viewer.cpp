@@ -14,11 +14,15 @@
 #include "tianji_qp_ik/spark_qpoases_diagnostic.hpp"
 #include "tianji_qp_ik/target_manager.hpp"
 #include "tianji_qp_ik/telemetry.hpp"
+#include "tianji_qp_ik/arm_target_protocol.hpp"
 
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <Eigen/Geometry>
 
@@ -57,6 +61,9 @@ struct Options {
   bool headless{false};
   double duration_seconds{0.0};
   bool pico_teleop{true};
+  std::string arm_target_host{"127.0.0.1"};
+  std::uint16_t arm_target_port{15100U};
+  bool no_arm_target_output{false};
   bool pico_skeleton_overlay{true};
   std::string pico_bind{"127.0.0.1"};
   std::uint16_t pico_port{15000U};
@@ -116,6 +123,8 @@ Options parseOptions(int argc, char** argv) {
                    "[--pico-skeleton-overlay|--no-pico-skeleton-overlay] "
                    "[--pico-bind IPV4] [--pico-port PORT] "
                    "[--pico-record FILE.tjvr] "
+                   "[--arm-target-host IPV4] [--arm-target-port PORT] "
+                   "[--no-arm-target-output] "
                    "[--control-level velocity|acceleration] "
                    "[--algorithm hierarchical_qp|nullspace_dls|"
                    "spark_guided_velocity_qp|spark_direct_velocity_qp|"
@@ -156,6 +165,10 @@ Options parseOptions(int argc, char** argv) {
       options.model_state_only_override = false;
       continue;
     }
+    if (argument == "--no-arm-target-output") {
+      options.no_arm_target_output = true;
+      continue;
+    }
     if (index + 1 >= argc) {
       throw std::invalid_argument("missing value after " + argument);
     }
@@ -181,6 +194,16 @@ Options parseOptions(int argc, char** argv) {
         throw std::invalid_argument("--pico-port must be in [1,65535]");
       }
       options.pico_port = static_cast<std::uint16_t>(parsed);
+    } else if (argument == "--arm-target-host") {
+      options.arm_target_host = value;
+    } else if (argument == "--arm-target-port") {
+      std::size_t parsed_characters = 0U;
+      const unsigned long parsed = std::stoul(value, &parsed_characters);
+      if (parsed_characters != value.size() ||
+          parsed < 1UL || parsed > 65535UL) {
+        throw std::invalid_argument("--arm-target-port must be in [1,65535]");
+      }
+      options.arm_target_port = static_cast<std::uint16_t>(parsed);
     } else if (argument == "--control-level") {
       if (value == "velocity") {
         options.control_level_override = ControlLevel::kVelocity;
@@ -249,6 +272,11 @@ Options parseOptions(int argc, char** argv) {
   in_addr parsed_address{};
   if (inet_pton(AF_INET, options.pico_bind.c_str(), &parsed_address) != 1) {
     throw std::invalid_argument("--pico-bind must be a valid IPv4 address");
+  }
+  if (!options.no_arm_target_output) {
+    if (inet_pton(AF_INET, options.arm_target_host.c_str(), &parsed_address) != 1) {
+      throw std::invalid_argument("--arm-target-host must be a valid IPv4 address");
+    }
   }
   return options;
 }
@@ -537,6 +565,64 @@ void setPlotDerivatives(
   sample.actual_jerk_valid = derivatives.actual_jerk_valid;
 }
 
+class ArmTargetUdpOutput {
+ public:
+  ArmTargetUdpOutput(const std::string& host, std::uint16_t port) {
+    socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (socket_ < 0) {
+      throw std::runtime_error("cannot create arm target UDP socket");
+    }
+    destination_.sin_family = AF_INET;
+    destination_.sin_port = htons(port);
+    if (inet_pton(AF_INET, host.c_str(), &destination_.sin_addr) != 1) {
+      ::close(socket_);
+      socket_ = -1;
+      throw std::invalid_argument("arm target host must be a valid IPv4 address");
+    }
+  }
+
+  ~ArmTargetUdpOutput() {
+    if (socket_ >= 0) ::close(socket_);
+  }
+
+  ArmTargetUdpOutput(const ArmTargetUdpOutput&) = delete;
+  ArmTargetUdpOutput& operator=(const ArmTargetUdpOutput&) = delete;
+
+  void send(const ArmMotionState& left, const ArmMotionState& right,
+            std::uint64_t tracking_epoch, std::uint64_t source_timestamp_ns,
+            std::uint64_t control_timestamp_ns, std::uint8_t valid_mask,
+            ArmTargetHoldReason hold_reason) noexcept {
+    ArmTargetFrame frame;
+    frame.sequence = ++sequence_;
+    frame.tracking_epoch = tracking_epoch == 0U ? 1U : tracking_epoch;
+    frame.source_timestamp_ns =
+        source_timestamp_ns == 0U ? control_timestamp_ns : source_timestamp_ns;
+    frame.control_timestamp_ns = control_timestamp_ns;
+    frame.valid_mask = valid_mask;
+    frame.hold_reason = hold_reason;
+    for (std::size_t index = 0U; index < 7U; ++index) {
+      frame.left_q[index] = left.q[index];
+      frame.right_q[index] = right.q[index];
+      frame.left_qdot[index] = left.qdot[index];
+      frame.right_qdot[index] = right.qdot[index];
+    }
+    std::array<std::uint8_t, kArmTargetPacketV1Size> packet{};
+    if (!encodeArmTargetPacket(frame, packet)) return;
+    const ssize_t written = ::sendto(
+        socket_, packet.data(), packet.size(), MSG_DONTWAIT,
+        reinterpret_cast<const sockaddr*>(&destination_), sizeof(destination_));
+    if (written != static_cast<ssize_t>(packet.size())) ++send_failures_;
+  }
+
+  std::uint64_t sendFailures() const noexcept { return send_failures_; }
+
+ private:
+  int socket_{-1};
+  sockaddr_in destination_{};
+  std::uint64_t sequence_{0U};
+  std::uint64_t send_failures_{0U};
+};
+
 void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  BoundedSpscQueue<ViewerCommand>& commands,
                  LatestSnapshotExchange<ViewerSnapshot>& snapshots,
@@ -547,6 +633,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  PicoUdpReceiver* pico_receiver,
                  bool pico_initially_enabled,
                  ArmAngleReferenceMode initial_arm_angle_reference_mode,
+                 ArmTargetUdpOutput* arm_target_output,
                  std::atomic<bool>& running) {
   setInitialConfiguration(robot, config);
   const DualArmTargets initial_targets = currentTargets(robot);
@@ -594,6 +681,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   direct_left_state.q = robot.armPosition(ArmSide::kLeft);
   ArmMotionState direct_right_state;
   direct_right_state.q = robot.armPosition(ArmSide::kRight);
+  ArmMotionState last_arm_target_left = direct_left_state;
+  ArmMotionState last_arm_target_right = direct_right_state;
   const bool pico_configured = pico_frames != nullptr && pico_receiver != nullptr;
   PicoTeleopSession pico_session(
       config.cartesian_servo.target_timeout_seconds);
@@ -954,6 +1043,60 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       diagnostics.right.actual_pose_error =
           poseErrorWorld(diagnostics.right.target, diagnostics.right.tcp_actual);
       diagnostics.hold_reason = HoldReason::kNone;
+    }
+
+    const bool arm_target_acceleration_level =
+        config.control_level == ControlLevel::kAcceleration;
+    const bool left_commit_accepted =
+        !paused && (arm_target_acceleration_level
+                        ? acceleration_diagnostics.left.accepted
+                        : diagnostics.left.accepted);
+    const bool right_commit_accepted =
+        !paused && (arm_target_acceleration_level
+                        ? acceleration_diagnostics.right.accepted
+                        : diagnostics.right.accepted);
+    const ArmMotionState committed_left_reference =
+        spark_direct_qpos
+            ? direct_left_state
+            : arm_target_acceleration_level
+                  ? acceleration_controller->referenceState(ArmSide::kLeft)
+                  : controller->referenceState(ArmSide::kLeft);
+    const ArmMotionState committed_right_reference =
+        spark_direct_qpos
+            ? direct_right_state
+            : arm_target_acceleration_level
+                  ? acceleration_controller->referenceState(ArmSide::kRight)
+                  : controller->referenceState(ArmSide::kRight);
+    if (left_commit_accepted && !desired.left_stale) {
+      last_arm_target_left = committed_left_reference;
+    }
+    if (right_commit_accepted && !desired.right_stale) {
+      last_arm_target_right = committed_right_reference;
+    }
+    std::uint8_t arm_target_valid_mask = 0U;
+    if (left_commit_accepted && !desired.left_stale) {
+      arm_target_valid_mask |= kArmTargetLeftValid;
+    }
+    if (right_commit_accepted && !desired.right_stale) {
+      arm_target_valid_mask |= kArmTargetRightValid;
+    }
+    const ArmTargetHoldReason arm_target_hold_reason =
+        paused
+            ? ArmTargetHoldReason::kPaused
+            : (desired.left_stale || desired.right_stale)
+                  ? ArmTargetHoldReason::kInputStale
+                  : (arm_target_valid_mask ==
+                             (kArmTargetLeftValid | kArmTargetRightValid)
+                         ? ArmTargetHoldReason::kNone
+                         : ArmTargetHoldReason::kSolverFailure);
+    if (arm_target_output != nullptr) {
+      arm_target_output->send(
+          last_arm_target_left, last_arm_target_right, pico_applied_epoch,
+          static_cast<std::uint64_t>(
+              std::max<std::int64_t>(0, pico_left_source_timestamp_ns)),
+          static_cast<std::uint64_t>(std::max<std::int64_t>(
+              1, monotonic_now_ns)),
+          arm_target_valid_mask, arm_target_hold_reason);
     }
 
     ViewerSnapshot snapshot;
@@ -3470,6 +3613,13 @@ int run(int argc, char** argv) {
         std::move(receiver_options), pico_frames);
   }
   MujocoRobot control_robot(options.model_path);
+  std::unique_ptr<ArmTargetUdpOutput> arm_target_output;
+  if (!options.no_arm_target_output) {
+    arm_target_output = std::make_unique<ArmTargetUdpOutput>(
+        options.arm_target_host, options.arm_target_port);
+    std::cout << "arm_target_udp=" << options.arm_target_host << ':'
+              << options.arm_target_port << '\n';
+  }
   std::atomic<bool> running{true};
   std::atomic<bool> control_finished{false};
   std::exception_ptr control_error;
@@ -3521,7 +3671,8 @@ int run(int argc, char** argv) {
                     options.telemetry_path.empty() ? nullptr : &telemetry,
                     options.pico_teleop ? &pico_frames : nullptr,
                     pico_receiver.get(), options.pico_teleop,
-                    initial_arm_angle_reference_mode, running);
+                    initial_arm_angle_reference_mode,
+                    arm_target_output.get(), running);
       } catch (...) {
         control_error = std::current_exception();
         running.store(false, std::memory_order_release);

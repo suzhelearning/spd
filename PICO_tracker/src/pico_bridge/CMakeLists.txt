@@ -21,7 +21,8 @@ find_package(yaml-cpp REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BleFrame.msg"
-  DEPENDENCIES std_msgs builtin_interfaces
+  "msg/PicoHands.msg"
+  DEPENDENCIES std_msgs builtin_interfaces geometry_msgs
 )
 
 add_executable(pico_bridge_node src/pico_bridge_node.cpp)
@@ -92,6 +93,8 @@ install(PROGRAMS scripts/pico_palm_tcp_runtime.py DESTINATION lib/${PROJECT_NAME
 install(PROGRAMS scripts/pico_palm_orientation_core.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pico_palm_orientation_client.py DESTINATION lib/${PROJECT_NAME} RENAME pico_palm_orientation_client)
 install(PROGRAMS scripts/pico_palm_tcp_publisher.py DESTINATION lib/${PROJECT_NAME} RENAME pico_palm_tcp_publisher)
+install(PROGRAMS scripts/pico_optical_palm_publisher.py
+  DESTINATION lib/${PROJECT_NAME} RENAME pico_optical_palm_publisher)
 install(PROGRAMS scripts/pico_palm_skeleton_filter_core.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pico_calibration_artifact.py DESTINATION lib/${PROJECT_NAME})
 install(PROGRAMS scripts/pico_palm_skeleton_filter_node.py DESTINATION lib/${PROJECT_NAME})
@@ -130,6 +133,7 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_gtest(test_pico_frame test/test_pico_frame.cpp)
+  ament_add_gtest(test_pico_hand_pairing test/test_pico_hand_pairing.cpp)
   ament_add_gtest(test_foot_imu_fusion_math test/test_foot_imu_fusion_math.cpp)
   ament_add_gtest(test_foot_imu_input_state test/test_foot_imu_input_state.cpp)
   ament_add_gtest(test_auto_calibration_state test/test_auto_calibration_state.cpp)
@@ -158,6 +162,9 @@ if(BUILD_TESTING)
   target_include_directories(test_pico_frame PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
+  target_include_directories(test_pico_hand_pairing PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
   target_include_directories(test_foot_imu_fusion_math PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
@@ -169,6 +176,7 @@ if(BUILD_TESTING)
   )
   ament_add_pytest_test(test_smpl_mujoco_geometry test/test_smpl_mujoco_geometry.py)
   ament_add_pytest_test(test_pico_palm_tcp_calibrator test/test_pico_palm_tcp_calibrator.py)
+  ament_add_pytest_test(test_pico_hand_stream_runtime test/test_pico_hand_stream_runtime.py)
   ament_add_pytest_test(test_pico_palm_wrist_calibrator test/test_pico_palm_wrist_calibrator.py)
   ament_add_pytest_test(test_pico_calibration_artifact test/test_pico_calibration_artifact.py)
   ament_add_pytest_test(test_pico_calibration_menu test/test_pico_calibration_menu.py)

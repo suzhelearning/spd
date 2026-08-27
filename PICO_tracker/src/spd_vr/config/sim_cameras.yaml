@@ -1,0 +1,20 @@
+version: 1
+calibration_revision: provisional-v1
+width: 224
+height: 168
+fovy_deg: 70.0
+near_m: 0.01
+far_m: 3.0
+cameras:
+  top:
+    parent: world
+    position: [0.50, 0.00, 1.80]
+    look_at: [0.45, 0.00, 1.05]
+  left_wrist:
+    parent: l_wrist
+    position: [-0.035, 0.000, 0.005]
+    look_at: [0.000, 0.000, -0.150]
+  right_wrist:
+    parent: r_wrist
+    position: [0.035, 0.000, 0.005]
+    look_at: [0.000, 0.000, -0.150]

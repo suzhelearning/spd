@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SPD PICO dual-hand sample",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp_ns",
+    "sequence_id",
+    "left_active",
+    "right_active",
+    "left_hand",
+    "right_hand"
+  ],
+  "properties": {
+    "timestamp_ns": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "description": "uint64[N], strictly increasing host/PICO timestamp in ns"
+    },
+    "sequence_id": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "description": "uint64[N], strictly increasing receiver sequence"
+    },
+    "left_active": {
+      "type": "array",
+      "items": {"type": "boolean"},
+      "description": "bool[N], false means the left hand is held"
+    },
+    "right_active": {
+      "type": "array",
+      "items": {"type": "boolean"},
+      "description": "bool[N], false means the right hand is held"
+    },
+    "left_hand": {
+      "type": "array",
+      "description": "float32[N,26,7], xyz plus quaternion xyzw in metres",
+      "items": {
+        "type": "array",
+        "minItems": 26,
+        "maxItems": 26,
+        "items": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"type": "number"}
+        }
+      }
+    },
+    "right_hand": {
+      "type": "array",
+      "description": "float32[N,26,7], xyz plus quaternion xyzw in metres",
+      "items": {
+        "type": "array",
+        "minItems": 26,
+        "maxItems": 26,
+        "items": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"type": "number"}
+        }
+      }
+    }
+  },
+  "x-npz-dtypes": {
+    "timestamp_ns": "uint64",
+    "sequence_id": "uint64",
+    "left_active": "bool",
+    "right_active": "bool",
+    "left_hand": "float32",
+    "right_hand": "float32"
+  },
+  "x-pose-order": "xyz+quaternion_xyzw",
+  "x-units": {"position": "metre", "timestamp": "nanosecond"},
+  "x-joint-count": 26
+}

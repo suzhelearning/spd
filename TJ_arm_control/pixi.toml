@@ -15,6 +15,7 @@ libosqp = ">=1.0,<2"
 qpoases = ">=3.2,<4"
 yaml-cpp = ">=0.8,<1"
 gtest = ">=1.15,<2"
+matplotlib = "*"
 
 [tasks]
 configure = "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release"

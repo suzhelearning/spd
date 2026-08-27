@@ -75,6 +75,7 @@ add_library(tianji_qp_ik STATIC
   src/osqp_solver.cpp
   src/pinocchio_arm_kinematics.cpp
   src/pico_teleop_protocol.cpp
+  src/arm_target_protocol.cpp
   src/pico_skeleton_overlay.cpp
   src/pico_teleop_session.cpp
   src/pico_trace_recorder.cpp
@@ -204,6 +205,7 @@ if(BUILD_TESTING)
   tianji_add_test(test_mujoco_joint_plot tests/test_mujoco_joint_plot.cpp)
   target_link_libraries(test_mujoco_joint_plot PRIVATE mujoco::mujoco)
   tianji_add_test(test_pico_teleop_protocol tests/test_pico_teleop_protocol.cpp)
+  tianji_add_test(test_arm_target_protocol tests/test_arm_target_protocol.cpp)
   tianji_add_test(test_pico_skeleton_overlay tests/test_pico_skeleton_overlay.cpp)
   tianji_add_test(test_spark_upper_qpoases_ik
                   tests/test_spark_upper_qpoases_ik.cpp)

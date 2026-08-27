@@ -14,7 +14,7 @@
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int64.hpp>
 #include <pico_bridge/msg/ble_frame.hpp>
-
+#include <pico_bridge/msg/pico_hands.hpp>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "pico_bridge/pico_frame.hpp"
+#include "pico_bridge/pico_hand_pairing.hpp"
 #include "pico_bridge/tracking_epoch_store.hpp"
 
 using namespace std::chrono_literals;
@@ -41,14 +42,17 @@ public:
             "smpl_raw_topic", "/pico/smpl_raw");
         world_reset_topic_ = declare_parameter<std::string>(
             "world_reset_topic", "/pico/world_reset");
+        hands_topic_ = declare_parameter<std::string>(
+            "hands_topic", "/pico/hands");
         tracking_epoch_topic_ = declare_parameter<std::string>(
             "tracking_epoch_topic", "/pico/tracking_epoch");
         tracking_epoch_status_topic_ = declare_parameter<std::string>(
             "tracking_epoch_status_topic", "/pico/tracking_epoch/status");
         tracking_epoch_state_file_ = declare_parameter<std::string>(
             "tracking_epoch_state_file", "~/.config/pico_tracker/tracking_epoch");
-        if (smpl_raw_topic_.empty() || world_reset_topic_.empty()) {
-            throw std::invalid_argument("SMPL raw and world reset topics must not be empty");
+        if (smpl_raw_topic_.empty() || world_reset_topic_.empty() || hands_topic_.empty()) {
+            throw std::invalid_argument(
+                "SMPL raw, world reset, and hands topics must not be empty");
         }
         if (tracking_epoch_state_file_.empty()) {
             throw std::invalid_argument("tracking_epoch_state_file must not be empty");
@@ -79,7 +83,10 @@ public:
         // the recorder cannot mix joints from adjacent body frames.
         smpl_pub_ = create_publisher<geometry_msgs::msg::PoseArray>(
             smpl_raw_topic_, sensor_qos);
+        hands_pub_ = create_publisher<pico_bridge::msg::PicoHands>(
+            hands_topic_, sensor_qos);
         smpl_poses_.resize(pf::BODY_JOINT_COUNT);
+        hand_pairing_.reset(0);
 
         record_flag_pub_ = create_publisher<std_msgs::msg::Bool>("/pico/record_flag", 10);
         world_reset_pub_ = create_publisher<std_msgs::msg::Float32>(world_reset_topic_, 10);
@@ -152,10 +159,20 @@ private:
         tracking_epoch_status_pub_->publish(status_message);
     }
 
+    void reset_stream_accumulators() {
+        smpl_ts_ms_ = -1;
+        smpl_received_.fill(false);
+        smpl_received_count_ = 0;
+        smpl_published_ = false;
+        hand_pairing_.reset(tracking_epoch_.load());
+    }
+
     void advance_tracking_epoch(const std::string& source) {
+        reset_stream_accumulators();
         try {
             const uint64_t epoch = pico_bridge::reserve_tracking_epoch(tracking_epoch_state_file_);
             tracking_epoch_.store(epoch);
+            hand_pairing_.reset(epoch);
             publish_tracking_epoch(epoch, source);
         } catch (const std::exception & error) {
             RCLCPP_FATAL(get_logger(), "Cannot reserve tracking epoch: %s", error.what());
@@ -232,6 +249,52 @@ private:
             smpl_published_ = true;
         }
     }
+    void publish_hands(const pf::PairedHands& frame) {
+        pico_bridge::msg::PicoHands message;
+        message.header.stamp = ts_from_ms(frame.timestamp_ms);
+        message.header.frame_id = "pico";
+        message.tracking_epoch = frame.tracking_epoch;
+        message.sequence_id = ++hand_sequence_id_;
+        message.left_active = frame.left.active;
+        message.right_active = frame.right.active;
+        message.left_scale = frame.left.scale;
+        message.right_scale = frame.right.scale;
+        for (size_t joint = 0; joint < pf::HAND_JOINT_COUNT; ++joint) {
+            const auto& left = frame.left.joints[joint];
+            auto& left_pose = message.left_joints[joint];
+            left_pose.position.x = left[0];
+            left_pose.position.y = left[1];
+            left_pose.position.z = left[2];
+            left_pose.orientation.x = left[3];
+            left_pose.orientation.y = left[4];
+            left_pose.orientation.z = left[5];
+            left_pose.orientation.w = left[6];
+
+            const auto& right = frame.right.joints[joint];
+            auto& right_pose = message.right_joints[joint];
+            right_pose.position.x = right[0];
+            right_pose.position.y = right[1];
+            right_pose.position.z = right[2];
+            right_pose.orientation.x = right[3];
+            right_pose.orientation.y = right[4];
+            right_pose.orientation.z = right[5];
+            right_pose.orientation.w = right[6];
+        }
+        hands_pub_->publish(message);
+    }
+
+    void accept_hand(pf::HandSide side, int64_t ts_ms,
+                     const uint8_t* payload, size_t len) {
+        pf::HandPayload hand;
+        if (!pf::parse_hand_payload(payload, len, hand)) {
+            RCLCPP_WARN(get_logger(), "Invalid hand payload for timestamp %ld", ts_ms);
+            return;
+        }
+        const auto paired = hand_pairing_.accept(
+            side, tracking_epoch_.load(), ts_ms, hand);
+        if (paired.has_value()) publish_hands(*paired);
+    }
+
 
     void publish_ble(rclcpp::Publisher<pico_bridge::msg::BleFrame>::SharedPtr pub,
                      int64_t ts_ms, const uint8_t* payload, size_t len) {
@@ -288,6 +351,12 @@ private:
                         publish_ble(ble_l_pub_, h.ts_ms, payload.data(), payload.size()); break;
                     case pf::TYPE_BLE_RIGHT:
                         publish_ble(ble_r_pub_, h.ts_ms, payload.data(), payload.size()); break;
+                    case pf::TYPE_HAND_LEFT:
+                        accept_hand(pf::HandSide::Left, h.ts_ms,
+                                    payload.data(), payload.size()); break;
+                    case pf::TYPE_HAND_RIGHT:
+                        accept_hand(pf::HandSide::Right, h.ts_ms,
+                                    payload.data(), payload.size()); break;
                     case pf::TYPE_RECORD_FLAG: {
                         std_msgs::msg::Bool m;
                         m.data = !payload.empty() && payload[0] != 0;
@@ -331,6 +400,7 @@ private:
     std::string tracking_epoch_state_file_;
     std::string smpl_raw_topic_;
     std::string world_reset_topic_;
+    std::string hands_topic_;
     std::string tracking_epoch_topic_;
     std::string tracking_epoch_status_topic_;
     int port_ = 9999;
@@ -342,13 +412,16 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr cam_l_pub_, cam_r_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_h_pub_, pose_l_pub_, pose_r_pub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr smpl_pub_;
+    rclcpp::Publisher<pico_bridge::msg::PicoHands>::SharedPtr hands_pub_;
     std::vector<geometry_msgs::msg::Pose> smpl_poses_;
     std::array<bool, pf::BODY_JOINT_COUNT> smpl_received_{};
     int64_t smpl_ts_ms_ = -1;
     size_t smpl_received_count_ = 0;
     bool smpl_published_ = false;
-        rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr record_flag_pub_;
-        rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr world_reset_pub_;
+    pf::HandPairAccumulator hand_pairing_;
+    uint64_t hand_sequence_id_ = 0;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr record_flag_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr world_reset_pub_;
     rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr tracking_epoch_pub_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr tracking_epoch_status_pub_;
     rclcpp::Publisher<pico_bridge::msg::BleFrame>::SharedPtr ble_l_pub_, ble_r_pub_;

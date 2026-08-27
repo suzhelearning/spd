@@ -43,6 +43,14 @@ TEST(PicoFrame, TypeConstantsMatchWireProtocol) {
     EXPECT_FALSE(pico_bridge::is_body_pose_type(0x38));
 }
 
+TEST(PicoFrame, HandTypeConstantsAreOutsideBodyRange) {
+    EXPECT_TRUE(pico_bridge::is_hand_type(pico_bridge::TYPE_HAND_LEFT));
+    EXPECT_TRUE(pico_bridge::is_hand_type(pico_bridge::TYPE_HAND_RIGHT));
+    EXPECT_FALSE(pico_bridge::is_body_pose_type(pico_bridge::TYPE_HAND_LEFT));
+    EXPECT_FALSE(pico_bridge::is_body_pose_type(pico_bridge::TYPE_HAND_RIGHT));
+    EXPECT_EQ(pico_bridge::HAND_PAYLOAD_BYTES, 733u);
+}
+
 TEST(PicoFrame, ParsesWorldResetYaw) {
     const float expected = 1.25F;
     uint8_t payload[sizeof(float)];

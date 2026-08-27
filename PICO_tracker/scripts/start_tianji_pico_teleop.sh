@@ -3,6 +3,9 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 session_name="pico_tianji_teleop"
+if [[ -n "${PICO_TELEOP_SESSION_NAME:-}" ]]; then
+  session_name="$PICO_TELEOP_SESSION_NAME"
+fi
 mode="attach"
 original_args=("$@")
 
