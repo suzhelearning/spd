@@ -77,3 +77,9 @@
 - 额外提交 `ed13971` 修正 reset/accepted 路径中的 `TargetManager` candidate 双重 move；修复后同一窄构建与 3/3 focused ctest 再次 PASS。
 
 - 最终 `pixi run ./build/tianji_qp_ik_viewer --headless --duration 0.1 --no-arm-target-output --algorithm hierarchical_qp --pico-teleop --pico-wrist-input --left-end-effector-site l_wrist_target --right-end-effector-site r_wrist_target`：PASS，输出 `pico_headless_complete sequence=20`。
+
+## Scoped re-review P2 修复
+
+- `ViewerSnapshot` 的左右 hold reason 现在以 `std::string_view{""}` 初始化，覆盖控制线程首次写入 snapshot 前的 overlay `%s` 路径；`wristHoldReasonForTelemetry` 仍返回静态非空空字符串。
+- 代码提交：`bc9ef04`（`fix: initialize wrist hold reason snapshot fields`）。
+- 验证：`pixi run cmake --build build --target tianji_qp_ik_viewer test_pico_wrist_alignment -j2` PASS；focused ctest 3/3 PASS；wrist hierarchical headless smoke PASS，输出 `pico_headless_complete sequence=19`。
