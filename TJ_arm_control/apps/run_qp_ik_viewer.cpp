@@ -397,12 +397,27 @@ bool resumeFromPause(
 void processCommand(const ViewerCommand& command, MujocoRobot& robot,
                     QpIkConfig& config, double target_time,
                     TargetManager& targets, PicoTeleopSession& pico_session,
-                    bool pico_configured,
+                    bool pico_configured, bool wrist_endpoint_mode,
                     ArmAngleReferenceMode& arm_angle_reference_mode,
                     bool& paused,
                     std::unique_ptr<DualArmController>& controller,
                     std::unique_ptr<DualArmAccelerationController>&
                         acceleration_controller) {
+  if (wrist_endpoint_mode &&
+      command.type == ViewerCommandType::kSetIkAlgorithm &&
+      command.algorithm != IkAlgorithm::kHierarchicalQp) {
+    std::cerr << "rejected runtime IK algorithm change: "
+                 "wrist endpoint mode requires hierarchical_qp\n";
+    return;
+  }
+  if (wrist_endpoint_mode &&
+      command.type == ViewerCommandType::kSetControlLevel &&
+      command.control_level != config.control_level) {
+    std::cerr << "rejected runtime control-level change: "
+                 "wrist endpoint mode is fixed at startup\n";
+    return;
+  }
+
   switch (command.type) {
     case ViewerCommandType::kSetMode:
       if (!resumeFromPause(paused, config.control_level, *controller,
@@ -631,7 +646,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  TelemetryBuffer* telemetry,
                  LatestSpscExchange<PicoTeleopFrame>* pico_frames,
                  PicoUdpReceiver* pico_receiver,
-                 bool pico_initially_enabled,
+                 bool pico_initially_enabled, bool wrist_endpoint_mode,
                  ArmAngleReferenceMode initial_arm_angle_reference_mode,
                  ArmTargetUdpOutput* arm_target_output,
                  std::atomic<bool>& running) {
@@ -732,9 +747,9 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       const IkAlgorithm previous_algorithm = controller->algorithm();
       const bool previous_paused = paused;
       processCommand(command, robot, config, target_time, targets,
-                     pico_session, pico_configured, arm_angle_reference_mode,
-                     paused,
-                     controller, acceleration_controller);
+                     pico_session, pico_configured, wrist_endpoint_mode,
+                     arm_angle_reference_mode, paused, controller,
+                     acceleration_controller);
       if (config.control_level != previous_control_level) {
         const CartesianOtgConfig selected_otg_config =
             cartesianOtgConfigForControlLevel(config, config.control_level);
@@ -3683,8 +3698,9 @@ int run(int argc, char** argv) {
                     options.telemetry_path.empty() ? nullptr : &telemetry,
                     options.pico_teleop ? &pico_frames : nullptr,
                     pico_receiver.get(), options.pico_teleop,
-                    initial_arm_angle_reference_mode,
-                    arm_target_output.get(), running);
+                    use_wrist_end_effector,
+                    initial_arm_angle_reference_mode, arm_target_output.get(),
+                    running);
       } catch (...) {
         control_error = std::current_exception();
         running.store(false, std::memory_order_release);
