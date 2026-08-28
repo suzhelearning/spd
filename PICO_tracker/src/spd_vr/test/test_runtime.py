@@ -184,6 +184,23 @@ def test_mailbox_subscription_failure_cleans_only_owned_ros_resources(
     assert rclpy.initialized is context_active
 
 
+def test_mailbox_partial_rclpy_init_failure_shuts_down_owned_context(monkeypatch):
+    from spd_vr.ros_input import LiveInputMailbox
+
+    rclpy = _install_fake_ros(monkeypatch)
+
+    def fail_init(*_args, **_kwargs):
+        rclpy.initialized = True
+        raise RuntimeError("signal handler setup failure")
+
+    rclpy.init = fail_init
+    with pytest.raises(RuntimeError, match="signal handler setup failure"):
+        LiveInputMailbox("/pico/hands", "/spd_vr/pause")
+
+    assert rclpy.shutdown_called is True
+    assert rclpy.initialized is False
+
+
 def test_live_mailbox_is_closed_when_simulator_setup_fails(tmp_path, monkeypatch):
     class _Task:
         def reset(self, _seed):

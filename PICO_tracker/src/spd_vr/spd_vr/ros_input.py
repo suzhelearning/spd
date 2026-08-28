@@ -71,13 +71,15 @@ class LiveInputMailbox:
             except (AttributeError, RuntimeError):
                 context_ok = False
             if not context_ok:
+                # Mark ownership before init: rclpy can activate the default
+                # context and then fail while installing signal handlers.
+                self._owns_context = True
                 try:
                     rclpy.init(args=None)
                 except TypeError:
                     # Small test doubles and older rclpy releases may not accept
                     # the keyword; the real API does.
                     rclpy.init()
-                self._owns_context = True
 
             create_node = getattr(rclpy, "create_node", None)
             if callable(create_node):
