@@ -98,15 +98,15 @@ def _compose(
 
 
 def _quat_from_matrix(matrix: list[list[float]]) -> list[float]:
+    """Return MuJoCo's ``w x y z`` quaternion for a rotation matrix."""
     trace = matrix[0][0] + matrix[1][1] + matrix[2][2]
     if trace > 0.0:
         s = math.sqrt(trace + 1.0) * 2.0
-        return [
-            (matrix[2][1] - matrix[1][2]) / s,
-            (matrix[0][2] - matrix[2][0]) / s,
-            (matrix[1][0] - matrix[0][1]) / s,
-            0.25 * s,
-        ]
+        x = (matrix[2][1] - matrix[1][2]) / s
+        y = (matrix[0][2] - matrix[2][0]) / s
+        z = (matrix[1][0] - matrix[0][1]) / s
+        w = 0.25 * s
+        return [w, x, y, z]
     diagonal = [matrix[0][0], matrix[1][1], matrix[2][2]]
     index = max(range(3), key=diagonal.__getitem__)
     nxt = (1, 2, 0)
@@ -117,7 +117,7 @@ def _quat_from_matrix(matrix: list[list[float]]) -> list[float]:
     q[3] = (matrix[k][j] - matrix[j][k]) / s
     q[j] = (matrix[j][i] + matrix[i][j]) / s
     q[k] = (matrix[k][i] + matrix[i][k]) / s
-    return q
+    return [q[3], q[0], q[1], q[2]]
 
 
 def _parse_urdf_fixed_joints(path: Path) -> dict[tuple[str, str], tuple[list[float], list[list[float]]]]:

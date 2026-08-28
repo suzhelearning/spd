@@ -666,15 +666,34 @@ class UnifiedSimulator:
         if paused == self.paused:
             return
         if paused:
+            # Gate callbacks immediately, then wait for each worker to report
+            # that it is idle with the shared pause lock held around dequeue.
+            # Do not publish PAUSED unless every existing worker acknowledges.
             self.paused = True
             with self._worker_pause_lock:
                 self._worker_pause.set()
                 self._camera_pause_ack.clear()
                 self._recorder_pause_ack.clear()
-            if self._camera_worker is not None:
-                self._camera_pause_ack.wait(timeout=1.0)
-            if self._recorder_thread is not None:
-                self._recorder_pause_ack.wait(timeout=1.0)
+            missing_workers: list[str] = []
+            if self._camera_worker is not None and not self._camera_pause_ack.wait(
+                timeout=1.0
+            ):
+                missing_workers.append("camera")
+            if self._recorder_thread is not None and not self._recorder_pause_ack.wait(
+                timeout=1.0
+            ):
+                missing_workers.append("recorder")
+            if missing_workers:
+                with self._worker_pause_lock:
+                    self._worker_pause.clear()
+                    self._camera_pause_ack.clear()
+                    self._recorder_pause_ack.clear()
+                self.paused = False
+                raise RuntimeError(
+                    "pause barrier timeout waiting for "
+                    + ", ".join(missing_workers)
+                    + " worker acknowledgement"
+                )
             self._resume_gate_mask = LEFT_VALID | RIGHT_VALID
             self._arm_packet_decoder.reset()
             self._last_arm_epoch = self._last_arm_sequence = None

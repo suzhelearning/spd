@@ -180,5 +180,55 @@ TEST(PicoWristAlignment, AlignmentResetDoesNotReuseOldBaseline) {
   EXPECT_EQ(alignment.stableCount(ArmSide::kLeft), 1U);
 }
 
+TEST(PicoWristAlignment, StaleRecoveryReacquiresMovedWristWithoutJump) {
+  PicoWristAlignment alignment({2U, 0.02, 0.15, 1.0});
+  const Pose robot_left = pose({1.0, 2.0, 3.0});
+  const Pose robot_right = pose({-1.0, -2.0, -3.0});
+  PicoTeleopFrame frame = frameAt(1U, pose({0.1, 0.2, 0.3}),
+                                  pose({-0.1, -0.2, -0.3}));
+  ASSERT_FALSE(alignment.update(frame, robot_left, robot_right).left.valid);
+  frame.sequence = 2U;
+  ASSERT_TRUE(alignment.update(frame, robot_left, robot_right).left.valid);
+
+  // Move after establishment so the stale transition must not retain the
+  // previous accepted target.
+  frame.sequence = 3U;
+  frame.left.position.x() += 0.01;
+  const WristAlignmentUpdate moved =
+      alignment.update(frame, robot_left, robot_right);
+  ASSERT_TRUE(moved.left.valid);
+  EXPECT_NEAR(moved.left.target.position.x(), 1.01, 1e-12);
+
+  // A stale/inactive transition drops the accepted target as well as the
+  // baseline. The opposite side remains live.
+  frame.sequence = 4U;
+  frame.left_wrist_active = false;
+  const WristAlignmentUpdate stale =
+      alignment.update(frame, robot_left, robot_right);
+  EXPECT_FALSE(stale.left.valid);
+  EXPECT_EQ(stale.left.hold_reason, "inactive");
+  EXPECT_TRUE(stale.right.valid);
+  EXPECT_TRUE(stale.left.target.position.isApprox(robot_left.position));
+  EXPECT_EQ(alignment.stableCount(ArmSide::kLeft), 0U);
+
+  // The first same-epoch frame after stale starts a fresh window even though
+  // the wrist moved while the input was unavailable.
+  frame.sequence = 5U;
+  frame.left_wrist_active = true;
+  frame.left.position.x() += 1.0;
+  const WristAlignmentUpdate recovering =
+      alignment.update(frame, robot_left, robot_right);
+  EXPECT_FALSE(recovering.left.valid);
+  EXPECT_EQ(recovering.left.hold_reason, "stable_window");
+  EXPECT_TRUE(recovering.left.target.position.isApprox(robot_left.position));
+  EXPECT_EQ(alignment.stableCount(ArmSide::kLeft), 1U);
+
+  frame.sequence = 6U;
+  const WristAlignmentUpdate reacquired =
+      alignment.update(frame, robot_left, robot_right);
+  EXPECT_TRUE(reacquired.left.valid);
+  EXPECT_TRUE(reacquired.left.target.position.isApprox(robot_left.position));
+}
+
 }  // namespace
 }  // namespace tianji_qp_ik

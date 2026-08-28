@@ -112,7 +112,7 @@
                   <geom type="mesh" rgba="0 1 0 1" mesh="Link7_L" />
                   <geom size="0.025" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" />
                   <site name="tcp_L" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" size="0.008" rgba="1 0.2 0.2 1" />
-                  <body name="l_wrist" pos="0.00300018066802 -0.131499815111 0.000300120253961" quat="-0.707106781187 -2.59734823722e-06 -1.49735685224e-22 0.707106781182">
+                  <body name="l_wrist" pos="0.00300018066802 -0.131499815111 0.000300120253961" quat="0.707106781182 -0.707106781187 -2.59734823722e-06 -1.49735685224e-22">
                     <site name="l_wrist_target" pos="0 0 0" quat="1 0 0 0" size="0.008" rgba="1 0.2 0.2 1" />
                   <inertial pos="-0.00354846481181 0.00346683963964 -0.0356860644391" mass="0.2323" quat="-0.69289634 -0.10762174 0.04153368 0.71174938" diaginertia="1.55584549e-04 9.95156428e-05 7.71172334e-05" />
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.75 0.75 0.75 1" mesh="l_wrist" />
@@ -287,7 +287,7 @@
                   <geom type="mesh" rgba="0 1 0 1" mesh="Link7_R" />
                   <geom size="0.025" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1" />
                   <site name="tcp_R" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" size="0.008" rgba="0.2 0.4 1 1" />
-                  <body name="r_wrist" pos="-0.00299986684686 -0.131500011019 0.000250148980875" quat="3.20057381505e-06 0.707106781184 0.707106781158 -5.79792205224e-06">
+                  <body name="r_wrist" pos="-0.00299986684686 -0.131500011019 0.000250148980875" quat="-5.79792205224e-06 3.20057381505e-06 0.707106781184 0.707106781158">
                     <site name="r_wrist_target" pos="0 0 0" quat="1 0 0 0" size="0.008" rgba="0.2 0.4 1 1" />
                   <inertial pos="-0.00354289960216 -0.00346747236064 -0.0356950477108" mass="0.2323" quat="0.10780268 0.69274370 0.71186097 0.04169786" diaginertia="1.55670709e-04 9.95644502e-05 7.71545957e-05" />
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.75 0.75 0.75 1" mesh="r_wrist" />
@@ -434,7 +434,7 @@
       <site name="target_site_R" type="box" size="0.035 0.003 0.003" rgba="0 0.2 1 0.8" />
     </body>
   <camera name="top" pos="0.5 0 1.8" quat="0.999446136082 0 0.0332779367103 0" fovy="70.0" /></worldbody>
-<actuator><position name="Joint1_L_position" joint="Joint1_L" kp="25" kv="1.36442274251" ctrlrange="-1.5708 3.1067" forcerange="-108 108" /><position name="Joint2_L_position" joint="Joint2_L" kp="25" kv="13.0652460116" ctrlrange="-2.0944 2.0944" forcerange="-108 108" /><position name="Joint3_L_position" joint="Joint3_L" kp="25" kv="1.1338240342" ctrlrange="-3.1067 0" forcerange="-66 66" /><position name="Joint4_L_position" joint="Joint4_L" kp="25" kv="6.22655235795" ctrlrange="-2.5307 0" forcerange="-66 66" /><position name="Joint5_L_position" joint="Joint5_L" kp="25" kv="0.913870497731" ctrlrange="-3.1067 3.1067" forcerange="-18 18" /><position name="Joint6_L_position" joint="Joint6_L" kp="25" kv="1.38711920493" ctrlrange="-1.0472 1.0472" forcerange="-18 18" /><position name="Joint7_L_position" joint="Joint7_L" kp="25" kv="1.18571903992" ctrlrange="-1.5708 1.5708" forcerange="-18 18" /><position name="Joint1_R_position" joint="Joint1_R" kp="25" kv="1.36609206472" ctrlrange="-3.1067 1.5708" forcerange="-108 108" /><position name="Joint2_R_position" joint="Joint2_R" kp="25" kv="13.046431567" ctrlrange="-2.0944 2.0944" forcerange="-108 108" /><position name="Joint3_R_position" joint="Joint3_R" kp="25" kv="1.1358324789" ctrlrange="0 3.1067" forcerange="-66 66" /><position name="Joint4_R_position" joint="Joint4_R" kp="25" kv="6.17517278628" ctrlrange="-2.5307 0" forcerange="-66 66" /><position name="Joint5_R_position" joint="Joint5_R" kp="25" kv="0.916371047814" ctrlrange="-3.1067 3.1067" forcerange="-18 18" /><position name="Joint6_R_position" joint="Joint6_R" kp="25" kv="1.3562689377" ctrlrange="-1.0472 1.0472" forcerange="-18 18" /><position name="Joint7_R_position" joint="Joint7_R" kp="25" kv="1.14754710755" ctrlrange="-1.5708 1.5708" forcerange="-18 18" /><position name="l_THJ0" joint="l_thumb_cmc_flex" kp="1" kv="0.0532097362799" ctrlrange="-1.187 1.291" forcerange="-0.6 0.6" />
+<actuator><position name="Joint1_L_position" joint="Joint1_L" kp="25" kv="1.22224245448" ctrlrange="-1.5708 3.1067" forcerange="-108 108" /><position name="Joint2_L_position" joint="Joint2_L" kp="25" kv="13.3006486033" ctrlrange="-2.0944 2.0944" forcerange="-108 108" /><position name="Joint3_L_position" joint="Joint3_L" kp="25" kv="0.958010449334" ctrlrange="-3.1067 0" forcerange="-66 66" /><position name="Joint4_L_position" joint="Joint4_L" kp="25" kv="6.50873341258" ctrlrange="-2.5307 0" forcerange="-66 66" /><position name="Joint5_L_position" joint="Joint5_L" kp="25" kv="0.683662355658" ctrlrange="-3.1067 3.1067" forcerange="-18 18" /><position name="Joint6_L_position" joint="Joint6_L" kp="25" kv="1.72780468611" ctrlrange="-1.0472 1.0472" forcerange="-18 18" /><position name="Joint7_L_position" joint="Joint7_L" kp="25" kv="1.72332634929" ctrlrange="-1.5708 1.5708" forcerange="-18 18" /><position name="Joint1_R_position" joint="Joint1_R" kp="25" kv="1.22221567194" ctrlrange="-3.1067 1.5708" forcerange="-108 108" /><position name="Joint2_R_position" joint="Joint2_R" kp="25" kv="13.3004040898" ctrlrange="-2.0944 2.0944" forcerange="-108 108" /><position name="Joint3_R_position" joint="Joint3_R" kp="25" kv="0.957976590962" ctrlrange="0 3.1067" forcerange="-66 66" /><position name="Joint4_R_position" joint="Joint4_R" kp="25" kv="6.50690162787" ctrlrange="-2.5307 0" forcerange="-66 66" /><position name="Joint5_R_position" joint="Joint5_R" kp="25" kv="0.683615784861" ctrlrange="-3.1067 3.1067" forcerange="-18 18" /><position name="Joint6_R_position" joint="Joint6_R" kp="25" kv="1.72739155963" ctrlrange="-1.0472 1.0472" forcerange="-18 18" /><position name="Joint7_R_position" joint="Joint7_R" kp="25" kv="1.72285731243" ctrlrange="-1.5708 1.5708" forcerange="-18 18" /><position name="l_THJ0" joint="l_thumb_cmc_flex" kp="1" kv="0.0532097362799" ctrlrange="-1.187 1.291" forcerange="-0.6 0.6" />
     <position name="l_THJ1" joint="l_thumb_cmc_abd" kp="1" kv="0.0532496796787" ctrlrange="-1.484 0.698" forcerange="-0.6 0.6" />
     <position name="l_THJ2" joint="l_thumb_mcp" kp="1" kv="0.0145775957721" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
     <position name="l_THJ3" joint="l_thumb_ip" kp="1" kv="0.00441965939614" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
@@ -445,7 +445,7 @@
     <position name="l_MFJ0" joint="l_middle_finger_mcp_flex" kp="1" kv="0.0538576784013" ctrlrange="-1.047 1.57" forcerange="-2 2" />
     <position name="l_MFJ1" joint="l_middle_finger_mcp_abd" kp="1" kv="0.0235860340585" ctrlrange="-0.698 0.698" forcerange="-0.2 0.2" />
     <position name="l_MFJ2" joint="l_middle_finger_pip" kp="1" kv="0.00983454435993" ctrlrange="-1.047 2.094" forcerange="-0.3 0.3" />
-    <position name="l_MFJ3" joint="l_middle_finger_dip" kp="1" kv="0.00260485042583" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
+    <position name="l_MFJ3" joint="l_middle_finger_dip" kp="1" kv="0.00260485042584" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
     <position name="l_RFJ0" joint="l_ring_finger_mcp_flex" kp="1" kv="0.0538576784013" ctrlrange="-1.047 1.57" forcerange="-2 2" />
     <position name="l_RFJ1" joint="l_ring_finger_mcp_abd" kp="1" kv="0.0235860340585" ctrlrange="-0.698 0.698" forcerange="-0.2 0.2" />
     <position name="l_RFJ2" joint="l_ring_finger_pip" kp="1" kv="0.00983454435993" ctrlrange="-1.047 2.094" forcerange="-0.3 0.3" />
@@ -461,7 +461,7 @@
     <position name="r_FFJ0" joint="r_index_finger_mcp_flex" kp="1" kv="0.0538576785216" ctrlrange="-1.047 1.57" forcerange="-2 2" />
     <position name="r_FFJ1" joint="r_index_finger_mcp_abd" kp="1" kv="0.0235860340585" ctrlrange="-0.698 0.698" forcerange="-0.2 0.2" />
     <position name="r_FFJ2" joint="r_index_finger_pip" kp="1" kv="0.00983454435993" ctrlrange="-1.047 2.094" forcerange="-0.3 0.3" />
-    <position name="r_FFJ3" joint="r_index_finger_dip" kp="1" kv="0.00260485042583" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
+    <position name="r_FFJ3" joint="r_index_finger_dip" kp="1" kv="0.00260485042584" ctrlrange="-1.047 1.57" forcerange="-0.3 0.3" />
     <position name="r_MFJ0" joint="r_middle_finger_mcp_flex" kp="1" kv="0.0538576785216" ctrlrange="-1.047 1.57" forcerange="-2 2" />
     <position name="r_MFJ1" joint="r_middle_finger_mcp_abd" kp="1" kv="0.0235860340585" ctrlrange="-0.698 0.698" forcerange="-0.2 0.2" />
     <position name="r_MFJ2" joint="r_middle_finger_pip" kp="1" kv="0.00983454435993" ctrlrange="-1.047 2.094" forcerange="-0.3 0.3" />

@@ -189,6 +189,8 @@ void PicoWristAlignment::clearSide(SideState& state) noexcept {
   state.has_candidate = false;
   state.candidate_count = 0U;
   state.has_reference = false;
+  state.has_last_target = false;
+  state.last_target = Pose{};
 }
 
 }  // namespace tianji_qp_ik

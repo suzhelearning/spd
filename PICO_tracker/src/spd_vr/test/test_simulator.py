@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 
+import pytest
 from spd_vr import simulator as simulator_module
 from spd_vr.arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, RIGHT_VALID
 from spd_vr.simulator import CameraRequest, UnifiedSimulator
@@ -123,5 +124,37 @@ def test_pause_blocks_existing_camera_and_recorder_queue_work():
             time.sleep(0.01)
         assert camera_calls == [1]
         assert recorder_calls == [1]
+    finally:
+        simulator.close()
+
+def test_pause_barrier_timeout_does_not_enter_paused_state():
+    class Camera:
+        def capture(self, sim_time_ns):
+            return {}
+
+    class Recorder:
+        def submit(self, **item):
+            return None
+
+    class AckThatNeverCompletes:
+        def clear(self):
+            return None
+
+        def wait(self, timeout):
+            return False
+
+    simulator = UnifiedSimulator(
+        MODEL,
+        MANIFEST,
+        camera_provider=Camera(),
+        recorder=Recorder(),
+    )
+    simulator._camera_pause_ack = AckThatNeverCompletes()
+    simulator._recorder_pause_ack = AckThatNeverCompletes()
+    try:
+        with pytest.raises(RuntimeError, match="pause barrier timeout"):
+            simulator.set_paused(True)
+        assert simulator.paused is False
+        assert simulator._worker_pause.is_set() is False
     finally:
         simulator.close()

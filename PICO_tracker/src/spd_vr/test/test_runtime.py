@@ -257,3 +257,65 @@ def test_mock_runtime_still_writes_a_valid_episode(tmp_path):
     manifest = json.loads((episode / "manifest.json").read_text())
     assert manifest["task_reset_manifest"]["teleop"]["input"] == "mock_pico_hands"
     assert (episode / "manifest.json").is_file()
+
+def test_live_tick_pacer_uses_deadlines_and_resets_after_pause():
+    from spd_vr.runtime import _LiveTickPacer
+
+    class FakeClock:
+        def __init__(self):
+            self.now_ns = 10_000
+            self.sleeps_ns = []
+
+        def now(self):
+            return self.now_ns
+
+        def sleep(self, seconds):
+            duration_ns = int(round(seconds * 1_000_000_000))
+            self.sleeps_ns.append(duration_ns)
+            self.now_ns += duration_ns
+
+    clock = FakeClock()
+    pacer = _LiveTickPacer(1_000_000_000 // 480, clock.now, clock.sleep)
+
+    pacer.wait()
+    assert clock.sleeps_ns == []
+    pacer.wait()
+    assert clock.sleeps_ns == [1_000_000_000 // 480]
+
+    # Pause resets the deadline; resume starts from the current instant and
+    # must not sleep for a stale pre-pause deadline.
+    pacer.reset()
+    pacer.wait()
+    assert clock.sleeps_ns == [1_000_000_000 // 480]
+
+def test_mock_runs_persist_deterministic_sim_clock_timestamps(tmp_path):
+    import h5py
+
+    from spd_vr.runtime import MOCK_EPOCH_NS
+
+    episodes = []
+    for name in ("first", "second"):
+        episodes.append(
+            run_runtime(
+                output=tmp_path / name,
+                scene="jenga",
+                task="handover_lr",
+                duration_s=0.05,
+                seed=23,
+                headless=True,
+                mock=True,
+            )
+        )
+
+    with h5py.File(episodes[0] / "episode.hdf5", "r") as first, h5py.File(
+        episodes[1] / "episode.hdf5", "r"
+    ) as second:
+        first_timestamps = first["timestamps/hands_ns"][:]
+        second_timestamps = second["timestamps/hands_ns"][:]
+    np.testing.assert_array_equal(first_timestamps, second_timestamps)
+    assert first_timestamps[0] == MOCK_EPOCH_NS
+    assert np.all(first_timestamps >= MOCK_EPOCH_NS)
+    np.testing.assert_array_equal(
+        first_timestamps - MOCK_EPOCH_NS,
+        np.asarray([0, 16_666_667, 35_416_667], dtype=np.uint64),
+    )

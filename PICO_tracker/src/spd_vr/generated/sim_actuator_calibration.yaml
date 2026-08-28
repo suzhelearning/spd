@@ -22,240 +22,240 @@ actuators:
   name: Joint1_L_position
   joint: Joint1_L
   group: arm
-  mass_ii_home: 0.018616494202716178
+  mass_ii_home: 0.014938766175402655
   kp: 25.0
-  kd: 1.3644227425074744
+  kd: 1.2222424544828516
   metrics:
-    tracking_p95_rad: 6.081585293299567e-18
+    tracking_p95_rad: 8.563901435770662e-20
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 1
   name: Joint2_L_position
   joint: Joint2_L
   group: arm
-  mass_ii_home: 1.7070065334439484
+  mass_ii_home: 1.769072532694806
   kp: 25.0
-  kd: 13.06524601162928
+  kd: 13.300648603338132
   metrics:
-    tracking_p95_rad: 0.0010888001539645718
+    tracking_p95_rad: 0.0011651010663263192
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 2
   name: Joint3_L_position
   joint: Joint3_L
   group: arm
-  mass_ii_home: 0.01285556940533625
+  mass_ii_home: 0.009177840210336305
   kp: 25.0
-  kd: 1.1338240342017913
+  kd: 0.9580104493342599
   metrics:
-    tracking_p95_rad: 3.52542512208739e-21
+    tracking_p95_rad: 1.0776819894469887e-24
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 3
   name: Joint4_L_position
   joint: Joint4_L
   group: arm
-  mass_ii_home: 0.3876995426627787
+  mass_ii_home: 0.42363610636085813
   kp: 25.0
-  kd: 6.226552357948808
+  kd: 6.508733412583881
   metrics:
-    tracking_p95_rad: 1.6275359569039747e-05
+    tracking_p95_rad: 2.3052912646885103e-05
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 4
   name: Joint5_L_position
   joint: Joint5_L
   group: arm
-  mass_ii_home: 0.008351592866223391
+  mass_ii_home: 0.004673942165444918
   kp: 25.0
-  kd: 0.9138704977305806
+  kd: 0.6836623556584726
   metrics:
-    tracking_p95_rad: 8.66362225106043e-26
+    tracking_p95_rad: 8.642083038653863e-34
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 5
   name: Joint6_L_position
   joint: Joint6_L
   group: arm
-  mass_ii_home: 0.019240996886731046
+  mass_ii_home: 0.029853090333588045
   kp: 25.0
-  kd: 1.3871192049254832
+  kd: 1.727804686114378
   metrics:
-    tracking_p95_rad: 1.1076997611252475e-17
+    tracking_p95_rad: 1.3525652332964544e-14
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 6
   name: Joint7_L_position
   joint: Joint7_L
   group: arm
-  mass_ii_home: 0.014059296416188909
+  mass_ii_home: 0.02969853706146868
   kp: 25.0
-  kd: 1.1857190399158186
+  kd: 1.7233263492870026
   metrics:
-    tracking_p95_rad: 2.4289619013944795e-20
+    tracking_p95_rad: 1.2545811786217018e-14
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 7
   name: Joint1_R_position
   joint: Joint1_R
   group: arm
-  mass_ii_home: 0.01866207529293844
+  mass_ii_home: 0.01493811148724675
   kp: 25.0
-  kd: 1.3660920647210582
+  kd: 1.222215671935471
   metrics:
-    tracking_p95_rad: 6.360106415117363e-18
+    tracking_p95_rad: 8.556227932358691e-20
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 8
   name: Joint2_R_position
   joint: Joint2_R
   group: arm
-  mass_ii_home: 1.7020937663288438
+  mass_ii_home: 1.7690074895249093
   kp: 25.0
-  kd: 13.046431567018024
+  kd: 13.300404089819637
   metrics:
-    tracking_p95_rad: 0.0010828077320033797
+    tracking_p95_rad: 0.0011650205500249313
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 9
   name: Joint3_R_position
   joint: Joint3_R
   group: arm
-  mass_ii_home: 0.012901154201295227
+  mass_ii_home: 0.00917719148831901
   kp: 25.0
-  kd: 1.1358324789023788
+  kd: 0.9579765909623789
   metrics:
-    tracking_p95_rad: 3.811331658736181e-21
+    tracking_p95_rad: 1.0756958896788102e-24
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 10
   name: Joint4_R_position
   joint: Joint4_R
   group: arm
-  mass_ii_home: 0.3813275894046658
+  mass_ii_home: 0.4233976879483749
   kp: 25.0
-  kd: 6.17517278628433
+  kd: 6.506901627874629
   metrics:
-    tracking_p95_rad: 1.5223478247573825e-05
+    tracking_p95_rad: 2.300311257173249e-05
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 11
   name: Joint5_R_position
   joint: Joint5_R
   group: arm
-  mass_ii_home: 0.008397358972722197
+  mass_ii_home: 0.004673305413113573
   kp: 25.0
-  kd: 0.9163710478142681
+  kd: 0.6836157848611728
   metrics:
-    tracking_p95_rad: 1.0058613990655783e-25
+    tracking_p95_rad: 8.599132667648144e-34
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 12
   name: Joint6_R_position
   joint: Joint6_R
   group: arm
-  mass_ii_home: 0.01839465431380057
+  mass_ii_home: 0.029838816002956587
   kp: 25.0
-  kd: 1.3562689377037493
+  kd: 1.7273915596342535
   metrics:
-    tracking_p95_rad: 4.879070456951861e-18
+    tracking_p95_rad: 1.3432364756323444e-14
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 13
   name: Joint7_R_position
   joint: Joint7_R
   group: arm
-  mass_ii_home: 0.013168643640531254
+  mass_ii_home: 0.029682373189952996
   kp: 25.0
-  kd: 1.1475471075529429
+  kd: 1.7228573124305158
   metrics:
-    tracking_p95_rad: 5.973652976551389e-21
+    tracking_p95_rad: 1.2447105494981605e-14
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 14
   name: l_THJ0
   joint: l_thumb_cmc_flex
   group: hand
-  mass_ii_home: 0.0007078190087440998
+  mass_ii_home: 0.0007078190087441123
   kp: 1.0
-  kd: 0.05320973627989899
+  kd: 0.05320973627989946
   metrics:
-    tracking_p95_rad: 2.3719048315011807e-18
+    tracking_p95_rad: 2.3719048315019726e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 15
   name: l_THJ1
   joint: l_thumb_cmc_abd
   group: hand
-  mass_ii_home: 0.0007088820964701032
+  mass_ii_home: 0.0007088820964701047
   kp: 1.0
-  kd: 0.053249679678664855
+  kd: 0.05324967967866491
   metrics:
-    tracking_p95_rad: 2.439731571437609e-18
+    tracking_p95_rad: 2.4397315714376954e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 16
   name: l_THJ2
   joint: l_thumb_mcp
   group: hand
-  mass_ii_home: 5.312657462397532e-05
+  mass_ii_home: 5.312657462397418e-05
   kp: 1.0
-  kd: 0.014577595772139565
+  kd: 0.014577595772139407
   metrics:
-    tracking_p95_rad: 1.3035919930500028e-61
+    tracking_p95_rad: 1.3035919930480761e-61
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 17
   name: l_THJ3
   joint: l_thumb_ip
   group: hand
-  mass_ii_home: 4.883347294479396e-06
+  mass_ii_home: 4.883347294478942e-06
   kp: 1.0
-  kd: 0.00441965939614328
+  kd: 0.004419659396143075
   metrics:
-    tracking_p95_rad: 1.4807623085602475e-198
+    tracking_p95_rad: 1.4807623085291041e-198
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 18
   name: l_FFJ0
   joint: l_index_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.0007251623806934771
+  mass_ii_home: 0.0007251623806934773
   kp: 1.0
-  kd: 0.05385767840126335
+  kd: 0.053857678401263355
   metrics:
-    tracking_p95_rad: 3.728068039108298e-18
+    tracking_p95_rad: 3.728068039108325e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 19
   name: l_FFJ1
   joint: l_index_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.00013907525065271736
+  mass_ii_home: 0.00013907525065270953
   kp: 1.0
-  kd: 0.023586034058545525
+  kd: 0.02358603405854486
   metrics:
-    tracking_p95_rad: 7.456926539449283e-39
+    tracking_p95_rad: 7.456926539431481e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 20
   name: l_FFJ2
   joint: l_index_finger_pip
   group: hand
-  mass_ii_home: 2.417956569185985e-05
+  mass_ii_home: 2.417956569185931e-05
   kp: 1.0
-  kd: 0.009834544359930428
+  kd: 0.009834544359930319
   metrics:
-    tracking_p95_rad: 2.3920267707352326e-90
+    tracking_p95_rad: 2.3920267707297937e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 21
   name: l_FFJ3
   joint: l_index_finger_dip
   group: hand
-  mass_ii_home: 1.6963114352424482e-06
+  mass_ii_home: 1.6963114352429992e-06
   kp: 1.0
-  kd: 0.0026048504258344264
+  kd: 0.0026048504258348493
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -264,42 +264,42 @@ actuators:
   name: l_MFJ0
   joint: l_middle_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.0007251623806934771
+  mass_ii_home: 0.0007251623806934827
   kp: 1.0
-  kd: 0.05385767840126335
+  kd: 0.053857678401263556
   metrics:
-    tracking_p95_rad: 3.728068039108298e-18
+    tracking_p95_rad: 3.7280680391088545e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 23
   name: l_MFJ1
   joint: l_middle_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.00013907525065271227
+  mass_ii_home: 0.00013907525065271647
   kp: 1.0
-  kd: 0.02358603405854509
+  kd: 0.02358603405854545
   metrics:
-    tracking_p95_rad: 7.456926539437733e-39
+    tracking_p95_rad: 7.456926539447271e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 24
   name: l_MFJ2
   joint: l_middle_finger_pip
   group: hand
-  mass_ii_home: 2.417956569185966e-05
+  mass_ii_home: 2.4179565691861867e-05
   kp: 1.0
-  kd: 0.00983454435993039
+  kd: 0.00983454435993084
   metrics:
-    tracking_p95_rad: 2.392026770733329e-90
+    tracking_p95_rad: 2.392026770755492e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 25
   name: l_MFJ3
   joint: l_middle_finger_dip
   group: hand
-  mass_ii_home: 1.696311435242421e-06
+  mass_ii_home: 1.6963114352436213e-06
   kp: 1.0
-  kd: 0.0026048504258344056
+  kd: 0.002604850425835327
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -308,42 +308,42 @@ actuators:
   name: l_RFJ0
   joint: l_ring_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.000725162380693477
+  mass_ii_home: 0.0007251623806934672
   kp: 1.0
-  kd: 0.05385767840126334
+  kd: 0.05385767840126298
   metrics:
-    tracking_p95_rad: 3.728068039108298e-18
+    tracking_p95_rad: 3.728068039107371e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 27
   name: l_RFJ1
   joint: l_ring_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.00013907525065271994
+  mass_ii_home: 0.00013907525065271409
   kp: 1.0
-  kd: 0.023586034058545743
+  kd: 0.023586034058545247
   metrics:
-    tracking_p95_rad: 7.456926539455217e-39
+    tracking_p95_rad: 7.456926539441865e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 28
   name: l_RFJ2
   joint: l_ring_finger_pip
   group: hand
-  mass_ii_home: 2.4179565691859756e-05
+  mass_ii_home: 2.417956569185877e-05
   kp: 1.0
-  kd: 0.009834544359930409
+  kd: 0.00983454435993021
   metrics:
-    tracking_p95_rad: 2.3920267707342808e-90
+    tracking_p95_rad: 2.392026770724355e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 29
   name: l_RFJ3
   joint: l_ring_finger_dip
   group: hand
-  mass_ii_home: 1.6963114352423703e-06
+  mass_ii_home: 1.6963114352414893e-06
   kp: 1.0
-  kd: 0.0026048504258343666
+  kd: 0.00260485042583369
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -352,42 +352,42 @@ actuators:
   name: l_LFJ0
   joint: l_pinky_mcp_flex
   group: hand
-  mass_ii_home: 0.0006813341251129044
+  mass_ii_home: 0.0006813341251129074
   kp: 1.0
-  kd: 0.052204755534832434
+  kd: 0.052204755534832545
   metrics:
-    tracking_p95_rad: 1.150404181621003e-18
+    tracking_p95_rad: 1.1504041816210927e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 31
   name: l_LFJ1
   joint: l_pinky_mcp_abd
   group: hand
-  mass_ii_home: 0.00010829185639800297
+  mass_ii_home: 0.00010829185639800432
   kp: 1.0
-  kd: 0.020812674638114436
+  kd: 0.020812674638114564
   metrics:
-    tracking_p95_rad: 9.232427911914621e-44
+    tracking_p95_rad: 9.232427911920132e-44
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 32
   name: l_LFJ2
   joint: l_pinky_pip
   group: hand
-  mass_ii_home: 2.0820894058719457e-05
+  mass_ii_home: 2.0820894058718844e-05
   kp: 1.0
-  kd: 0.009125983576298931
+  kd: 0.009125983576298798
   metrics:
-    tracking_p95_rad: 3.321983470290886e-97
+    tracking_p95_rad: 3.3219834702801227e-97
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 33
   name: l_LFJ3
   joint: l_pinky_dip
   group: hand
-  mass_ii_home: 1.6963114352424592e-06
+  mass_ii_home: 1.6963114352427508e-06
   kp: 1.0
-  kd: 0.0026048504258344347
+  kd: 0.002604850425834659
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -396,86 +396,86 @@ actuators:
   name: r_THJ0
   joint: r_thumb_cmc_flex
   group: hand
-  mass_ii_home: 0.0007071839413482284
+  mass_ii_home: 0.0007071839413482273
   kp: 1.0
-  kd: 0.05318586057772229
+  kd: 0.053185860577722247
   metrics:
-    tracking_p95_rad: 2.3322188356729185e-18
+    tracking_p95_rad: 2.3322188356728522e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 35
   name: r_THJ1
   joint: r_thumb_cmc_abd
   group: hand
-  mass_ii_home: 0.0007022227200413555
+  mass_ii_home: 0.0007022227200413577
   kp: 1.0
-  kd: 0.052998970557600666
+  kd: 0.05299897055760074
   metrics:
-    tracking_p95_rad: 2.0425874651738284e-18
+    tracking_p95_rad: 2.0425874651739594e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 36
   name: r_THJ2
   joint: r_thumb_mcp
   group: hand
-  mass_ii_home: 5.312369659256397e-05
+  mass_ii_home: 5.312369659256404e-05
   kp: 1.0
-  kd: 0.014577200909991461
+  kd: 0.014577200909991471
   metrics:
-    tracking_p95_rad: 1.2987563927278997e-61
+    tracking_p95_rad: 1.2987563927280102e-61
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 37
   name: r_THJ3
   joint: r_thumb_ip
   group: hand
-  mass_ii_home: 4.883363063068327e-06
+  mass_ii_home: 4.883363063068623e-06
   kp: 1.0
-  kd: 0.004419666531795505
+  kd: 0.004419666531795639
   metrics:
-    tracking_p95_rad: 1.4818445630041896e-198
+    tracking_p95_rad: 1.4818445630244901e-198
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 38
   name: r_FFJ0
   joint: r_index_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.0007251623839338103
+  mass_ii_home: 0.0007251623839338057
   kp: 1.0
-  kd: 0.053857678521592824
+  kd: 0.05385767852159265
   metrics:
-    tracking_p95_rad: 3.728068348415934e-18
+    tracking_p95_rad: 3.728068348415483e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 39
   name: r_FFJ1
   joint: r_index_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.0001390752506527152
+  mass_ii_home: 0.00013907525065270715
   kp: 1.0
-  kd: 0.02358603405854534
+  kd: 0.023586034058544657
   metrics:
-    tracking_p95_rad: 7.456926539444409e-39
+    tracking_p95_rad: 7.456926539426076e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 40
   name: r_FFJ2
   joint: r_index_finger_pip
   group: hand
-  mass_ii_home: 2.4179565691859993e-05
+  mass_ii_home: 2.4179565691858502e-05
   kp: 1.0
-  kd: 0.009834544359930458
+  kd: 0.009834544359930154
   metrics:
-    tracking_p95_rad: 2.3920267707366605e-90
+    tracking_p95_rad: 2.3920267707216354e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 41
   name: r_FFJ3
   joint: r_index_finger_dip
   group: hand
-  mass_ii_home: 1.6963114352424092e-06
+  mass_ii_home: 1.696311435243637e-06
   kp: 1.0
-  kd: 0.0026048504258343965
+  kd: 0.0026048504258353393
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -484,42 +484,42 @@ actuators:
   name: r_MFJ0
   joint: r_middle_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.0007251623839338102
+  mass_ii_home: 0.0007251623839338166
   kp: 1.0
-  kd: 0.053857678521592824
+  kd: 0.05385767852159306
   metrics:
-    tracking_p95_rad: 3.728068348415907e-18
+    tracking_p95_rad: 3.728068348416542e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 43
   name: r_MFJ1
   joint: r_middle_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.00013907525065271452
+  mass_ii_home: 0.00013907525065271907
   kp: 1.0
-  kd: 0.023586034058545282
+  kd: 0.02358603405854567
   metrics:
-    tracking_p95_rad: 7.456926539442819e-39
+    tracking_p95_rad: 7.456926539453205e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 44
   name: r_MFJ2
   joint: r_middle_finger_pip
   group: hand
-  mass_ii_home: 2.417956569185958e-05
+  mass_ii_home: 2.4179565691859485e-05
   kp: 1.0
-  kd: 0.009834544359930374
+  kd: 0.009834544359930354
   metrics:
-    tracking_p95_rad: 2.392026770732513e-90
+    tracking_p95_rad: 2.3920267707315613e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 45
   name: r_MFJ3
   joint: r_middle_finger_dip
   group: hand
-  mass_ii_home: 1.6963114352424363e-06
+  mass_ii_home: 1.6963114352427866e-06
   kp: 1.0
-  kd: 0.0026048504258344173
+  kd: 0.0026048504258346862
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -528,42 +528,42 @@ actuators:
   name: r_RFJ0
   joint: r_ring_finger_mcp_flex
   group: hand
-  mass_ii_home: 0.0007251623839338104
+  mass_ii_home: 0.0007251623839338106
   kp: 1.0
-  kd: 0.05385767852159283
+  kd: 0.05385767852159284
   metrics:
-    tracking_p95_rad: 3.728068348415934e-18
+    tracking_p95_rad: 3.72806834841596e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 47
   name: r_RFJ1
   joint: r_ring_finger_mcp_abd
   group: hand
-  mass_ii_home: 0.00013907525065271856
+  mass_ii_home: 0.00013907525065271127
   kp: 1.0
-  kd: 0.023586034058545625
+  kd: 0.023586034058545008
   metrics:
-    tracking_p95_rad: 7.456926539452038e-39
+    tracking_p95_rad: 7.456926539435508e-39
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 48
   name: r_RFJ2
   joint: r_ring_finger_pip
   group: hand
-  mass_ii_home: 2.4179565691859905e-05
+  mass_ii_home: 2.417956569186024e-05
   kp: 1.0
-  kd: 0.00983454435993044
+  kd: 0.009834544359930508
   metrics:
-    tracking_p95_rad: 2.3920267707357767e-90
+    tracking_p95_rad: 2.392026770739176e-90
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 49
   name: r_RFJ3
   joint: r_ring_finger_dip
   group: hand
-  mass_ii_home: 1.6963114352423974e-06
+  mass_ii_home: 1.6963114352421898e-06
   kp: 1.0
-  kd: 0.0026048504258343874
+  kd: 0.0026048504258342283
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0
@@ -572,42 +572,42 @@ actuators:
   name: r_LFJ0
   joint: r_pinky_mcp_flex
   group: hand
-  mass_ii_home: 0.0006813341277914179
+  mass_ii_home: 0.0006813341277914177
   kp: 1.0
-  kd: 0.05220475563744812
+  kd: 0.052204755637448114
   metrics:
-    tracking_p95_rad: 1.1504042682521557e-18
+    tracking_p95_rad: 1.1504042682521476e-18
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 51
   name: r_LFJ1
   joint: r_pinky_mcp_abd
   group: hand
-  mass_ii_home: 0.00010829185636420551
+  mass_ii_home: 0.00010829185636420128
   kp: 1.0
-  kd: 0.02081267463486666
+  kd: 0.020812674634866253
   metrics:
-    tracking_p95_rad: 9.232427773469946e-44
+    tracking_p95_rad: 9.23242777345263e-44
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 52
   name: r_LFJ2
   joint: r_pinky_pip
   group: hand
-  mass_ii_home: 2.08208940587191e-05
+  mass_ii_home: 2.0820894058717062e-05
   kp: 1.0
-  kd: 0.009125983576298853
+  kd: 0.009125983576298406
   metrics:
-    tracking_p95_rad: 3.3219834702846546e-97
+    tracking_p95_rad: 3.321983470248965e-97
     overshoot_rad: 0.0
     force_saturation_ratio: 0.0
 - index: 53
   name: r_LFJ3
   joint: r_pinky_dip
   group: hand
-  mass_ii_home: 1.696311435242377e-06
+  mass_ii_home: 1.6963114352429806e-06
   kp: 1.0
-  kd: 0.002604850425834372
+  kd: 0.002604850425834835
   metrics:
     tracking_p95_rad: 0.0
     overshoot_rad: 0.0

@@ -22,6 +22,42 @@ from .scenes.registry import get_task
 from .simulator import UnifiedSimulator
 
 
+class _LiveTickPacer:
+    """Pace live physics ticks against a monotonic deadline."""
+
+    def __init__(
+        self,
+        period_ns: int,
+        clock_ns: Any | None = None,
+        sleep: Any | None = None,
+    ) -> None:
+        if int(period_ns) <= 0:
+            raise ValueError("period_ns must be positive")
+        self._period_ns = int(period_ns)
+        self._clock_ns = time.monotonic_ns if clock_ns is None else clock_ns
+        self._sleep = time.sleep if sleep is None else sleep
+        self._deadline_ns: int | None = None
+
+    def reset(self) -> None:
+        self._deadline_ns = None
+
+    def wait(self) -> None:
+        now_ns = int(self._clock_ns())
+        if self._deadline_ns is None:
+            self._deadline_ns = now_ns + self._period_ns
+            return
+        remaining_ns = self._deadline_ns - now_ns
+        if remaining_ns > 0:
+            self._sleep(remaining_ns / 1_000_000_000.0)
+            now_ns = int(self._clock_ns())
+        next_deadline_ns = self._deadline_ns + self._period_ns
+        if next_deadline_ns <= now_ns:
+            next_deadline_ns = now_ns + self._period_ns
+        self._deadline_ns = next_deadline_ns
+
+
+MOCK_EPOCH_NS = 1_700_000_000_000_000_000
+
 @dataclass
 class _MockRetargeter:
     """Deterministic zero-cost hand retargeter used only by ``--mock``."""
@@ -40,7 +76,8 @@ class _MockRetargeter:
         })()
 
 
-def _mock_hand_frame(timestamp_ns: int, sequence: int, epoch: int) -> Any:
+def _mock_hand_frame(sim_time_ns: int, sequence: int, epoch: int) -> Any:
+    """Build a deterministic frame whose timestamp belongs to sim time."""
     from .pico_hands import PicoHandFrame
     left = np.zeros((26, 7), dtype=np.float32)
     right = np.zeros((26, 7), dtype=np.float32)
@@ -49,6 +86,7 @@ def _mock_hand_frame(timestamp_ns: int, sequence: int, epoch: int) -> Any:
     for joint in range(26):
         left[joint, :3] = (0.01 * joint, 0.001 * joint, 0.002 * joint)
         right[joint, :3] = (-0.01 * joint, 0.001 * joint, 0.002 * joint)
+    timestamp_ns = MOCK_EPOCH_NS + int(sim_time_ns)
     return PicoHandFrame(left, right, True, True, epoch, sequence, timestamp_ns)
 def _identity_hand_array() -> np.ndarray:
     value = np.zeros((26, 7), dtype=np.float64)
@@ -247,7 +285,6 @@ def run_runtime(
         hand_sequence = 0
         arm_sequence = 0
         epoch = 1
-        start_ns = time.monotonic_ns()
         robot_period_ticks = 8
         next_mock_arm_ns = 0
         next_mock_hand_ns = 0
@@ -257,6 +294,11 @@ def run_runtime(
         mock_hand_period_ns = int(
             round(1_000_000_000 / float(getattr(simulator, "hand_target_hz", 60)))
         )
+        live_pacer = None
+        if mailbox is not None:
+            live_pacer = _LiveTickPacer(
+                int(round(1_000_000_000 / float(simulator.physics_hz)))
+            )
         target_sim_ns = float(duration_s) * 1_000_000_000.0
         last_camera_timestamp = -1
 
@@ -291,28 +333,34 @@ def run_runtime(
                 # A paused wall-clock interval does not consume simulated
                 # time, and no input, physics, recording, or camera work is
                 # performed on this path.
+                if live_pacer is not None:
+                    live_pacer.reset()
                 time.sleep(0.001)
                 continue
             if controller.state.value != "RECORDING":
                 raise RuntimeError(
                     f"episode left recording state: {controller.state.value}; {controller.last_error}"
                 )
+            if live_pacer is not None:
+                live_pacer.wait()
 
             sim_ns = simulator.sim_time_ns
             if mailbox is None:
                 if sim_ns >= next_mock_arm_ns:
                     arm_sequence += 1
-                    now_ns = start_ns + sim_ns
+                    timestamp_ns = MOCK_EPOCH_NS + int(sim_ns)
                     simulator.on_arm_target(
-                        _arm_frame(simulator, arm_sequence, epoch, now_ns)
+                        _arm_frame(simulator, arm_sequence, epoch, timestamp_ns),
+                        now_ns=time.monotonic_ns(),
                     )
                     while next_mock_arm_ns <= sim_ns:
                         next_mock_arm_ns += mock_arm_period_ns
                 if sim_ns >= next_mock_hand_ns:
                     hand_sequence += 1
-                    now_ns = start_ns + sim_ns
-                    hand = _mock_hand_frame(now_ns, hand_sequence, epoch)
-                    simulator.on_pico_hands(hand, now_ns=now_ns)
+                    hand = _mock_hand_frame(sim_ns, hand_sequence, epoch)
+                    simulator.on_pico_hands(
+                        hand, now_ns=time.monotonic_ns()
+                    )
                     record_hand_frame(hand)
                     while next_mock_hand_ns <= sim_ns:
                         next_mock_hand_ns += mock_hand_period_ns

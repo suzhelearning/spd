@@ -812,6 +812,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   timespec deadline{};
   clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline = addNanoseconds(deadline, period_nanoseconds);
+  bool previous_pico_live = false;
 
   while (running.load(std::memory_order_acquire)) {
     const auto cycle_start = std::chrono::steady_clock::now();
@@ -993,9 +994,22 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         }
       }
     }
-
     const PicoTeleopFreshness pico_freshness =
         pico_session.freshness(monotonic_now_ns);
+    if (wrist_endpoint_mode && previous_pico_live &&
+        !pico_freshness.live && pico_freshness.stale) {
+      // A live stream becoming stale invalidates the accepted alignment and
+      // target state. The next same-epoch frame must reacquire its own stable
+      // window instead of applying a target against the old baseline.
+      wrist_alignment.reset();
+      targets = TargetManager(config, currentTargets(robot));
+      latest_wrist_alignment = {};
+      latest_wrist_alignment.left.hold_reason = "input_stale";
+      latest_wrist_alignment.right.hold_reason = "input_stale";
+      latest_left_target_accepted = false;
+      latest_right_target_accepted = false;
+    }
+    previous_pico_live = pico_freshness.live;
     const PicoReceiverStats pico_stats =
         pico_receiver != nullptr ? pico_receiver->stats() : PicoReceiverStats{};
     if (spark_guidance != nullptr &&
