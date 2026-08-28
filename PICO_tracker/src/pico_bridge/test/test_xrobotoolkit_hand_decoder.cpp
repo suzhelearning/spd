@@ -35,6 +35,8 @@ TEST(XroboToolkitHandDecoder, DecodesAtomicCallbackFixture) {
 
     ASSERT_TRUE(result.valid);
     EXPECT_EQ(result.snapshot.source_timestamp_ns, 1724846400000000000LL);
+    EXPECT_DOUBLE_EQ(result.snapshot.left.joints[1][0], 0.101);
+
     EXPECT_DOUBLE_EQ(result.snapshot.right.scale, 1.02);
     EXPECT_EQ(result.snapshot.right.joints[1][6], 1.0);
     EXPECT_TRUE(result.snapshot.left.active);
@@ -56,6 +58,7 @@ TEST(XroboToolkitHandDecoder, InvalidLeftQuaternionDoesNotDiscardRightSide) {
     EXPECT_FALSE(result.snapshot.left.active);
     EXPECT_EQ(result.snapshot.left.rejection_reason, "hand_quaternion_invalid");
     EXPECT_TRUE(result.snapshot.right.structurally_valid);
+    EXPECT_DOUBLE_EQ(result.snapshot.right.joints[1][0], 1.101);
     EXPECT_DOUBLE_EQ(result.snapshot.right.joints[1][6], 1.0);
 }
 
