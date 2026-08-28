@@ -273,8 +273,8 @@ struct ViewerSnapshot {
   std::size_t right_wrist_alignment_count{0U};
   bool left_wrist_aligned{false};
   bool right_wrist_aligned{false};
-  std::string_view left_wrist_hold_reason;
-  std::string_view right_wrist_hold_reason;
+  std::string_view left_wrist_hold_reason{""};
+  std::string_view right_wrist_hold_reason{""};
   PicoUpperLimbSkeleton pico_upper_limb_skeleton;
   PicoUpperLimbSkeleton spark_upper_limb_skeleton;
 };
