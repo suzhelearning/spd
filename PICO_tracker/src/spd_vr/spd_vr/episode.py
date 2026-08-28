@@ -9,7 +9,7 @@ from enum import Enum
 import json
 from pathlib import Path
 import queue
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
 
@@ -55,11 +55,21 @@ class _Checkpoint:
 class EpisodeController:
     """Serialize all operator commands through one queue and state transition."""
 
-    def __init__(self, simulator: Any, task_spec: Any, *, seed: int = 0, recorder: Any | None = None) -> None:
+    def __init__(
+        self,
+        simulator: Any,
+        task_spec: Any,
+        *,
+        seed: int = 0,
+        recorder: Any | None = None,
+        run_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
         self.simulator = simulator
         self.task_spec = task_spec
         self.seed = int(seed)
         self.recorder = recorder
+        self._has_run_metadata = run_metadata is not None
+        self.run_metadata = copy.deepcopy(dict(run_metadata or {}))
         self.state = EpisodeState.IDLE
         self.state_epoch = 0
         self.episode_id = 0
@@ -145,7 +155,9 @@ class EpisodeController:
         self.episode_id += 1
         self.state_epoch += 1
         scene_result = self.task_spec.reset(self.seed + self.episode_id - 1)
-        self._manifest = scene_result.manifest()
+        self._manifest = copy.deepcopy(scene_result.manifest())
+        if self._has_run_metadata:
+            self._manifest["teleop"] = copy.deepcopy(self.run_metadata)
         reset_scene = getattr(self.simulator, "reset_scene", None)
         if reset_scene is not None:
             reset_scene(scene_result)
@@ -170,6 +182,9 @@ class EpisodeController:
 
     def _pause(self) -> str:
         if self.state == EpisodeState.RECORDING:
+            set_paused = getattr(self.simulator, "set_paused", None)
+            if set_paused is not None:
+                set_paused(True)
             self.state = EpisodeState.PAUSED
             self.state_epoch += 1
             return "paused"
@@ -177,6 +192,9 @@ class EpisodeController:
 
     def _resume(self) -> str:
         if self.state == EpisodeState.PAUSED:
+            set_paused = getattr(self.simulator, "set_paused", None)
+            if set_paused is not None:
+                set_paused(False)
             self.state = EpisodeState.RECORDING
             self.state_epoch += 1
             return "resumed"
