@@ -19,6 +19,8 @@ from .arm_target_protocol import (
     ArmTargetFrame,
     ArmTargetHoldReason,
     ArmTargetStreamDecoder,
+    LEFT_VALID,
+    RIGHT_VALID,
     decode_packet,
 )
 from .camera import CameraError, CameraFrame
@@ -31,7 +33,7 @@ ARM_TARGET_HZ = 200
 HAND_TARGET_HZ = 60
 CAMERA_HZ = 30
 TIMESTEP_NS = 1_000_000_000 / PHYSICS_HZ
-
+INPUT_STALE_NS = 50_000_000
 
 @dataclass(frozen=True)
 class ArmSnapshot:
@@ -42,10 +44,10 @@ class ArmSnapshot:
     left_qdot: tuple[float, ...]
     right_qdot: tuple[float, ...]
     valid_mask: int
-    hold_reason: ArmTargetHoldReason
+    left_hold_reason: ArmTargetHoldReason
+    right_hold_reason: ArmTargetHoldReason
     source_timestamp_ns: int
     control_timestamp_ns: int
-
 
 @dataclass(frozen=True)
 class HandSnapshot:
@@ -185,6 +187,12 @@ class UnifiedSimulator:
         self._last_arm_sequence: int | None = None
         self._last_hand_epoch: int | None = None
         self._last_hand_sequence: int | None = None
+        self._arm_last_arrival_ns: dict[str, int | None] = {"left": None, "right": None}
+        self._hand_last_arrival_ns: dict[str, int | None] = {"left": None, "right": None}
+        self._arm_callback_count = 0
+        self._hand_callback_count = 0
+        self.paused = False
+        self._resume_gate_mask = 0
         self._arm_packet_decoder = ArmTargetStreamDecoder()
         self._hand_retargeter = hand_retargeter
         self._camera_provider = camera_provider
@@ -278,7 +286,8 @@ class UnifiedSimulator:
             left_qdot=left_qdot,
             right_qdot=right_qdot,
             valid_mask=0,
-            hold_reason=ArmTargetHoldReason.INPUT_STALE,
+            left_hold_reason=ArmTargetHoldReason.INPUT_STALE,
+            right_hold_reason=ArmTargetHoldReason.INPUT_STALE,
             source_timestamp_ns=0,
             control_timestamp_ns=0,
         )
@@ -314,7 +323,15 @@ class UnifiedSimulator:
                     return False
         return True
 
-    def _hold_arm_snapshot(self, reason: ArmTargetHoldReason, epoch: int | None = None, sequence: int | None = None) -> None:
+    def _hold_arm_snapshot(
+        self,
+        left_reason: ArmTargetHoldReason,
+        right_reason: ArmTargetHoldReason | None = None,
+        epoch: int | None = None,
+        sequence: int | None = None,
+    ) -> None:
+        if right_reason is None:
+            right_reason = left_reason
         with self._arm_lock:
             previous = self._arm_snapshot
             self._arm_snapshot = ArmSnapshot(
@@ -324,9 +341,9 @@ class UnifiedSimulator:
                 right_q=previous.right_q,
                 left_qdot=previous.left_qdot,
                 right_qdot=previous.right_qdot,
-
                 valid_mask=0,
-                hold_reason=reason,
+                left_hold_reason=left_reason,
+                right_hold_reason=right_reason,
                 source_timestamp_ns=previous.source_timestamp_ns,
                 control_timestamp_ns=previous.control_timestamp_ns,
             )
@@ -340,7 +357,6 @@ class UnifiedSimulator:
         self._arm_udp_socket = sock
         self._arm_udp_stop = threading.Event()
         stop = self._arm_udp_stop
-
         def receive() -> None:
             while not stop.is_set():
                 try:
@@ -354,7 +370,8 @@ class UnifiedSimulator:
                 except ValueError:
                     # Structural packet errors are a HOLD event, not a reason
                     # for the receiver thread to terminate.
-                    self._hold_arm_snapshot(ArmTargetHoldReason.SOLVER_FAILURE)
+                    if not self.paused:
+                        self._hold_arm_snapshot(ArmTargetHoldReason.SOLVER_FAILURE)
 
         self._arm_udp_thread = threading.Thread(target=receive, name="spd-vr-arm-udp", daemon=True)
         self._arm_udp_thread.start()
@@ -372,47 +389,75 @@ class UnifiedSimulator:
         self._arm_udp_stop = None
 
     def on_arm_target_packet(self, packet: bytes, *, now_ns: int | None = None) -> ArmSnapshot:
-        frame = self._arm_packet_decoder.decode(packet, now_ns=now_ns)
+        if self.paused:
+            self._arm_callback_count += 1
+            with self._arm_lock:
+                return self._arm_snapshot
+        frame = self._arm_packet_decoder.decode(packet)
         return self.on_arm_target(frame, now_ns=now_ns)
 
     def on_arm_target(self, frame: ArmTargetFrame | Mapping[str, Any], *, now_ns: int | None = None) -> ArmSnapshot:
+        self._arm_callback_count += 1
+        if self.paused:
+            with self._arm_lock:
+                return self._arm_snapshot
         if not isinstance(frame, ArmTargetFrame):
             frame = decode_packet(bytes(frame), now_ns=now_ns)
-        if now_ns is not None and int(now_ns) - int(frame.control_timestamp_ns) > 50_000_000:
-            self._hold_arm_snapshot(ArmTargetHoldReason.INPUT_STALE, frame.tracking_epoch, frame.sequence)
-            return self._arm_snapshot
         with self._arm_lock:
             previous = self._arm_snapshot
-            if frame.tracking_epoch < previous.tracking_epoch:
-                self._arm_snapshot = ArmSnapshot(**{**previous.__dict__, "valid_mask": 0, "hold_reason": ArmTargetHoldReason.INPUT_STALE})
-                return self._arm_snapshot
-            if frame.tracking_epoch == previous.tracking_epoch and frame.sequence <= previous.sequence_id:
-                self._arm_snapshot = ArmSnapshot(**{**previous.__dict__, "valid_mask": 0, "hold_reason": ArmTargetHoldReason.INPUT_STALE})
-                return self._arm_snapshot
-            if frame.tracking_epoch != previous.tracking_epoch:
-                left_q, right_q = previous.left_q, previous.right_q
-                left_qdot, right_qdot = previous.left_qdot, previous.right_qdot
-            else:
-                left_q, right_q = previous.left_q, previous.right_q
-                left_qdot, right_qdot = previous.left_qdot, previous.right_qdot
+            if self._last_arm_epoch is not None and (
+                frame.tracking_epoch < self._last_arm_epoch
+                or (
+                    frame.tracking_epoch == self._last_arm_epoch
+                    and self._last_arm_sequence is not None
+                    and frame.sequence <= self._last_arm_sequence
+                )
+            ):
+                return previous
+            left_q, right_q = previous.left_q, previous.right_q
+            left_qdot, right_qdot = previous.left_qdot, previous.right_qdot
             valid_mask = 0
-            hold_reason = frame.hold_reason
-            try:
-                candidate_left = self._vector(frame.left_q, 7, "left_q")
-                candidate_right = self._vector(frame.right_q, 7, "right_q")
-                candidate_left_dot = self._vector(frame.left_qdot, 7, "left_qdot")
-                candidate_right_dot = self._vector(frame.right_qdot, 7, "right_qdot")
-            except ValueError:
-                self._arm_snapshot = ArmSnapshot(**{**previous.__dict__, "tracking_epoch": frame.tracking_epoch, "sequence_id": frame.sequence, "valid_mask": 0, "hold_reason": ArmTargetHoldReason.SOLVER_FAILURE})
-                return self._arm_snapshot
-            if frame.valid_mask & 1 and self._side_range_ok("left", "arm", candidate_left, candidate_left_dot):
-                left_q, left_qdot, valid_mask = candidate_left, candidate_left_dot, valid_mask | 1
-            elif frame.valid_mask & 1:
-                hold_reason = ArmTargetHoldReason.SOLVER_FAILURE
-            if frame.valid_mask & 2 and self._side_range_ok("right", "arm", candidate_right, candidate_right_dot):
-                right_q, right_qdot, valid_mask = candidate_right, candidate_right_dot, valid_mask | 2
-            elif frame.valid_mask & 2:
-                hold_reason = ArmTargetHoldReason.SOLVER_FAILURE
+            left_reason = (
+                frame.left_hold_reason
+                if frame.left_hold_reason is not ArmTargetHoldReason.NONE
+                else ArmTargetHoldReason.INPUT_STALE
+            )
+            right_reason = (
+                frame.right_hold_reason
+                if frame.right_hold_reason is not ArmTargetHoldReason.NONE
+                else ArmTargetHoldReason.INPUT_STALE
+            )
+            arrival_ns = int(time.monotonic_ns() if now_ns is None else now_ns)
+            if frame.valid_mask & LEFT_VALID:
+                try:
+                    candidate = self._vector(frame.left_q, 7, "left_q")
+                    candidate_dot = self._vector(frame.left_qdot, 7, "left_qdot")
+                    if self._side_range_ok("left", "arm", candidate, candidate_dot):
+                        left_q, left_qdot = candidate, candidate_dot
+                        valid_mask |= LEFT_VALID
+                        left_reason = ArmTargetHoldReason.NONE
+                        self._arm_last_arrival_ns["left"] = arrival_ns
+                    else:
+                        left_reason = ArmTargetHoldReason.SOLVER_FAILURE
+                except ValueError:
+                    left_reason = ArmTargetHoldReason.SOLVER_FAILURE
+            if frame.valid_mask & RIGHT_VALID:
+                try:
+                    candidate = self._vector(frame.right_q, 7, "right_q")
+                    candidate_dot = self._vector(frame.right_qdot, 7, "right_qdot")
+                    if self._side_range_ok("right", "arm", candidate, candidate_dot):
+                        right_q, right_qdot = candidate, candidate_dot
+                        valid_mask |= RIGHT_VALID
+                        right_reason = ArmTargetHoldReason.NONE
+                        self._arm_last_arrival_ns["right"] = arrival_ns
+                    else:
+                        right_reason = ArmTargetHoldReason.SOLVER_FAILURE
+                except ValueError:
+                    right_reason = ArmTargetHoldReason.SOLVER_FAILURE
+            if valid_mask & LEFT_VALID:
+                self._resume_gate_mask &= ~LEFT_VALID
+            if valid_mask & RIGHT_VALID:
+                self._resume_gate_mask &= ~RIGHT_VALID
             self._arm_snapshot = ArmSnapshot(
                 tracking_epoch=frame.tracking_epoch,
                 sequence_id=frame.sequence,
@@ -421,7 +466,8 @@ class UnifiedSimulator:
                 left_qdot=left_qdot,
                 right_qdot=right_qdot,
                 valid_mask=valid_mask,
-                hold_reason=hold_reason,
+                left_hold_reason=left_reason,
+                right_hold_reason=right_reason,
                 source_timestamp_ns=frame.source_timestamp_ns,
                 control_timestamp_ns=frame.control_timestamp_ns,
             )
@@ -441,7 +487,16 @@ class UnifiedSimulator:
             str(getattr(result, "right_hold_reason", "none")),
         )
 
-    def on_pico_hands(self, frame: PicoHandFrame | Mapping[str, Any] | Any) -> HandSnapshot:
+    def on_pico_hands(
+        self,
+        frame: PicoHandFrame | Mapping[str, Any] | Any,
+        *,
+        now_ns: int | None = None,
+    ) -> HandSnapshot:
+        self._hand_callback_count += 1
+        if self.paused:
+            with self._hand_lock:
+                return self._hand_snapshot
         if isinstance(frame, Mapping):
             from .pico_hands import PicoHandFrame
             frame = PicoHandFrame(
@@ -464,21 +519,15 @@ class UnifiedSimulator:
             raise TypeError("PicoHands input must expose left/right hand fields")
         with self._hand_lock:
             previous = self._hand_snapshot
-            if frame.tracking_epoch < previous.tracking_epoch or (
-                frame.tracking_epoch == previous.tracking_epoch
-                and frame.sequence_id <= previous.sequence_id
-            ):
-                self._hand_snapshot = HandSnapshot(
-                    previous.tracking_epoch,
-                    previous.sequence_id,
-                    previous.left_q,
-                    previous.right_q,
-                    False,
-                    False,
-                    "stale",
-                    "stale",
+            if self._last_hand_epoch is not None and (
+                frame.tracking_epoch < self._last_hand_epoch
+                or (
+                    frame.tracking_epoch == self._last_hand_epoch
+                    and self._last_hand_sequence is not None
+                    and frame.sequence_id <= self._last_hand_sequence
                 )
-                return self._hand_snapshot
+            ):
+                return previous
             if self._hand_retargeter is None:
                 raise RuntimeError("hand_retargeter is required for PicoHands input")
             if frame.tracking_epoch != previous.tracking_epoch:
@@ -498,10 +547,19 @@ class UnifiedSimulator:
                     "solver_failure", "solver_failure"
                 )
                 return self._hand_snapshot
+            arrival_ns = int(time.monotonic_ns() if now_ns is None else now_ns)
             if left_valid and not self._side_range_ok("left", "hand", left):
                 left_valid, left_reason = False, "invalid"
             if right_valid and not self._side_range_ok("right", "hand", right):
                 right_valid, right_reason = False, "invalid"
+            if self._resume_gate_mask & LEFT_VALID:
+                left_valid, left_reason = False, "input_stale"
+            elif left_valid:
+                self._hand_last_arrival_ns["left"] = arrival_ns
+            if self._resume_gate_mask & RIGHT_VALID:
+                right_valid, right_reason = False, "input_stale"
+            elif right_valid:
+                self._hand_last_arrival_ns["right"] = arrival_ns
             self._hand_snapshot = HandSnapshot(
                 frame.tracking_epoch, frame.sequence_id,
                 left if left_valid else previous.left_q,
@@ -511,6 +569,119 @@ class UnifiedSimulator:
             self._last_hand_epoch = frame.tracking_epoch
             self._last_hand_sequence = frame.sequence_id
             return self._hand_snapshot
+
+    def _refresh_input_validity(self, now_ns: int) -> None:
+        if self.paused:
+            return
+        with self._arm_lock:
+            arm = self._arm_snapshot
+            mask = arm.valid_mask
+            left_stale = bool(mask & LEFT_VALID) and (
+                self._arm_last_arrival_ns["left"] is None
+                or now_ns - int(self._arm_last_arrival_ns["left"]) > INPUT_STALE_NS
+            )
+            right_stale = bool(mask & RIGHT_VALID) and (
+                self._arm_last_arrival_ns["right"] is None
+                or now_ns - int(self._arm_last_arrival_ns["right"]) > INPUT_STALE_NS
+            )
+            if left_stale or right_stale:
+                if left_stale:
+                    mask &= ~LEFT_VALID
+                if right_stale:
+                    mask &= ~RIGHT_VALID
+                self._arm_snapshot = ArmSnapshot(
+                    **{
+                        **arm.__dict__,
+                        "valid_mask": mask,
+                        "left_hold_reason": (
+                            ArmTargetHoldReason.INPUT_STALE
+                            if left_stale else arm.left_hold_reason
+                        ),
+                        "right_hold_reason": (
+                            ArmTargetHoldReason.INPUT_STALE
+                            if right_stale else arm.right_hold_reason
+                        ),
+                    }
+                )
+        with self._hand_lock:
+            hand = self._hand_snapshot
+            left_stale = hand.left_valid and (
+                self._hand_last_arrival_ns["left"] is None
+                or now_ns - int(self._hand_last_arrival_ns["left"]) > INPUT_STALE_NS
+            )
+            right_stale = hand.right_valid and (
+                self._hand_last_arrival_ns["right"] is None
+                or now_ns - int(self._hand_last_arrival_ns["right"]) > INPUT_STALE_NS
+            )
+            if left_stale or right_stale:
+                self._hand_snapshot = HandSnapshot(
+                    hand.tracking_epoch,
+                    hand.sequence_id,
+                    hand.left_q,
+                    hand.right_q,
+                    False if left_stale else hand.left_valid,
+                    False if right_stale else hand.right_valid,
+                    "input_stale" if left_stale else hand.left_hold_reason,
+                    "input_stale" if right_stale else hand.right_hold_reason,
+                )
+
+    def set_paused(self, paused: bool) -> None:
+        paused = bool(paused)
+        if paused == self.paused:
+            return
+        if paused:
+            self.paused = True
+            self._resume_gate_mask = LEFT_VALID | RIGHT_VALID
+            self._arm_packet_decoder.reset()
+            self._last_arm_epoch = self._last_arm_sequence = None
+            self._last_hand_epoch = self._last_hand_sequence = None
+            self._arm_last_arrival_ns = {"left": None, "right": None}
+            self._hand_last_arrival_ns = {"left": None, "right": None}
+            reset = getattr(self._hand_retargeter, "reset_filter", None)
+            if reset is not None:
+                try:
+                    reset()
+                except TypeError:
+                    reset(0)
+            with self._arm_lock:
+                arm = self._arm_snapshot
+                self._arm_snapshot = ArmSnapshot(
+                    **{
+                        **arm.__dict__,
+                        "valid_mask": 0,
+                        "left_hold_reason": ArmTargetHoldReason.PAUSED,
+                        "right_hold_reason": ArmTargetHoldReason.PAUSED,
+                    }
+                )
+                self._applied_arm = self._arm_snapshot
+            with self._hand_lock:
+                hand = self._hand_snapshot
+                self._hand_snapshot = HandSnapshot(
+                    hand.tracking_epoch, hand.sequence_id, hand.left_q, hand.right_q,
+                    False, False, "paused", "paused"
+                )
+                self._applied_hand = self._hand_snapshot
+        else:
+            self.paused = False
+            self._resume_gate_mask = LEFT_VALID | RIGHT_VALID
+            with self._arm_lock:
+                arm = self._arm_snapshot
+                self._arm_snapshot = ArmSnapshot(
+                    **{
+                        **arm.__dict__,
+                        "valid_mask": 0,
+                        "left_hold_reason": ArmTargetHoldReason.INPUT_STALE,
+                        "right_hold_reason": ArmTargetHoldReason.INPUT_STALE,
+                    }
+                )
+                self._applied_arm = self._arm_snapshot
+            with self._hand_lock:
+                hand = self._hand_snapshot
+                self._hand_snapshot = HandSnapshot(
+                    hand.tracking_epoch, hand.sequence_id, hand.left_q, hand.right_q,
+                    False, False, "input_stale", "input_stale"
+                )
+                self._applied_hand = self._hand_snapshot
 
     def _schedule_due(self, sim_time_ns: int, next_time_ns: int, period_ns: int) -> tuple[bool, int]:
         if sim_time_ns < next_time_ns:
@@ -575,8 +746,19 @@ class UnifiedSimulator:
     def step(self) -> SimulationStep:
         if self._closed:
             raise RuntimeError("simulator is closed")
+        if self.paused:
+            return SimulationStep(
+                tick=self.tick,
+                sim_time_ns=self.sim_time_ns,
+                arm_valid_mask=self._applied_arm.valid_mask,
+                hand_left_valid=self._applied_hand.left_valid,
+                hand_right_valid=self._applied_hand.right_valid,
+                camera_enqueued=False,
+            )
         self.tick += 1
         sim_time_ns = int(round(self.tick * TIMESTEP_NS))
+        self._refresh_input_validity(time.monotonic_ns())
+
         with self._arm_lock:
             arm_snapshot = self._arm_snapshot
         with self._hand_lock:
@@ -641,6 +823,14 @@ class UnifiedSimulator:
         return results[-1] if results else self._last_camera_frames
 
     @property
+    def arm_callback_count(self) -> int:
+        return self._arm_callback_count
+
+    @property
+    def hand_callback_count(self) -> int:
+        return self._hand_callback_count
+
+    @property
     def camera_drop_count(self) -> int:
         return self._camera_drop_count
 
@@ -681,6 +871,9 @@ class UnifiedSimulator:
         self._last_arm_sequence = None
         self._last_hand_epoch = None
         self._last_hand_sequence = None
+        self._arm_last_arrival_ns = {"left": None, "right": None}
+        self._hand_last_arrival_ns = {"left": None, "right": None}
+        self._resume_gate_mask = 0
         self._arm_packet_decoder.reset()
         self._reset_camera_stream()
         self._next_arm_time_ns = self._next_hand_time_ns = self._next_camera_time_ns = self.sim_time_ns

@@ -6,7 +6,7 @@
 namespace tianji_qp_ik {
 namespace {
 
-constexpr std::size_t kCrcOffset = kArmTargetPacketV1Size - 4U;
+constexpr std::size_t kCrcOffset = kArmTargetPacketV2Size - 4U;
 constexpr std::size_t kLeftQOffset = 44U;
 constexpr std::size_t kRightQOffset = kLeftQOffset + 7U * sizeof(double);
 constexpr std::size_t kLeftQdotOffset = kRightQOffset + 7U * sizeof(double);
@@ -64,14 +64,20 @@ void writeLeDouble(std::uint8_t* bytes, double value) noexcept {
 }
 
 bool validReasonAndMask(std::uint8_t valid_mask,
-                        ArmTargetHoldReason hold_reason) noexcept {
+                        ArmTargetHoldReason left_reason,
+                        ArmTargetHoldReason right_reason) noexcept {
   if ((valid_mask & static_cast<std::uint8_t>(~0x03U)) != 0U) return false;
-  const auto reason = static_cast<std::uint8_t>(hold_reason);
-  if (reason > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused)) return false;
-  if (reason == static_cast<std::uint8_t>(ArmTargetHoldReason::kNone)) {
-    return valid_mask == (kArmTargetLeftValid | kArmTargetRightValid);
-  }
-  return valid_mask != (kArmTargetLeftValid | kArmTargetRightValid);
+  const auto valid_reason = [](ArmTargetHoldReason reason) {
+    return static_cast<std::uint8_t>(reason) <=
+           static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused);
+  };
+  if (!valid_reason(left_reason) || !valid_reason(right_reason)) return false;
+  const bool left_valid = (valid_mask & kArmTargetLeftValid) != 0U;
+  const bool right_valid = (valid_mask & kArmTargetRightValid) != 0U;
+  return (left_valid ? left_reason == ArmTargetHoldReason::kNone
+                     : left_reason != ArmTargetHoldReason::kNone) &&
+         (right_valid ? right_reason == ArmTargetHoldReason::kNone
+                      : right_reason != ArmTargetHoldReason::kNone);
 }
 
 bool finiteValues(const ArmTargetFrame& frame) noexcept {
@@ -116,7 +122,7 @@ std::uint32_t armTargetCrc32(const std::uint8_t* bytes,
 ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
                                             std::size_t size) noexcept {
   ArmTargetDecodeResult result;
-  if (bytes == nullptr || size != kArmTargetPacketV1Size) {
+  if (bytes == nullptr || size != kArmTargetPacketV2Size) {
     result.error = ArmTargetPacketError::kWrongSize;
     return result;
   }
@@ -127,23 +133,27 @@ ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
     result.error = ArmTargetPacketError::kWrongMagic;
     return result;
   }
-  if (readLe16(bytes + 4U) != 1U) {
+  if (readLe16(bytes + 4U) != 2U) {
     result.error = ArmTargetPacketError::kWrongVersion;
     return result;
   }
-  if (readLe16(bytes + 6U) != kArmTargetPacketV1Size) {
+  if (readLe16(bytes + 6U) != kArmTargetPacketV2Size) {
     result.error = ArmTargetPacketError::kWrongDeclaredSize;
     return result;
   }
   const std::uint8_t valid_mask = bytes[40U];
-  const auto hold_reason = static_cast<ArmTargetHoldReason>(bytes[41U]);
-  if (!validReasonAndMask(valid_mask, hold_reason)) {
-    result.error = bytes[41U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused)
-                       ? ArmTargetPacketError::kInvalidHoldReason
-                       : ArmTargetPacketError::kInvalidValidMask;
+  const auto left_reason = static_cast<ArmTargetHoldReason>(bytes[41U]);
+  const auto right_reason = static_cast<ArmTargetHoldReason>(bytes[42U]);
+  if (bytes[41U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused) ||
+      bytes[42U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused)) {
+    result.error = ArmTargetPacketError::kInvalidHoldReason;
     return result;
   }
-  if (readLe16(bytes + 42U) != 0U) {
+  if (!validReasonAndMask(valid_mask, left_reason, right_reason)) {
+    result.error = ArmTargetPacketError::kInvalidValidMask;
+    return result;
+  }
+  if (bytes[43U] != 0U) {
     result.error = ArmTargetPacketError::kNonZeroReserved;
     return result;
   }
@@ -151,14 +161,14 @@ ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
     result.error = ArmTargetPacketError::kCrcMismatch;
     return result;
   }
-
   ArmTargetFrame frame;
   frame.sequence = readLe64(bytes + 8U);
   frame.tracking_epoch = readLe64(bytes + 16U);
   frame.source_timestamp_ns = readLe64(bytes + 24U);
   frame.control_timestamp_ns = readLe64(bytes + 32U);
   frame.valid_mask = valid_mask;
-  frame.hold_reason = hold_reason;
+  frame.left_hold_reason = left_reason;
+  frame.right_hold_reason = right_reason;
   if (frame.sequence == 0U || frame.tracking_epoch == 0U ||
       frame.source_timestamp_ns == 0U || frame.control_timestamp_ns == 0U) {
     result.error = ArmTargetPacketError::kInvalidMetadata;
@@ -172,18 +182,17 @@ ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
     result.error = ArmTargetPacketError::kNonFiniteValue;
     return result;
   }
-
   result.error = ArmTargetPacketError::kNone;
   result.frame = frame;
   return result;
 }
-
 bool encodeArmTargetPacket(
     const ArmTargetFrame& frame,
-    std::array<std::uint8_t, kArmTargetPacketV1Size>& bytes) noexcept {
+    std::array<std::uint8_t, kArmTargetPacketV2Size>& bytes) noexcept {
   if (frame.sequence == 0U || frame.tracking_epoch == 0U ||
       frame.source_timestamp_ns == 0U || frame.control_timestamp_ns == 0U ||
-      !validReasonAndMask(frame.valid_mask, frame.hold_reason) ||
+      !validReasonAndMask(frame.valid_mask, frame.left_hold_reason,
+                          frame.right_hold_reason) ||
       !finiteValues(frame)) {
     return false;
   }
@@ -192,16 +201,17 @@ bool encodeArmTargetPacket(
   bytes[1] = static_cast<std::uint8_t>('P');
   bytes[2] = static_cast<std::uint8_t>('D');
   bytes[3] = static_cast<std::uint8_t>('A');
-  writeLe16(bytes.data() + 4U, 1U);
+  writeLe16(bytes.data() + 4U, 2U);
   writeLe16(bytes.data() + 6U,
-            static_cast<std::uint16_t>(kArmTargetPacketV1Size));
+            static_cast<std::uint16_t>(kArmTargetPacketV2Size));
   writeLe64(bytes.data() + 8U, frame.sequence);
   writeLe64(bytes.data() + 16U, frame.tracking_epoch);
   writeLe64(bytes.data() + 24U, frame.source_timestamp_ns);
   writeLe64(bytes.data() + 32U, frame.control_timestamp_ns);
   bytes[40U] = frame.valid_mask;
-  bytes[41U] = static_cast<std::uint8_t>(frame.hold_reason);
-  writeLe16(bytes.data() + 42U, 0U);
+  bytes[41U] = static_cast<std::uint8_t>(frame.left_hold_reason);
+  bytes[42U] = static_cast<std::uint8_t>(frame.right_hold_reason);
+  bytes[43U] = 0U;
   encodeArray(bytes.data() + kLeftQOffset, frame.left_q);
   encodeArray(bytes.data() + kRightQOffset, frame.right_q);
   encodeArray(bytes.data() + kLeftQdotOffset, frame.left_qdot);
@@ -210,5 +220,6 @@ bool encodeArmTargetPacket(
             armTargetCrc32(bytes.data(), kCrcOffset));
   return true;
 }
+
 
 }  // namespace tianji_qp_ik

@@ -40,7 +40,8 @@ class ArmTargetFrame:
     source_timestamp_ns: int
     control_timestamp_ns: int
     valid_mask: int
-    hold_reason: ArmTargetHoldReason
+    left_hold_reason: ArmTargetHoldReason
+    right_hold_reason: ArmTargetHoldReason
     left_q: tuple[float, ...]
     right_q: tuple[float, ...]
     left_qdot: tuple[float, ...]
@@ -64,12 +65,19 @@ def crc32(data: bytes) -> int:
     return crc ^ 0xFFFFFFFF
 
 
-def _valid_mask_and_reason(valid_mask: int, reason: ArmTargetHoldReason) -> bool:
+def _valid_mask_and_reason(
+    valid_mask: int,
+    left_reason: ArmTargetHoldReason,
+    right_reason: ArmTargetHoldReason,
+) -> bool:
     if valid_mask & ~0x03:
         return False
-    if reason is ArmTargetHoldReason.NONE:
-        return valid_mask == (LEFT_VALID | RIGHT_VALID)
-    return valid_mask != (LEFT_VALID | RIGHT_VALID)
+    return (
+        ((valid_mask & LEFT_VALID) != 0)
+        == (left_reason is ArmTargetHoldReason.NONE)
+        and ((valid_mask & RIGHT_VALID) != 0)
+        == (right_reason is ArmTargetHoldReason.NONE)
+    )
 
 
 def _finite(values: Iterable[float]) -> bool:
@@ -84,16 +92,20 @@ def _coerce_frame(frame: ArmTargetFrame | dict) -> ArmTargetFrame:
     if isinstance(frame, ArmTargetFrame):
         return frame
     try:
-        reason = frame["hold_reason"]
-        if not isinstance(reason, ArmTargetHoldReason):
-            reason = ArmTargetHoldReason(int(reason))
+        left_reason = frame["left_hold_reason"]
+        right_reason = frame["right_hold_reason"]
+        if not isinstance(left_reason, ArmTargetHoldReason):
+            left_reason = ArmTargetHoldReason(int(left_reason))
+        if not isinstance(right_reason, ArmTargetHoldReason):
+            right_reason = ArmTargetHoldReason(int(right_reason))
         return ArmTargetFrame(
             sequence=int(frame["sequence"]),
             tracking_epoch=int(frame["tracking_epoch"]),
             source_timestamp_ns=int(frame["source_timestamp_ns"]),
             control_timestamp_ns=int(frame["control_timestamp_ns"]),
             valid_mask=int(frame["valid_mask"]),
-            hold_reason=reason,
+            left_hold_reason=left_reason,
+            right_hold_reason=right_reason,
             left_q=tuple(frame["left_q"]),
             right_q=tuple(frame["right_q"]),
             left_qdot=tuple(frame["left_qdot"]),
@@ -112,7 +124,9 @@ def encode_packet(frame: ArmTargetFrame | dict) -> bytes:
         or frame.control_timestamp_ns <= 0
     ):
         raise ArmTargetProtocolError("invalid_metadata")
-    if not _valid_mask_and_reason(frame.valid_mask, frame.hold_reason):
+    if not _valid_mask_and_reason(
+        frame.valid_mask, frame.left_hold_reason, frame.right_hold_reason
+    ):
         raise ArmTargetProtocolError("invalid_valid_mask_or_hold_reason")
     if not all(_finite(getattr(frame, name)) for name in ("left_q", "right_q", "left_qdot", "right_qdot")):
         raise ArmTargetProtocolError("non_finite_value")
@@ -120,17 +134,18 @@ def encode_packet(frame: ArmTargetFrame | dict) -> bytes:
     packet = bytearray(PACKET_SIZE)
     packet[0:4] = b"SPDA"
     struct.pack_into(
-        "<HHQQQQBBH",
+        "<HHQQQQBBBB",
         packet,
         4,
-        1,
+        2,
         PACKET_SIZE,
         frame.sequence,
         frame.tracking_epoch,
         frame.source_timestamp_ns,
         frame.control_timestamp_ns,
         frame.valid_mask,
-        int(frame.hold_reason),
+        int(frame.left_hold_reason),
+        int(frame.right_hold_reason),
         0,
     )
     for offset, values in (
@@ -158,19 +173,22 @@ def decode_packet(
     if packet[:4] != b"SPDA":
         raise ArmTargetProtocolError("wrong_magic")
     version, declared_size = struct.unpack_from("<HH", packet, 4)
-    if version != 1:
+    if version != 2:
         raise ArmTargetProtocolError("wrong_version", str(version))
     if declared_size != PACKET_SIZE:
         raise ArmTargetProtocolError("wrong_declared_size", str(declared_size))
     sequence, epoch, source_ns, control_ns = struct.unpack_from("<QQQQ", packet, 8)
-    valid_mask, reason_value, reserved = struct.unpack_from("<BBH", packet, 40)
+    valid_mask, left_reason_value, right_reason_value, reserved = struct.unpack_from(
+        "<BBBB", packet, 40
+    )
     try:
-        reason = ArmTargetHoldReason(reason_value)
+        left_reason = ArmTargetHoldReason(left_reason_value)
+        right_reason = ArmTargetHoldReason(right_reason_value)
     except ValueError as exc:
-        raise ArmTargetProtocolError("invalid_hold_reason", str(reason_value)) from exc
+        raise ArmTargetProtocolError("invalid_hold_reason", str(exc)) from exc
     if valid_mask & ~0x03:
         raise ArmTargetProtocolError("invalid_valid_mask", str(valid_mask))
-    if not _valid_mask_and_reason(valid_mask, reason):
+    if not _valid_mask_and_reason(valid_mask, left_reason, right_reason):
         raise ArmTargetProtocolError("invalid_valid_mask_or_hold_reason")
     if reserved != 0:
         raise ArmTargetProtocolError("non_zero_reserved")
@@ -185,7 +203,8 @@ def decode_packet(
         source_timestamp_ns=source_ns,
         control_timestamp_ns=control_ns,
         valid_mask=valid_mask,
-        hold_reason=reason,
+        left_hold_reason=left_reason,
+        right_hold_reason=right_reason,
         left_q=_read_vector(packet, LEFT_Q_OFFSET),
         right_q=_read_vector(packet, RIGHT_Q_OFFSET),
         left_qdot=_read_vector(packet, LEFT_QDOT_OFFSET),
@@ -206,7 +225,8 @@ def decode_packet(
             frame = replace(
                 frame,
                 valid_mask=0,
-                hold_reason=ArmTargetHoldReason.INPUT_STALE,
+                left_hold_reason=ArmTargetHoldReason.INPUT_STALE,
+                right_hold_reason=ArmTargetHoldReason.INPUT_STALE,
             )
     return frame
 

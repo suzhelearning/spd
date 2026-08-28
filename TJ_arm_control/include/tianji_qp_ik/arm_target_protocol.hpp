@@ -7,12 +7,12 @@
 
 namespace tianji_qp_ik {
 
-inline constexpr std::size_t kArmTargetPacketV1Size = 272U;
+inline constexpr std::size_t kArmTargetPacketV2Size = 272U;
+inline constexpr std::size_t kArmTargetPacketSize = kArmTargetPacketV2Size;
 inline constexpr std::uint8_t kArmTargetLeftValid = 1U << 0U;
 inline constexpr std::uint8_t kArmTargetRightValid = 1U << 1U;
 
-// The protocol has one reason for the packet; valid_mask identifies which arm
-// accepted the model-reference at this control commit.
+// Each side carries an independent validity bit and HOLD reason.
 enum class ArmTargetHoldReason : std::uint8_t {
   kNone = 0U,
   kInputStale = 1U,
@@ -40,7 +40,8 @@ struct ArmTargetFrame {
   std::uint64_t source_timestamp_ns{0U};
   std::uint64_t control_timestamp_ns{0U};
   std::uint8_t valid_mask{0U};
-  ArmTargetHoldReason hold_reason{ArmTargetHoldReason::kNone};
+  ArmTargetHoldReason left_hold_reason{ArmTargetHoldReason::kNone};
+  ArmTargetHoldReason right_hold_reason{ArmTargetHoldReason::kNone};
   std::array<double, 7> left_q{};
   std::array<double, 7> right_q{};
   std::array<double, 7> left_qdot{};
@@ -60,6 +61,7 @@ ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
 
 bool encodeArmTargetPacket(
     const ArmTargetFrame& frame,
-    std::array<std::uint8_t, kArmTargetPacketV1Size>& bytes) noexcept;
+    std::array<std::uint8_t, kArmTargetPacketV2Size>& bytes) noexcept;
+
 
 }  // namespace tianji_qp_ik

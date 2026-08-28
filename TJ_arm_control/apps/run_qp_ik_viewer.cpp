@@ -678,7 +678,8 @@ class ArmTargetUdpOutput {
   void send(const ArmMotionState& left, const ArmMotionState& right,
             std::uint64_t tracking_epoch, std::uint64_t source_timestamp_ns,
             std::uint64_t control_timestamp_ns, std::uint8_t valid_mask,
-            ArmTargetHoldReason hold_reason) noexcept {
+            ArmTargetHoldReason left_hold_reason,
+            ArmTargetHoldReason right_hold_reason) noexcept {
     ArmTargetFrame frame;
     frame.sequence = ++sequence_;
     frame.tracking_epoch = tracking_epoch == 0U ? 1U : tracking_epoch;
@@ -686,14 +687,15 @@ class ArmTargetUdpOutput {
         source_timestamp_ns == 0U ? control_timestamp_ns : source_timestamp_ns;
     frame.control_timestamp_ns = control_timestamp_ns;
     frame.valid_mask = valid_mask;
-    frame.hold_reason = hold_reason;
+    frame.left_hold_reason = left_hold_reason;
+    frame.right_hold_reason = right_hold_reason;
     for (std::size_t index = 0U; index < 7U; ++index) {
       frame.left_q[index] = left.q[index];
       frame.right_q[index] = right.q[index];
       frame.left_qdot[index] = left.qdot[index];
       frame.right_qdot[index] = right.qdot[index];
     }
-    std::array<std::uint8_t, kArmTargetPacketV1Size> packet{};
+    std::array<std::uint8_t, kArmTargetPacketV2Size> packet{};
     if (!encodeArmTargetPacket(frame, packet)) return;
     const ssize_t written = ::sendto(
         socket_, packet.data(), packet.size(), MSG_DONTWAIT,
@@ -1229,15 +1231,20 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     if (right_commit_accepted && !desired.right_stale) {
       arm_target_valid_mask |= kArmTargetRightValid;
     }
-    const ArmTargetHoldReason arm_target_hold_reason =
+    const ArmTargetHoldReason left_arm_target_hold_reason =
         paused
             ? ArmTargetHoldReason::kPaused
-            : (desired.left_stale || desired.right_stale)
-                  ? ArmTargetHoldReason::kInputStale
-                  : (arm_target_valid_mask ==
-                             (kArmTargetLeftValid | kArmTargetRightValid)
-                         ? ArmTargetHoldReason::kNone
-                         : ArmTargetHoldReason::kSolverFailure);
+            : (left_commit_accepted && !desired.left_stale
+                   ? ArmTargetHoldReason::kNone
+                   : (desired.left_stale ? ArmTargetHoldReason::kInputStale
+                                         : ArmTargetHoldReason::kSolverFailure));
+    const ArmTargetHoldReason right_arm_target_hold_reason =
+        paused
+            ? ArmTargetHoldReason::kPaused
+            : (right_commit_accepted && !desired.right_stale
+                   ? ArmTargetHoldReason::kNone
+                   : (desired.right_stale ? ArmTargetHoldReason::kInputStale
+                                          : ArmTargetHoldReason::kSolverFailure));
     if (arm_target_output != nullptr) {
       arm_target_output->send(
           last_arm_target_left, last_arm_target_right, pico_applied_epoch,
@@ -1245,7 +1252,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               std::max<std::int64_t>(0, pico_left_source_timestamp_ns)),
           static_cast<std::uint64_t>(std::max<std::int64_t>(
               1, monotonic_now_ns)),
-          arm_target_valid_mask, arm_target_hold_reason);
+          arm_target_valid_mask, left_arm_target_hold_reason,
+          right_arm_target_hold_reason);
     }
 
     ViewerSnapshot snapshot;
