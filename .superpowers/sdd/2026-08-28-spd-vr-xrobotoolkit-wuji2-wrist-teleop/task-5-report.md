@@ -75,3 +75,5 @@
 - 额外提交 `742ba1c` 清理 pause、enable/reset-nominal 时的左右侧 acceptance 状态，确保 reset 后不复用旧侧有效标记；同一窄构建和 3/3 focused ctest 已再次 PASS。
 
 - 额外提交 `ed13971` 修正 reset/accepted 路径中的 `TargetManager` candidate 双重 move；修复后同一窄构建与 3/3 focused ctest 再次 PASS。
+
+- 最终 `pixi run ./build/tianji_qp_ik_viewer --headless --duration 0.1 --no-arm-target-output --algorithm hierarchical_qp --pico-teleop --pico-wrist-input --left-end-effector-site l_wrist_target --right-end-effector-site r_wrist_target`：PASS，输出 `pico_headless_complete sequence=20`。
