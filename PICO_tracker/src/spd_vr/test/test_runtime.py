@@ -160,6 +160,30 @@ def test_initial_true_pause_is_forwarded_and_invalid_side_isolated(monkeypatch):
     assert frame.right_hand.shape == (26, 7)
 
 
+@pytest.mark.parametrize(
+    ("context_active", "shutdown_expected"),
+    [(False, True), (True, False)],
+)
+def test_mailbox_subscription_failure_cleans_only_owned_ros_resources(
+    monkeypatch, context_active, shutdown_expected
+):
+    from spd_vr.ros_input import LiveInputMailbox
+
+    rclpy = _install_fake_ros(monkeypatch)
+    rclpy.initialized = context_active
+
+    def fail_subscription(*_args):
+        raise RuntimeError("subscription setup failure")
+
+    rclpy.node.create_subscription = fail_subscription
+    with pytest.raises(RuntimeError, match="subscription setup failure"):
+        LiveInputMailbox("/pico/hands", "/spd_vr/pause")
+
+    assert rclpy.node.destroyed is True
+    assert rclpy.shutdown_called is shutdown_expected
+    assert rclpy.initialized is context_active
+
+
 def test_live_mailbox_is_closed_when_simulator_setup_fails(tmp_path, monkeypatch):
     class _Task:
         def reset(self, _seed):

@@ -64,46 +64,54 @@ class LiveInputMailbox:
             ) from exc
 
         self._rclpy = rclpy
+        self._node: Any | None = None
         try:
-            context_ok = bool(rclpy.ok())
-        except (AttributeError, RuntimeError):
-            context_ok = False
-        if not context_ok:
             try:
-                rclpy.init(args=None)
-            except TypeError:
-                # Small test doubles and older rclpy releases may not accept
-                # the keyword; the real API does.
-                rclpy.init()
-            self._owns_context = True
+                context_ok = bool(rclpy.ok())
+            except (AttributeError, RuntimeError):
+                context_ok = False
+            if not context_ok:
+                try:
+                    rclpy.init(args=None)
+                except TypeError:
+                    # Small test doubles and older rclpy releases may not accept
+                    # the keyword; the real API does.
+                    rclpy.init()
+                self._owns_context = True
 
-        create_node = getattr(rclpy, "create_node", None)
-        if callable(create_node):
-            self._node = create_node("spd_vr_live_input")
-        else:
+            create_node = getattr(rclpy, "create_node", None)
+            if callable(create_node):
+                self._node = create_node("spd_vr_live_input")
+            else:
+                try:
+                    from rclpy.node import Node
+                except ImportError as exc:  # pragma: no cover - host ROS install
+                    raise RuntimeError(
+                        "live mode requires the ROS dependency 'rclpy' node support"
+                    ) from exc
+                self._node = Node("spd_vr_live_input")
             try:
-                from rclpy.node import Node
-            except ImportError as exc:  # pragma: no cover - host ROS install
-                raise RuntimeError(
-                    "live mode requires the ROS dependency 'rclpy' node support"
-                ) from exc
-            self._node = Node("spd_vr_live_input")
-        try:
-            reliable_qos = QoSProfile(depth=10)
-        except TypeError:
-            reliable_qos = QoSProfile()
-        try:
-            reliable_qos.reliability = ReliabilityPolicy.RELIABLE
-        except (AttributeError, TypeError):
-            # QoSProfile implementations that accept a default reliable policy
-            # need no extra mutation.
-            pass
-        self._hands_subscription = self._node.create_subscription(
-            PicoHands, self._on_hands, self.hands_topic, qos_profile_sensor_data
-        )
-        self._pause_subscription = self._node.create_subscription(
-            Bool, self._on_pause, self.pause_topic, reliable_qos
-        )
+                reliable_qos = QoSProfile(depth=10)
+            except TypeError:
+                reliable_qos = QoSProfile()
+            try:
+                reliable_qos.reliability = ReliabilityPolicy.RELIABLE
+            except (AttributeError, TypeError):
+                # QoSProfile implementations that accept a default reliable policy
+                # need no extra mutation.
+                pass
+            self._hands_subscription = self._node.create_subscription(
+                PicoHands, self._on_hands, self.hands_topic, qos_profile_sensor_data
+            )
+            self._pause_subscription = self._node.create_subscription(
+                Bool, self._on_pause, self.pause_topic, reliable_qos
+            )
+        except Exception:
+            # ``__init__`` has not returned yet, so runtime cannot call close()
+            # through its mailbox variable.  Release any node/context acquired
+            # during this staged setup before propagating the original failure.
+            self._cleanup_resources(suppress_destroy_errors=True)
+            raise
 
     def _on_hands(self, message: Any) -> None:
         with self._lock:
@@ -199,21 +207,31 @@ class LiveInputMailbox:
                 "pause_edges": self._pause_edge_count,
             }
 
+    def _cleanup_resources(self, *, suppress_destroy_errors: bool) -> None:
+        node = self._node
+        self._node = None
+        try:
+            if node is not None:
+                node.destroy_node()
+        except Exception:
+            if not suppress_destroy_errors:
+                raise
+        finally:
+            if self._owns_context:
+                self._owns_context = False
+                try:
+                    if self._rclpy.ok():
+                        self._rclpy.shutdown()
+                except (AttributeError, RuntimeError):
+                    pass
+
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             self._latest_hands = None
-        try:
-            self._node.destroy_node()
-        finally:
-            if self._owns_context:
-                try:
-                    if self._rclpy.ok():
-                        self._rclpy.shutdown()
-                except (AttributeError, RuntimeError):
-                    pass
+        self._cleanup_resources(suppress_destroy_errors=False)
 
 
 __all__ = ["LiveInputMailbox"]
