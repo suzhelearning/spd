@@ -358,7 +358,7 @@ std::string_view wristHoldReasonForTelemetry(
   if (result.hold_reason == "inactive") return "inactive";
   if (result.hold_reason == "invalid_pose") return "invalid_pose";
   if (result.hold_reason == "alignment_reset") return "alignment_reset";
-  return {};
+  return "";
 }
 
 timespec addNanoseconds(timespec value, std::int64_t nanoseconds) {
@@ -769,6 +769,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   direct_left_state.q = robot.armPosition(ArmSide::kLeft);
   ArmMotionState direct_right_state;
   direct_right_state.q = robot.armPosition(ArmSide::kRight);
+  bool latest_left_target_accepted = false;
+  bool latest_right_target_accepted = false;
   ArmMotionState last_arm_target_left = direct_left_state;
   ArmMotionState last_arm_target_right = direct_right_state;
   const bool pico_configured = pico_frames != nullptr && pico_receiver != nullptr;
@@ -879,16 +881,17 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
             static_cast<double>(pico_frame.source_timestamp_ns) * 1.0e-9;
         const bool reset_epoch =
             classification.action == PicoTeleopAction::kResetEpochAndApply;
-        if (wrist_endpoint_mode && !pico_frame.wrist_pose_input) {
-          std::cerr << "rejected legacy TJVR frame in --pico-wrist-input mode\n";
-          continue;
-        }
+        const bool reject_legacy_wrist_frame =
+            wrist_endpoint_mode && !pico_frame.wrist_pose_input;
+        if (!reject_legacy_wrist_frame) {
         if (reset_epoch && wrist_endpoint_mode) {
           wrist_alignment.reset();
           pico_frame.wrist_alignment_reset = true;
         }
         const DualArmTargets current = currentTargets(robot);
         bool target_accepted = false;
+        bool left_target_accepted = false;
+        bool right_target_accepted = false;
         TargetManager candidate = reset_epoch
                                       ? TargetManager(config, current)
                                       : targets;
@@ -897,23 +900,20 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               pico_frame, current.left, current.right);
           candidate.setMode(TargetMode::kManual, target_time);
           if (latest_wrist_alignment.left.valid) {
-            target_accepted =
-                candidate.setManualTarget(
-                    ArmSide::kLeft, latest_wrist_alignment.left.target,
-                    source_seconds,
-                    monotonicTimestampSeconds(
-                        pico_frame.receive_monotonic_ns)) ||
-                target_accepted;
+            left_target_accepted = candidate.setManualTarget(
+                ArmSide::kLeft, latest_wrist_alignment.left.target,
+                source_seconds,
+                monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
           }
           if (latest_wrist_alignment.right.valid) {
-            target_accepted =
-                candidate.setManualTarget(
-                    ArmSide::kRight, latest_wrist_alignment.right.target,
-                    source_seconds,
-                    monotonicTimestampSeconds(
-                        pico_frame.receive_monotonic_ns)) ||
-                target_accepted;
+            right_target_accepted = candidate.setManualTarget(
+                ArmSide::kRight, latest_wrist_alignment.right.target,
+                source_seconds,
+                monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
           }
+          latest_left_target_accepted = left_target_accepted;
+          latest_right_target_accepted = right_target_accepted;
+          target_accepted = left_target_accepted || right_target_accepted;
         } else if (spark_guidance != nullptr &&
                    usesSparkGuidance(controller->algorithm())) {
           if (reset_epoch) {
@@ -933,6 +933,17 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
           target_accepted = candidate.setManualTargets(
               pico_frame.left, pico_frame.right, source_seconds,
               monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
+          left_target_accepted = target_accepted;
+          right_target_accepted = target_accepted;
+        }
+        if (wrist_endpoint_mode && reset_epoch) {
+          // Clear per-side TargetManager timestamp/filter history even when
+          // alignment is still pending for this reset frame.
+          targets = std::move(candidate);
+        } else if (target_accepted &&
+                   (spark_guidance == nullptr ||
+                    !usesSparkGuidance(controller->algorithm()))) {
+          targets = std::move(candidate);
         }
         if (target_accepted) {
           if (reset_epoch && !config.controller.model_state_only) {
@@ -979,6 +990,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
                   0, monotonic_now_ns -
                          pico_frame.bridge_send_monotonic_ns));
         }
+        }
       }
     }
 
@@ -1000,10 +1012,11 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     DualArmTargets desired = targets.sample(target_time);
     if (wrist_endpoint_mode) {
       desired.left_stale =
-          paused || !pico_freshness.live || !latest_wrist_alignment.left.valid;
+          paused || !pico_freshness.live ||
+          !latest_wrist_alignment.left.valid || !latest_left_target_accepted;
       desired.right_stale =
           paused || !pico_freshness.live ||
-          !latest_wrist_alignment.right.valid;
+          !latest_wrist_alignment.right.valid || !latest_right_target_accepted;
     }
     const bool spark_mode = spark_guidance != nullptr &&
                             usesSparkGuidance(controller->algorithm());
@@ -3747,6 +3760,11 @@ int run(int argc, char** argv) {
   }
   if (options.algorithm_override.has_value()) {
     config.ik_algorithm = *options.algorithm_override;
+  }
+  if (options.pico_wrist_input &&
+      config.ik_algorithm != IkAlgorithm::kHierarchicalQp) {
+    throw std::invalid_argument(
+        "--pico-wrist-input requires hierarchical_qp");
   }
   if (usesSparkGuidance(config.ik_algorithm)) {
     if (!options.pico_teleop) {
