@@ -103,6 +103,7 @@ def test_pause_blocks_existing_camera_and_recorder_queue_work():
         camera_provider=Camera(),
         recorder=Recorder(),
     )
+    assert simulator.camera_drop_count == 0
     try:
         simulator.set_paused(True)
         simulator._camera_queue.put(

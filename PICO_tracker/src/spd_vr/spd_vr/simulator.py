@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from contextlib import nullcontext
 import json
 import math
 import socket
@@ -85,12 +86,14 @@ class _CameraWorker:
         output: queue.Queue[CameraRequest],
         pause_event: threading.Event | None = None,
         pause_ack: threading.Event | None = None,
+        pause_lock: threading.Lock | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.output = output
         self.pause_event = pause_event
         self.pause_ack = pause_ack
+        self.pause_lock = pause_lock
         self.results: queue.Queue[Mapping[str, CameraFrame]] = queue.Queue(maxsize=4096)
         self.errors: queue.Queue[BaseException] = queue.Queue(maxsize=1)
         self._stop = threading.Event()
@@ -106,11 +109,18 @@ class _CameraWorker:
                     continue
                 if self.pause_ack is not None:
                     self.pause_ack.clear()
-                try:
-                    request = self.output.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                if self.pause_event is not None and self.pause_event.is_set():
+                with self.pause_lock if self.pause_lock is not None else nullcontext():
+                    if self.pause_event is not None and self.pause_event.is_set():
+                        if self.pause_ack is not None:
+                            self.pause_ack.set()
+                        request = None
+                    else:
+                        try:
+                            request = self.output.get_nowait()
+                        except queue.Empty:
+                            request = None
+                if request is None:
+                    time.sleep(0.001)
                     continue
                 if hasattr(self.provider, "capture_snapshot"):
                     frames = self.provider.capture_snapshot(
@@ -215,8 +225,10 @@ class UnifiedSimulator:
         self._camera_queue: queue.Queue[CameraRequest] | None = None
         self._camera_worker: _CameraWorker | None = None
         self._worker_pause = threading.Event()
+        self._worker_pause_lock = threading.Lock()
         self._camera_pause_ack = threading.Event()
         self._recorder_pause_ack = threading.Event()
+        self._camera_drop_count = 0
         if camera_provider is not None:
             self._camera_queue = queue.Queue(maxsize=4096)
             self._camera_worker = _CameraWorker(
@@ -225,6 +237,7 @@ class UnifiedSimulator:
                 self._camera_queue,
                 self._worker_pause,
                 self._camera_pause_ack,
+                self._worker_pause_lock,
             )
         self._recorder_queue: queue.Queue[dict[str, Any]] | None = None
         self._recorder_thread: threading.Thread | None = None
@@ -654,9 +667,10 @@ class UnifiedSimulator:
             return
         if paused:
             self.paused = True
-            self._worker_pause.set()
-            self._camera_pause_ack.clear()
-            self._recorder_pause_ack.clear()
+            with self._worker_pause_lock:
+                self._worker_pause.set()
+                self._camera_pause_ack.clear()
+                self._recorder_pause_ack.clear()
             if self._camera_worker is not None:
                 self._camera_pause_ack.wait(timeout=1.0)
             if self._recorder_thread is not None:
@@ -763,11 +777,15 @@ class UnifiedSimulator:
                     time.sleep(0.001)
                     continue
                 self._recorder_pause_ack.clear()
-                try:
-                    item = queue_ref.get(timeout=0.05)
-                except queue.Empty:
-                    continue
-                if self._worker_pause.is_set():
+                with self._worker_pause_lock:
+                    if self._worker_pause.is_set():
+                        continue
+                    try:
+                        item = queue_ref.get_nowait()
+                    except queue.Empty:
+                        item = None
+                if item is None:
+                    time.sleep(0.001)
                     continue
                 recorder.submit(**item)
 
