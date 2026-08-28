@@ -1,11 +1,12 @@
 from pathlib import Path
 from types import SimpleNamespace
+import time
 
 import numpy as np
 
 from spd_vr import simulator as simulator_module
 from spd_vr.arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, RIGHT_VALID
-from spd_vr.simulator import UnifiedSimulator
+from spd_vr.simulator import CameraRequest, UnifiedSimulator
 
 
 ROOT = Path(__file__).parents[1]
@@ -42,9 +43,14 @@ def test_invalid_left_does_not_block_valid_right_and_stales_locally(monkeypatch)
         assert snapshot.valid_mask == RIGHT_VALID
         assert snapshot.left_q == before_left
         assert snapshot.right_hold_reason is ArmTargetHoldReason.NONE
+        monkeypatch.setattr(
+            simulator_module.time,
+            "monotonic_ns",
+            lambda: base + 50_000_001,
+        )
 
-        monkeypatch.setattr(simulator_module.time, "monotonic_ns", lambda: base + 50_000_001)
-        simulator.step()
+        result = simulator.step()
+        assert result.arm_valid_mask == 0
         assert simulator._arm_snapshot.valid_mask == 0
         assert simulator._arm_snapshot.right_hold_reason is ArmTargetHoldReason.INPUT_STALE
         assert simulator._arm_snapshot.right_q == snapshot.right_q
@@ -74,5 +80,47 @@ def test_pause_freezes_tick_time_state_and_rejects_callbacks(monkeypatch):
         simulator.set_paused(False)
         assert simulator._arm_snapshot.valid_mask == 0
         assert simulator._arm_snapshot.left_hold_reason is ArmTargetHoldReason.INPUT_STALE
+    finally:
+        simulator.close()
+
+
+def test_pause_blocks_existing_camera_and_recorder_queue_work():
+    camera_calls: list[int] = []
+    recorder_calls: list[int] = []
+
+    class Camera:
+        def capture(self, sim_time_ns):
+            camera_calls.append(sim_time_ns)
+            return {}
+
+    class Recorder:
+        def submit(self, **item):
+            recorder_calls.append(item["sim_time_ns"])
+
+    simulator = UnifiedSimulator(
+        MODEL,
+        MANIFEST,
+        camera_provider=Camera(),
+        recorder=Recorder(),
+    )
+    try:
+        simulator.set_paused(True)
+        simulator._camera_queue.put(
+            CameraRequest(1, simulator.data.qpos.copy(), simulator.data.qvel.copy())
+        )
+        simulator._recorder_queue.put({"sim_time_ns": 1})
+        for _ in range(3):
+            simulator.step()
+        time.sleep(0.05)
+        assert camera_calls == []
+        assert recorder_calls == []
+        assert simulator._camera_queue.qsize() == 1
+        assert simulator._recorder_queue.qsize() == 1
+        simulator.set_paused(False)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and (not camera_calls or not recorder_calls):
+            time.sleep(0.01)
+        assert camera_calls == [1]
+        assert recorder_calls == [1]
     finally:
         simulator.close()

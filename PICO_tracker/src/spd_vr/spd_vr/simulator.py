@@ -77,24 +77,40 @@ class SimulationStep:
     hand_right_valid: bool
     camera_enqueued: bool
 
-
 class _CameraWorker:
-    def __init__(self, provider: Any, model: Any, output: queue.Queue[CameraRequest]) -> None:
+    def __init__(
+        self,
+        provider: Any,
+        model: Any,
+        output: queue.Queue[CameraRequest],
+        pause_event: threading.Event | None = None,
+        pause_ack: threading.Event | None = None,
+    ) -> None:
         self.provider = provider
         self.model = model
         self.output = output
+        self.pause_event = pause_event
+        self.pause_ack = pause_ack
         self.results: queue.Queue[Mapping[str, CameraFrame]] = queue.Queue(maxsize=4096)
         self.errors: queue.Queue[BaseException] = queue.Queue(maxsize=1)
         self._stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="spd-vr-camera", daemon=True)
         self.thread.start()
-
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
+                if self.pause_event is not None and self.pause_event.is_set():
+                    if self.pause_ack is not None:
+                        self.pause_ack.set()
+                    time.sleep(0.001)
+                    continue
+                if self.pause_ack is not None:
+                    self.pause_ack.clear()
                 try:
                     request = self.output.get(timeout=0.05)
                 except queue.Empty:
+                    continue
+                if self.pause_event is not None and self.pause_event.is_set():
                     continue
                 if hasattr(self.provider, "capture_snapshot"):
                     frames = self.provider.capture_snapshot(
@@ -105,7 +121,6 @@ class _CameraWorker:
                 try:
                     self.results.put_nowait(frames)
                 except queue.Full:
-                    # Keep the latest completed render; physics never waits for it.
                     try:
                         self.results.get_nowait()
                     except queue.Empty:
@@ -199,10 +214,18 @@ class UnifiedSimulator:
         self._recorder = recorder
         self._camera_queue: queue.Queue[CameraRequest] | None = None
         self._camera_worker: _CameraWorker | None = None
-        self._camera_drop_count = 0
+        self._worker_pause = threading.Event()
+        self._camera_pause_ack = threading.Event()
+        self._recorder_pause_ack = threading.Event()
         if camera_provider is not None:
             self._camera_queue = queue.Queue(maxsize=4096)
-            self._camera_worker = _CameraWorker(camera_provider, model, self._camera_queue)
+            self._camera_worker = _CameraWorker(
+                camera_provider,
+                model,
+                self._camera_queue,
+                self._worker_pause,
+                self._camera_pause_ack,
+            )
         self._recorder_queue: queue.Queue[dict[str, Any]] | None = None
         self._recorder_thread: threading.Thread | None = None
         self._recorder_stop: threading.Event | None = None
@@ -631,6 +654,13 @@ class UnifiedSimulator:
             return
         if paused:
             self.paused = True
+            self._worker_pause.set()
+            self._camera_pause_ack.clear()
+            self._recorder_pause_ack.clear()
+            if self._camera_worker is not None:
+                self._camera_pause_ack.wait(timeout=1.0)
+            if self._recorder_thread is not None:
+                self._recorder_pause_ack.wait(timeout=1.0)
             self._resume_gate_mask = LEFT_VALID | RIGHT_VALID
             self._arm_packet_decoder.reset()
             self._last_arm_epoch = self._last_arm_sequence = None
@@ -663,6 +693,9 @@ class UnifiedSimulator:
                 self._applied_hand = self._hand_snapshot
         else:
             self.paused = False
+            self._worker_pause.clear()
+            self._camera_pause_ack.clear()
+            self._recorder_pause_ack.clear()
             self._resume_gate_mask = LEFT_VALID | RIGHT_VALID
             with self._arm_lock:
                 arm = self._arm_snapshot
@@ -725,9 +758,16 @@ class UnifiedSimulator:
 
         def worker() -> None:
             while not stop_ref.is_set() or not queue_ref.empty():
+                if self._worker_pause.is_set():
+                    self._recorder_pause_ack.set()
+                    time.sleep(0.001)
+                    continue
+                self._recorder_pause_ack.clear()
                 try:
                     item = queue_ref.get(timeout=0.05)
                 except queue.Empty:
+                    continue
+                if self._worker_pause.is_set():
                     continue
                 recorder.submit(**item)
 
@@ -768,8 +808,31 @@ class UnifiedSimulator:
         camera_due, self._next_camera_time_ns = self._schedule_due(sim_time_ns, self._next_camera_time_ns, int(1e9 / CAMERA_HZ))
         if arm_due:
             self._applied_arm = arm_snapshot
+        elif self._applied_arm.valid_mask & ~arm_snapshot.valid_mask:
+            self._applied_arm = ArmSnapshot(
+                **{
+                    **self._applied_arm.__dict__,
+                    "valid_mask": self._applied_arm.valid_mask & arm_snapshot.valid_mask,
+                    "left_hold_reason": arm_snapshot.left_hold_reason,
+                    "right_hold_reason": arm_snapshot.right_hold_reason,
+                }
+            )
         if hand_due:
             self._applied_hand = hand_snapshot
+        elif (
+            (self._applied_hand.left_valid and not hand_snapshot.left_valid)
+            or (self._applied_hand.right_valid and not hand_snapshot.right_valid)
+        ):
+            self._applied_hand = HandSnapshot(
+                self._applied_hand.tracking_epoch,
+                self._applied_hand.sequence_id,
+                self._applied_hand.left_q,
+                self._applied_hand.right_q,
+                self._applied_hand.left_valid and hand_snapshot.left_valid,
+                self._applied_hand.right_valid and hand_snapshot.right_valid,
+                hand_snapshot.left_hold_reason,
+                hand_snapshot.right_hold_reason,
+            )
         self._apply_targets()
         step_start = time.perf_counter_ns()
         self._mujoco.mj_step(self.model, self.data)
@@ -903,6 +966,7 @@ class UnifiedSimulator:
     def close(self) -> None:
         if self._closed:
             return
+        self._worker_pause.clear()
         self._closed = True
         self.stop_arm_udp()
         if self._camera_worker is not None:
