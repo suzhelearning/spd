@@ -2,7 +2,7 @@
 
 ## 状态
 完成 arm-target v2 跨语言协议与 UnifiedSimulator 单侧 HOLD、stale、pause/resume 门控；保留 Task 5 viewer wrist endpoint/alignment/algorithm guard 行为。
-提交：`144453e` (`feat: preserve arm validity per side`)
+提交：Task6 implementation commit `3a7cebc` (`feat: preserve arm validity per side`)
 
 ## 改动文件
 - `TJ_arm_control/include/tianji_qp_ik/arm_target_protocol.hpp`
