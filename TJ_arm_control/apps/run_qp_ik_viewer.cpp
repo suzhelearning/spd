@@ -7,6 +7,7 @@
 #include "tianji_qp_ik/mujoco_joint_plot.hpp"
 #include "tianji_qp_ik/mujoco_robot.hpp"
 #include "tianji_qp_ik/pico_teleop_session.hpp"
+#include "tianji_qp_ik/pico_wrist_alignment.hpp"
 #include "tianji_qp_ik/pico_skeleton_overlay.hpp"
 #include "tianji_qp_ik/pico_udp_receiver.hpp"
 #include "tianji_qp_ik/so3.hpp"
@@ -68,6 +69,13 @@ struct Options {
   std::string pico_bind{"127.0.0.1"};
   std::uint16_t pico_port{15000U};
   std::string pico_record_path;
+  std::string left_end_effector_site{"tcp_L"};
+  std::string right_end_effector_site{"tcp_R"};
+  bool pico_wrist_input{false};
+  std::size_t wrist_stable_frames{10U};
+  double wrist_max_position_step{0.02};
+  double wrist_max_orientation_step{0.15};
+  double wrist_position_scale{1.0};
   std::optional<ControlLevel> control_level_override;
   std::optional<IkAlgorithm> algorithm_override;
   std::optional<bool> model_state_only_override;
@@ -123,6 +131,12 @@ Options parseOptions(int argc, char** argv) {
                    "[--pico-skeleton-overlay|--no-pico-skeleton-overlay] "
                    "[--pico-bind IPV4] [--pico-port PORT] "
                    "[--pico-record FILE.tjvr] "
+                   "[--left-end-effector-site SITE] "
+                   "[--right-end-effector-site SITE] [--pico-wrist-input] "
+                   "[--wrist-stable-frames N] "
+                   "[--wrist-max-position-step METERS] "
+                   "[--wrist-max-orientation-step RADIANS] "
+                   "[--wrist-position-scale SCALE] "
                    "[--arm-target-host IPV4] [--arm-target-port PORT] "
                    "[--no-arm-target-output] "
                    "[--control-level velocity|acceleration] "
@@ -169,6 +183,10 @@ Options parseOptions(int argc, char** argv) {
       options.no_arm_target_output = true;
       continue;
     }
+    if (argument == "--pico-wrist-input") {
+      options.pico_wrist_input = true;
+      continue;
+    }
     if (index + 1 >= argc) {
       throw std::invalid_argument("missing value after " + argument);
     }
@@ -187,6 +205,24 @@ Options parseOptions(int argc, char** argv) {
       options.pico_bind = value;
     } else if (argument == "--pico-record") {
       options.pico_record_path = value;
+    } else if (argument == "--left-end-effector-site") {
+      options.left_end_effector_site = value;
+    } else if (argument == "--right-end-effector-site") {
+      options.right_end_effector_site = value;
+    } else if (argument == "--wrist-stable-frames") {
+      std::size_t parsed_characters = 0U;
+      const unsigned long parsed = std::stoul(value, &parsed_characters);
+      if (parsed_characters != value.size() || parsed == 0UL) {
+        throw std::invalid_argument(
+            "--wrist-stable-frames must be a non-zero integer");
+      }
+      options.wrist_stable_frames = static_cast<std::size_t>(parsed);
+    } else if (argument == "--wrist-max-position-step") {
+      options.wrist_max_position_step = std::stod(value);
+    } else if (argument == "--wrist-max-orientation-step") {
+      options.wrist_max_orientation_step = std::stod(value);
+    } else if (argument == "--wrist-position-scale") {
+      options.wrist_position_scale = std::stod(value);
     } else if (argument == "--pico-port") {
       std::size_t parsed_characters = 0U;
       const unsigned long parsed = std::stoul(value, &parsed_characters);
@@ -269,6 +305,33 @@ Options parseOptions(int argc, char** argv) {
   if (!options.pico_record_path.empty() && !options.pico_teleop) {
     throw std::invalid_argument("--pico-record requires --pico-teleop");
   }
+  if (options.pico_wrist_input && !options.pico_teleop) {
+    throw std::invalid_argument("--pico-wrist-input requires --pico-teleop");
+  }
+  if (options.pico_wrist_input &&
+      (options.left_end_effector_site != "l_wrist_target" ||
+       options.right_end_effector_site != "r_wrist_target")) {
+    throw std::invalid_argument(
+        "--pico-wrist-input requires l_wrist_target and r_wrist_target sites");
+  }
+  if (options.wrist_stable_frames == 0U) {
+    throw std::invalid_argument("--wrist-stable-frames must be non-zero");
+  }
+  if (!std::isfinite(options.wrist_max_position_step) ||
+      options.wrist_max_position_step <= 0.0) {
+    throw std::invalid_argument(
+        "--wrist-max-position-step must be finite and positive");
+  }
+  if (!std::isfinite(options.wrist_max_orientation_step) ||
+      options.wrist_max_orientation_step <= 0.0) {
+    throw std::invalid_argument(
+        "--wrist-max-orientation-step must be finite and positive");
+  }
+  if (!std::isfinite(options.wrist_position_scale) ||
+      options.wrist_position_scale <= 0.0) {
+    throw std::invalid_argument(
+        "--wrist-position-scale must be finite and positive");
+  }
   in_addr parsed_address{};
   if (inet_pton(AF_INET, options.pico_bind.c_str(), &parsed_address) != 1) {
     throw std::invalid_argument("--pico-bind must be a valid IPv4 address");
@@ -287,6 +350,15 @@ std::int64_t monotonicNowNs() {
     throw std::runtime_error("clock_gettime(CLOCK_MONOTONIC) failed");
   }
   return static_cast<std::int64_t>(now.tv_sec) * 1000000000LL + now.tv_nsec;
+}
+
+std::string_view wristHoldReasonForTelemetry(
+    const WristAlignmentSideResult& result) noexcept {
+  if (result.hold_reason == "stable_window") return "stable_window";
+  if (result.hold_reason == "inactive") return "inactive";
+  if (result.hold_reason == "invalid_pose") return "invalid_pose";
+  if (result.hold_reason == "alignment_reset") return "alignment_reset";
+  return {};
 }
 
 timespec addNanoseconds(timespec value, std::int64_t nanoseconds) {
@@ -647,6 +719,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  LatestSpscExchange<PicoTeleopFrame>* pico_frames,
                  PicoUdpReceiver* pico_receiver,
                  bool pico_initially_enabled, bool wrist_endpoint_mode,
+                 WristAlignmentConfig wrist_alignment_config,
                  ArmAngleReferenceMode initial_arm_angle_reference_mode,
                  ArmTargetUdpOutput* arm_target_output,
                  std::atomic<bool>& running) {
@@ -701,6 +774,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   const bool pico_configured = pico_frames != nullptr && pico_receiver != nullptr;
   PicoTeleopSession pico_session(
       config.cartesian_servo.target_timeout_seconds);
+  PicoWristAlignment wrist_alignment(wrist_alignment_config);
+  WristAlignmentUpdate latest_wrist_alignment;
   ArmDirectionReferenceManager arm_direction_manager(
       config.arm_angle.reference_rate_limit_rad_s);
   ArmAngleReferenceMode arm_angle_reference_mode{
@@ -746,10 +821,20 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       const ControlLevel previous_control_level = config.control_level;
       const IkAlgorithm previous_algorithm = controller->algorithm();
       const bool previous_paused = paused;
+      const bool previous_pico_enabled = pico_session.enabled();
       processCommand(command, robot, config, target_time, targets,
                      pico_session, pico_configured, wrist_endpoint_mode,
                      arm_angle_reference_mode, paused, controller,
                      acceleration_controller);
+      if (wrist_endpoint_mode &&
+          (paused != previous_paused ||
+           pico_session.enabled() != previous_pico_enabled ||
+           command.type == ViewerCommandType::kResetNominal)) {
+        wrist_alignment.reset();
+        latest_wrist_alignment = {};
+        latest_wrist_alignment.left.hold_reason = "alignment_reset";
+        latest_wrist_alignment.right.hold_reason = "alignment_reset";
+      }
       if (config.control_level != previous_control_level) {
         const CartesianOtgConfig selected_otg_config =
             cartesianOtgConfigForControlLevel(config, config.control_level);
@@ -794,13 +879,43 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
             static_cast<double>(pico_frame.source_timestamp_ns) * 1.0e-9;
         const bool reset_epoch =
             classification.action == PicoTeleopAction::kResetEpochAndApply;
+        if (wrist_endpoint_mode && !pico_frame.wrist_pose_input) {
+          std::cerr << "rejected legacy TJVR frame in --pico-wrist-input mode\n";
+          continue;
+        }
+        if (reset_epoch && wrist_endpoint_mode) {
+          wrist_alignment.reset();
+          pico_frame.wrist_alignment_reset = true;
+        }
         const DualArmTargets current = currentTargets(robot);
         bool target_accepted = false;
         TargetManager candidate = reset_epoch
                                       ? TargetManager(config, current)
                                       : targets;
-        if (spark_guidance != nullptr &&
-            usesSparkGuidance(controller->algorithm())) {
+        if (wrist_endpoint_mode) {
+          latest_wrist_alignment = wrist_alignment.update(
+              pico_frame, current.left, current.right);
+          candidate.setMode(TargetMode::kManual, target_time);
+          if (latest_wrist_alignment.left.valid) {
+            target_accepted =
+                candidate.setManualTarget(
+                    ArmSide::kLeft, latest_wrist_alignment.left.target,
+                    source_seconds,
+                    monotonicTimestampSeconds(
+                        pico_frame.receive_monotonic_ns)) ||
+                target_accepted;
+          }
+          if (latest_wrist_alignment.right.valid) {
+            target_accepted =
+                candidate.setManualTarget(
+                    ArmSide::kRight, latest_wrist_alignment.right.target,
+                    source_seconds,
+                    monotonicTimestampSeconds(
+                        pico_frame.receive_monotonic_ns)) ||
+                target_accepted;
+          }
+        } else if (spark_guidance != nullptr &&
+                   usesSparkGuidance(controller->algorithm())) {
           if (reset_epoch) {
             const bool spark_direct_qpos =
                 usesSparkUpperQpoasesDirect(controller->algorithm());
@@ -834,15 +949,16 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
             targets = std::move(candidate);
           }
           if (reset_epoch) {
-            // A PICO epoch reset changes the target stream, not the robot's
-            // commanded Cartesian state.  Keep the OTG state continuous and
-            // let it move toward the newly accepted target under its normal
-            // velocity, acceleration, and jerk limits.  Resetting from the
-            // MuJoCo feedback pose here teleported the reference whenever the
-            // model reference and simulated feedback had separated.
+            // Keep the OTG state continuous across a PICO epoch change.
             plot_reset_requested = true;
             ++pico_reset_applies;
           }
+        }
+        // A structurally valid wrist frame is consumed even while its stable
+        // window is pending, so the sequence gate can advance to the next
+        // candidate. Per-side target validity is retained in the alignment
+        // result and target manager state above.
+        if (wrist_endpoint_mode || target_accepted) {
           pico_session.commitApplied(pico_frame);
           latest_pico_upper_limb_skeleton = pico_frame.upper_limb_skeleton;
           if (pico_frame.left_arm_direction.valid) {
@@ -882,6 +998,13 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         arm_direction_manager.update(requested_arm_directions, dt);
 
     DualArmTargets desired = targets.sample(target_time);
+    if (wrist_endpoint_mode) {
+      desired.left_stale =
+          paused || !pico_freshness.live || !latest_wrist_alignment.left.valid;
+      desired.right_stale =
+          paused || !pico_freshness.live ||
+          !latest_wrist_alignment.right.valid;
+    }
     const bool spark_mode = spark_guidance != nullptr &&
                             usesSparkGuidance(controller->algorithm());
     if (spark_mode) {
@@ -1935,6 +2058,16 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     snapshot.pico_frame_age_ms = 1.0e3 * pico_freshness.frame_age_seconds;
     snapshot.pico_receive_to_control_us = pico_receive_to_control_us;
     snapshot.pico_bridge_to_control_us = pico_bridge_to_control_us;
+    snapshot.left_wrist_alignment_count =
+        wrist_alignment.stableCount(ArmSide::kLeft);
+    snapshot.right_wrist_alignment_count =
+        wrist_alignment.stableCount(ArmSide::kRight);
+    snapshot.left_wrist_aligned = latest_wrist_alignment.left.aligned;
+    snapshot.right_wrist_aligned = latest_wrist_alignment.right.aligned;
+    snapshot.left_wrist_hold_reason =
+        wristHoldReasonForTelemetry(latest_wrist_alignment.left);
+    snapshot.right_wrist_hold_reason =
+        wristHoldReasonForTelemetry(latest_wrist_alignment.right);
     snapshot.pico_upper_limb_skeleton = latest_pico_upper_limb_skeleton;
     snapshot.pico_upper_limb_skeleton.valid =
         snapshot.pico_upper_limb_skeleton.valid && pico_session.enabled() &&
@@ -1994,8 +2127,17 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
           snapshot.pico_right_source_timestamp_ns;
       sample.pico_input_frequency_hz = snapshot.pico_input_frequency_hz;
       sample.pico_frame_age_ms = snapshot.pico_frame_age_ms;
-      sample.pico_receive_to_control_us = snapshot.pico_receive_to_control_us;
+      sample.pico_receive_to_control_us =
+          snapshot.pico_receive_to_control_us;
       sample.pico_bridge_to_control_us = snapshot.pico_bridge_to_control_us;
+      sample.left_wrist_alignment_count =
+          snapshot.left_wrist_alignment_count;
+      sample.right_wrist_alignment_count =
+          snapshot.right_wrist_alignment_count;
+      sample.left_wrist_aligned = snapshot.left_wrist_aligned;
+      sample.right_wrist_aligned = snapshot.right_wrist_aligned;
+      sample.left_wrist_hold_reason = snapshot.left_wrist_hold_reason;
+      sample.right_wrist_hold_reason = snapshot.right_wrist_hold_reason;
       sample.left_target_pose = desired.left;
       sample.right_target_pose = desired.right;
       sample.left_reference_pose = config.cartesian_otg.enabled
@@ -2059,6 +2201,9 @@ void writeTelemetryCsv(const std::string& path, TelemetryBuffer& telemetry,
             "pico_left_source_timestamp_ns,pico_right_source_timestamp_ns,"
             "pico_input_frequency_hz,pico_frame_age_ms,"
             "pico_receive_to_control_us,pico_bridge_to_control_us,"
+            "left_wrist_alignment_count,right_wrist_alignment_count,"
+            "left_wrist_aligned,right_wrist_aligned,"
+            "left_wrist_hold_reason,right_wrist_hold_reason,"
             "left_actual_position_error_m,left_actual_orientation_error_rad,"
             "right_actual_position_error_m,right_actual_orientation_error_rad,"
             "left_target_px,left_target_py,left_target_pz,left_target_qx,left_target_qy,left_target_qz,left_target_qw,"
@@ -2317,6 +2462,12 @@ void writeTelemetryCsv(const std::string& path, TelemetryBuffer& telemetry,
              << sample.pico_frame_age_ms << ','
              << sample.pico_receive_to_control_us << ','
              << sample.pico_bridge_to_control_us << ','
+             << sample.left_wrist_alignment_count << ','
+             << sample.right_wrist_alignment_count << ','
+             << sample.left_wrist_aligned << ','
+             << sample.right_wrist_aligned << ','
+             << sample.left_wrist_hold_reason << ','
+             << sample.right_wrist_hold_reason << ','
              << sample.left_ik.actual_position_error << ','
              << sample.left_ik.actual_orientation_error << ','
              << sample.right_ik.actual_position_error << ','
@@ -3017,6 +3168,7 @@ void drawOverlay(const ViewerApplication& application, mjrRect viewport) {
       "control failures: %llu | snapshot/telemetry drops: %llu / %llu | command drops: %llu\n"
       "PICO cfg/en/live/stale %d/%d/%d/%d | epoch/seq %llu/%llu | %.1f Hz | age %.1f ms\n"
       "PICO rx accepted/datagrams %llu/%llu | bad/crc/order/jump/super/epoch/resync/reset %llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu | latency recv/bridge %.1f/%.1f us\n"
+      "wrist align L/R count/aligned/hold %zu/%d/%s | %zu/%d/%s\n"
       "arm angle mode: %s | effective left/right: %s/%s\n"
       "skeleton overlay: %s | PICO %s | Spark %s\n"
       "safety: %s",
@@ -3088,6 +3240,12 @@ void drawOverlay(const ViewerApplication& application, mjrRect viewport) {
       static_cast<unsigned long long>(application.snapshot.pico_reset_applies),
       application.snapshot.pico_receive_to_control_us,
       application.snapshot.pico_bridge_to_control_us,
+      application.snapshot.left_wrist_alignment_count,
+      application.snapshot.left_wrist_aligned ? 1 : 0,
+      application.snapshot.left_wrist_hold_reason.data(),
+      application.snapshot.right_wrist_alignment_count,
+      application.snapshot.right_wrist_aligned ? 1 : 0,
+      application.snapshot.right_wrist_hold_reason.data(),
       toString(application.snapshot.arm_angle_reference_mode).data(),
       toString(application.snapshot.left_ik.arm_angle_reference_source).data(),
       toString(application.snapshot.right_ik.arm_angle_reference_source).data(),
@@ -3449,8 +3607,7 @@ int runPicoHeadless(const Options& options,
 int runViewer(const Options& options, BoundedSpscQueue<ViewerCommand>& commands,
               LatestSnapshotExchange<ViewerSnapshot>& snapshots,
               BoundedSpscQueue<JointKinematicsSample>& joint_plot_queue,
-              std::atomic<bool>& running, bool use_wrist_end_effector,
-              std::thread& control_thread) {
+              std::atomic<bool>& running, std::thread& control_thread) {
   if (glfwInit() == GLFW_FALSE) {
     throw std::runtime_error("GLFW initialization failed; use --headless without a display");
   }
@@ -3461,10 +3618,8 @@ int runViewer(const Options& options, BoundedSpscQueue<ViewerCommand>& commands,
   }
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
-  const EndEffectorSiteNames end_effector_sites =
-      use_wrist_end_effector
-          ? EndEffectorSiteNames{"l_wrist_target", "r_wrist_target"}
-          : EndEffectorSiteNames{};
+  const EndEffectorSiteNames end_effector_sites{
+      options.left_end_effector_site, options.right_end_effector_site};
   MujocoRobot render_robot(options.model_path, end_effector_sites);
   ViewerApplication application(render_robot, commands);
   application.show_pico_skeleton = options.pico_skeleton_overlay;
@@ -3606,9 +3761,10 @@ int run(int argc, char** argv) {
       config.joint_limits.hard_jerk_enabled = true;
     }
   }
-  const bool use_wrist_end_effector =
-      options.pico_teleop &&
-      config.ik_algorithm == IkAlgorithm::kHierarchicalQp;
+  const WristAlignmentConfig wrist_alignment_config{
+      options.wrist_stable_frames, options.wrist_max_position_step,
+      options.wrist_max_orientation_step, options.wrist_position_scale};
+  const bool use_wrist_end_effector = options.pico_wrist_input;
   if (options.model_state_only_override.has_value()) {
     config.controller.model_state_only = *options.model_state_only_override;
   }
@@ -3635,10 +3791,8 @@ int run(int argc, char** argv) {
     pico_receiver = std::make_unique<PicoUdpReceiver>(
         std::move(receiver_options), pico_frames);
   }
-  const EndEffectorSiteNames end_effector_sites =
-      use_wrist_end_effector
-          ? EndEffectorSiteNames{"l_wrist_target", "r_wrist_target"}
-          : EndEffectorSiteNames{};
+  const EndEffectorSiteNames end_effector_sites{
+      options.left_end_effector_site, options.right_end_effector_site};
   MujocoRobot control_robot(options.model_path, end_effector_sites);
   std::unique_ptr<ArmTargetUdpOutput> arm_target_output;
   if (!options.no_arm_target_output) {
@@ -3698,7 +3852,7 @@ int run(int argc, char** argv) {
                     options.telemetry_path.empty() ? nullptr : &telemetry,
                     options.pico_teleop ? &pico_frames : nullptr,
                     pico_receiver.get(), options.pico_teleop,
-                    use_wrist_end_effector,
+                    use_wrist_end_effector, wrist_alignment_config,
                     initial_arm_angle_reference_mode, arm_target_output.get(),
                     running);
       } catch (...) {
@@ -3735,7 +3889,7 @@ int run(int argc, char** argv) {
                            running, control_thread);
     } else {
       result = runViewer(options, commands, snapshots, joint_plot_queue,
-                         running, use_wrist_end_effector, control_thread);
+                         running, control_thread);
     }
   } catch (...) {
     running.store(false, std::memory_order_release);

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace tianji_qp_ik {
@@ -194,6 +195,12 @@ struct TelemetrySample {
   double pico_frame_age_ms{0.0};
   double pico_receive_to_control_us{0.0};
   double pico_bridge_to_control_us{0.0};
+  std::size_t left_wrist_alignment_count{0U};
+  std::size_t right_wrist_alignment_count{0U};
+  bool left_wrist_aligned{false};
+  bool right_wrist_aligned{false};
+  std::string_view left_wrist_hold_reason;
+  std::string_view right_wrist_hold_reason;
   Pose left_target_pose;
   Pose left_reference_pose;
   Pose left_actual_pose;
@@ -262,6 +269,12 @@ struct ViewerSnapshot {
   double pico_frame_age_ms{0.0};
   double pico_receive_to_control_us{0.0};
   double pico_bridge_to_control_us{0.0};
+  std::size_t left_wrist_alignment_count{0U};
+  std::size_t right_wrist_alignment_count{0U};
+  bool left_wrist_aligned{false};
+  bool right_wrist_aligned{false};
+  std::string_view left_wrist_hold_reason;
+  std::string_view right_wrist_hold_reason;
   PicoUpperLimbSkeleton pico_upper_limb_skeleton;
   PicoUpperLimbSkeleton spark_upper_limb_skeleton;
 };

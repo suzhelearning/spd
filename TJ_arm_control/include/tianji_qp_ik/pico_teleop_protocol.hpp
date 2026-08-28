@@ -74,6 +74,12 @@ struct PicoTeleopFrame {
   // Monotonic receiver-local event generation. Persisted on later frames so a
   // latest-only exchange cannot erase a discontinuity before it is consumed.
   std::uint64_t resynchronization_generation{0U};
+  // Neutral contract for a future wrist relay. Legacy TJVR frames leave these
+  // false and MUST NOT be interpreted as wrist input by consumers.
+  bool wrist_pose_input{false};
+  bool wrist_alignment_reset{false};
+  bool left_wrist_active{false};
+  bool right_wrist_active{false};
 };
 
 struct PicoPacketDecodeResult {

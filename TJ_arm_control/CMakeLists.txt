@@ -78,6 +78,7 @@ add_library(tianji_qp_ik STATIC
   src/arm_target_protocol.cpp
   src/pico_skeleton_overlay.cpp
   src/pico_teleop_session.cpp
+  src/pico_wrist_alignment.cpp
   src/pico_trace_recorder.cpp
   src/pico_udp_receiver.cpp
   src/qp_builder.cpp
@@ -225,6 +226,7 @@ if(BUILD_TESTING)
   tianji_add_test(test_pico_udp_receiver tests/test_pico_udp_receiver.cpp)
   tianji_add_test(test_pico_trace_recorder tests/test_pico_trace_recorder.cpp)
   tianji_add_test(test_pico_teleop_session tests/test_pico_teleop_session.cpp)
+  tianji_add_test(test_pico_wrist_alignment tests/test_pico_wrist_alignment.cpp)
   tianji_add_test(test_interactive_marker tests/test_interactive_marker.cpp)
   tianji_add_test(test_mujoco_marker_adapter tests/test_mujoco_marker_adapter.cpp)
   target_link_libraries(test_mujoco_marker_adapter PRIVATE mujoco::mujoco)
