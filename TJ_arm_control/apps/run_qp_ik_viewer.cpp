@@ -957,10 +957,6 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               continue;
             }
           }
-          if (spark_guidance == nullptr ||
-              !usesSparkGuidance(controller->algorithm())) {
-            targets = std::move(candidate);
-          }
           if (reset_epoch) {
             // Keep the OTG state continuous across a PICO epoch change.
             plot_reset_requested = true;
