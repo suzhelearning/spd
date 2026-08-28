@@ -241,7 +241,7 @@ std::vector<double> benchmarkFullCycle(SolverBackend backend, const QpIkConfig& 
                                        std::size_t& failures) {
   MujocoRobot robot(model_path);
   setNominalConfiguration(robot);
-  const DualArmTargets initial{robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)};
+  const DualArmTargets initial{robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)};
   TargetManager targets(config, initial);
   targets.setMode(TargetMode::kCombined, 0.0);
   DualArmController controller(robot, config, makeSolver(backend, config),
@@ -277,7 +277,7 @@ std::vector<double> benchmarkSingleArmCycle(SolverBackend backend, ArmSide side,
   MujocoRobot robot(model_path);
   setNominalConfiguration(robot);
   TargetManager targets(config,
-                        {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)});
+                        {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)});
   targets.setMode(TargetMode::kCombined, 0.0);
   QpBuilder builder(config.qp, config.joint_limits);
   SafetyGuard safety(config.safety);
@@ -293,8 +293,8 @@ std::vector<double> benchmarkSingleArmCycle(SolverBackend backend, ArmSide side,
     const double time = static_cast<double>(index) * dt;
     const DualArmTargets desired = targets.sample(time);
     robot.forward();
-    const Pose current = robot.tcpPose(side);
-    const Mat67 jacobian = robot.tcpJacobianWorld(side);
+    const Pose current = robot.endEffectorPose(side);
+    const Mat67 jacobian = robot.endEffectorJacobianWorld(side);
     const Vec7 q = robot.armPosition(side);
     const Pose& target = side == ArmSide::kLeft ? desired.left : desired.right;
     const QpProblem7 problem = builder.build(

@@ -120,10 +120,10 @@ PicoTeleopFrame baseFrame(MujocoRobot& robot) {
   frame.tracking_epoch = 1;
   frame.upper_limb_skeleton.valid = true;
   frame.upper_limb_skeleton.points = {
-      left.shoulder_position, left.elbow_position, left.wrist_position, left.tcp_pose.position,
-      right.shoulder_position, right.elbow_position, right.wrist_position, right.tcp_pose.position};
-  frame.left = left.tcp_pose;
-  frame.right = right.tcp_pose;
+      left.shoulder_position, left.elbow_position, left.wrist_position, left.end_effector_pose.position,
+      right.shoulder_position, right.elbow_position, right.wrist_position, right.end_effector_pose.position};
+  frame.left = left.end_effector_pose;
+  frame.right = right.end_effector_pose;
   return frame;
 }
 
@@ -165,8 +165,8 @@ int run(const Options& options) {
                       robot.mapping(side).limits, side), Vec7::Zero());
   }
   robot.forward();
-  const Pose initial_left = robot.tcpPose(ArmSide::kLeft);
-  const Pose initial_right = robot.tcpPose(ArmSide::kRight);
+  const Pose initial_left = robot.endEffectorPose(ArmSide::kLeft);
+  const Pose initial_right = robot.endEffectorPose(ArmSide::kRight);
   const Eigen::Vector3d offset = workingPointOffset(options.working_point);
   Pose left_center = initial_left;
   Pose right_center = initial_right;
@@ -238,7 +238,7 @@ int run(const Options& options) {
         const ArmKinematicSample source_geometry =
             robot.armKinematicsAt(options.arm, source_q);
         skeleton_input = poseComponent(
-            source_geometry.tcp_pose,
+            source_geometry.end_effector_pose,
             options.arm == ArmSide::kLeft ? left_center : right_center,
             options.channel);
         if (options.arm == ArmSide::kLeft) {
@@ -246,13 +246,13 @@ int run(const Options& options) {
           frame.upper_limb_skeleton.points[0] = source_geometry.shoulder_position;
           frame.upper_limb_skeleton.points[1] = source_geometry.elbow_position;
           frame.upper_limb_skeleton.points[2] = source_geometry.wrist_position;
-          frame.upper_limb_skeleton.points[3] = source_geometry.tcp_pose.position;
+          frame.upper_limb_skeleton.points[3] = source_geometry.end_effector_pose.position;
         } else {
           frame.right = perturbed;
           frame.upper_limb_skeleton.points[4] = source_geometry.shoulder_position;
           frame.upper_limb_skeleton.points[5] = source_geometry.elbow_position;
           frame.upper_limb_skeleton.points[6] = source_geometry.wrist_position;
-          frame.upper_limb_skeleton.points[7] = source_geometry.tcp_pose.position;
+          frame.upper_limb_skeleton.points[7] = source_geometry.end_effector_pose.position;
         }
         frame.sequence = static_cast<std::uint64_t>(sample / 2 + 1);
         frame.source_timestamp_ns = static_cast<std::int64_t>(sample) * 5000000;
@@ -310,7 +310,7 @@ int run(const Options& options) {
     const Vec7 jerk = (qddot - previous_qddot) / dt;
     previous_qdot = qdot;
     previous_qddot = qddot;
-    const Pose measured = robot.tcpPose(options.arm);
+    const Pose measured = robot.endEffectorPose(options.arm);
     const double actual_input = poseComponent(accepted_pose, accepted_center, options.channel);
     const double measured_output = poseComponent(measured, accepted_center, options.channel);
     const ArmLimits& limits = robot.mapping(options.arm).limits;

@@ -140,9 +140,9 @@ struct PinocchioArmKinematics::Impl {
 
     ArmKinematicSample result;
     const pinocchio::SE3& tcp = data->oMf[arm.tcp_frame];
-    result.tcp_pose.position = tcp.translation();
-    result.tcp_pose.rotation = tcp.rotation();
-    result.tcp_jacobian = frameJacobian(arm.tcp_frame, arm);
+    result.end_effector_pose.position = tcp.translation();
+    result.end_effector_pose.rotation = tcp.rotation();
+    result.end_effector_jacobian = frameJacobian(arm.tcp_frame, arm);
     result.shoulder_position = framePosition(arm.shoulder_frame);
     result.elbow_position = framePosition(arm.elbow_frame);
     result.wrist_position = framePosition(arm.wrist_frame);

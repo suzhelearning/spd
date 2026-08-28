@@ -48,7 +48,7 @@ Vec7 redundantPose(const ArmLimits& limits) {
 
 DualArmTargets currentTargets(MujocoRobot& robot) {
   robot.forward();
-  return {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)};
+  return {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)};
 }
 
 class FailingIk final : public IArmVelocityIk {
@@ -451,7 +451,7 @@ TEST(DualArmController, ReachablePositionTargetConverges) {
   }
   robot.forward();
   const double final_error =
-      (targets.left.position - robot.tcpPose(ArmSide::kLeft).position).norm();
+      (targets.left.position - robot.endEffectorPose(ArmSide::kLeft).position).norm();
   std::cout << "reachable_position_final_error_m=" << final_error << '\n';
   EXPECT_LT(final_error, 0.002);
 }
@@ -572,7 +572,7 @@ TEST(DualArmController, UnreachableTargetStaysBoundedAndCanRecover) {
   }
   robot.forward();
   const double recovery_error =
-      (home.left.position - robot.tcpPose(ArmSide::kLeft).position).norm();
+      (home.left.position - robot.endEffectorPose(ArmSide::kLeft).position).norm();
   std::cout << "unreachable_recovery_final_error_m=" << recovery_error << '\n';
   EXPECT_LT(recovery_error, 0.003);
 }
@@ -585,7 +585,7 @@ TEST(DualArmController, SingularStartAndOrientationTargetRemainFinite) {
   }
   robot.forward();
   for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
-    const Eigen::JacobiSVD<Mat67> decomposition(robot.tcpJacobianWorld(side));
+    const Eigen::JacobiSVD<Mat67> decomposition(robot.endEffectorJacobianWorld(side));
     const auto singular_values = decomposition.singularValues();
     double minimum_singular_value = singular_values[0];
     for (Eigen::Index index = 1; index < singular_values.size(); ++index) {
@@ -606,7 +606,7 @@ TEST(DualArmController, SingularStartAndOrientationTargetRemainFinite) {
   }
   robot.forward();
   const double final_orientation_error =
-      rotationDistance(targets.left.rotation, robot.tcpPose(ArmSide::kLeft).rotation);
+      rotationDistance(targets.left.rotation, robot.endEffectorPose(ArmSide::kLeft).rotation);
   std::cout << "singular_orientation_final_error_rad=" << final_orientation_error << '\n';
   EXPECT_LT(final_orientation_error, 3.14159265358979323846 / 180.0);
 }

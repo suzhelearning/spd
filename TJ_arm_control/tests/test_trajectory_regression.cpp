@@ -25,7 +25,7 @@ TEST(TrajectoryRegression, DualArmCircleRemainsFiniteAndInsideSafetyMargins) {
   }
   robot.forward();
   TargetManager targets(config,
-                        {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)});
+                        {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)});
   targets.setMode(TargetMode::kCircle, 0.0);
   DualArmController controller(robot, config);
 
@@ -54,7 +54,7 @@ TEST(TrajectoryRegression, BothArmsConvergeToCombinedScriptedPose) {
   }
   robot.forward();
   TargetManager targets(config,
-                        {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)});
+                        {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)});
   targets.setMode(TargetMode::kCombined, 0.0);
   DualArmController controller(robot, config);
 
@@ -72,7 +72,7 @@ TEST(TrajectoryRegression, BothArmsConvergeToCombinedScriptedPose) {
   double maximum_orientation_error = 0.0;
   for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
     const Pose desired = side == ArmSide::kLeft ? scripted.left : scripted.right;
-    const Pose actual = robot.tcpPose(side);
+    const Pose actual = robot.endEffectorPose(side);
     const double position_error = (desired.position - actual.position).norm();
     const double orientation_error = rotationDistance(desired.rotation, actual.rotation);
     maximum_position_error = std::max(maximum_position_error, position_error);

@@ -10,6 +10,11 @@
 
 namespace tianji_qp_ik {
 
+struct EndEffectorSiteNames {
+  std::string left{"tcp_L"};
+  std::string right{"tcp_R"};
+};
+
 struct ArmMapping {
   std::array<std::string, kArmDof> joint_names;
   std::array<std::string, kArmDof> body_names;
@@ -17,14 +22,15 @@ struct ArmMapping {
   std::array<int, kArmDof> body_ids{};
   std::array<int, kArmDof> qpos_addresses{};
   std::array<int, kArmDof> dof_addresses{};
-  int tcp_site_id{-1};
-  int tcp_body_id{-1};
+  std::string end_effector_site_name;
+  int end_effector_site_id{-1};
+  int end_effector_body_id{-1};
   ArmLimits limits;
 };
 
 struct ArmKinematicSample {
-  Pose tcp_pose;
-  Mat67 tcp_jacobian{Mat67::Zero()};
+  Pose end_effector_pose;
+  Mat67 end_effector_jacobian{Mat67::Zero()};
   Eigen::Vector3d shoulder_position{Eigen::Vector3d::Zero()};
   Eigen::Vector3d elbow_position{Eigen::Vector3d::Zero()};
   Eigen::Vector3d wrist_position{Eigen::Vector3d::Zero()};
@@ -38,7 +44,9 @@ struct ArmKinematicSample {
 
 class MujocoRobot {
  public:
-  explicit MujocoRobot(const std::string& model_path);
+  explicit MujocoRobot(
+      const std::string& model_path,
+      EndEffectorSiteNames end_effector_sites = {});
   ~MujocoRobot();
 
   MujocoRobot(const MujocoRobot&) = delete;
@@ -59,11 +67,11 @@ class MujocoRobot {
   Vec7 armPosition(ArmSide side) const;
   Vec7 armVelocity(ArmSide side) const;
   void forward();
-  Pose tcpPose(ArmSide side) const;
-  Mat67 tcpJacobianWorld(ArmSide side);
+  Pose endEffectorPose(ArmSide side) const;
+  Mat67 endEffectorJacobianWorld(ArmSide side);
   ArmKinematicSample armKinematicsAt(ArmSide side, const Vec7& position);
-  Vec6 tcpJacobianDotTimesVelocityWorld(ArmSide side, const Vec7& q,
-                                        const Vec7& qdot);
+  Vec6 endEffectorJacobianDotTimesVelocityWorld(ArmSide side, const Vec7& q,
+                                                const Vec7& qdot);
   int targetBodyId(ArmSide side) const noexcept;
   int targetMocapId(ArmSide side) const noexcept;
 
@@ -73,6 +81,7 @@ class MujocoRobot {
   mjModel* model_{nullptr};
   mjData* data_{nullptr};
   mjData* kinematics_data_{nullptr};
+  EndEffectorSiteNames end_effector_site_names_;
   ArmMapping left_;
   ArmMapping right_;
   std::array<int, 2> target_body_ids_{{-1, -1}};

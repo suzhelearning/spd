@@ -121,10 +121,10 @@ Pose desiredPose(const Pose& current, BenchmarkCategory category, std::size_t sa
 QpProblem7 buildArmProblem(MujocoRobot& robot, ArmSide side, const QpIkConfig& config,
                            const QpBuilder& builder, BenchmarkCategory category,
                            std::size_t sample_index, std::mt19937& generator) {
-  const Pose current = robot.tcpPose(side);
+  const Pose current = robot.endEffectorPose(side);
   const Pose desired = desiredPose(current, category, sample_index, side, generator);
   const Vec6 twist = cartesianServoTwist(config.cartesian_servo, desired, current);
-  return builder.build(robot.tcpJacobianWorld(side), twist, robot.armPosition(side),
+  return builder.build(robot.endEffectorJacobianWorld(side), twist, robot.armPosition(side),
                        robot.mapping(side).limits, 1.0 / config.controller.rate_hz);
 }
 

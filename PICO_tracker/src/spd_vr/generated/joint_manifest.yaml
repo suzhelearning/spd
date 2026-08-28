@@ -111,7 +111,7 @@ actuator_order:
 - r_LFJ2
 - r_LFJ3
 source_sha256:
-  tianji_mjcf: f49aafced4b12feecf06bca700ee18b74583fd14aa4326a03d212d5e283a3efa
+  tianji_mjcf: 379a5a066982935ae94ae1ade3eb7af3c7675ca8ed3c2873c50b3cd2708f43df
   tianji_wuji2_urdf: 434cf62e87ff8c3dd487d5c99c231b7e315ccf27bd29ea9ce2871e23e6b599b9
   wuji2_left_mjcf: ebaa3b07854c8df1847ffbf54d9d6527e82d838d02329e4c35c6ca667b8fef89
   wuji2_right_mjcf: ee860215e6ae0b2f6ded7fa69d3b7ced36ab6d8a72aace99d20259aa78dc1742
@@ -771,4 +771,9 @@ joints:
   - 1.57
   velocity_limit: 13.5
   effort_limit: 0.3
+wrist_targets:
+  left_body: l_wrist
+  left_site: l_wrist_target
+  right_body: r_wrist
+  right_site: r_wrist_target
 calibration_version: 1

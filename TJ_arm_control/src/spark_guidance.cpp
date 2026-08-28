@@ -26,13 +26,13 @@ SparkUpperRobotGeometry geometryFromKinematics(
   geometry.left_forearm_local = left.elbow_rotation.transpose() *
       (left.wrist_position - left.elbow_position);
   geometry.left_wrist_to_palm_local = left.wrist_rotation.transpose() *
-      (left.tcp_pose.position - left.wrist_position);
+      (left.end_effector_pose.position - left.wrist_position);
   geometry.right_upper_arm_local = right.shoulder_rotation.transpose() *
       (right.elbow_position - right.shoulder_position);
   geometry.right_forearm_local = right.elbow_rotation.transpose() *
       (right.wrist_position - right.elbow_position);
   geometry.right_wrist_to_palm_local = right.wrist_rotation.transpose() *
-      (right.tcp_pose.position - right.wrist_position);
+      (right.end_effector_pose.position - right.wrist_position);
   return geometry;
 }
 
@@ -110,11 +110,11 @@ SparkUpperArmTarget blendTarget(const SparkUpperArmTarget& start,
 SparkUpperArmTarget targetFromSample(const ArmKinematicSample& sample,
                                      const SparkUpperArmTarget& metadata) {
   SparkUpperArmTarget target = metadata;
-  target.palm = sample.tcp_pose;
+  target.palm = sample.end_effector_pose;
   target.shoulder = sample.shoulder_position;
   target.elbow = sample.elbow_position;
   target.wrist = sample.wrist_position;
-  target.hand = sample.tcp_pose.position;
+  target.hand = sample.end_effector_pose.position;
   return target;
 }
 
@@ -185,9 +185,9 @@ bool DualArmSparkGuidance::reset(const ArmMotionState& left_model,
   left_.last_valid_q_ik = left_model.q;
   right_.last_valid_q_ik = right_model.q;
   left_.otg.reset(
-      kinematics_.sample(ArmSide::kLeft, left_model.q).tcp_pose);
+      kinematics_.sample(ArmSide::kLeft, left_model.q).end_effector_pose);
   right_.otg.reset(
-      kinematics_.sample(ArmSide::kRight, right_model.q).tcp_pose);
+      kinematics_.sample(ArmSide::kRight, right_model.q).end_effector_pose);
   left_.feedforward.reset(left_model, 0U);
   right_.feedforward.reset(right_model, 0U);
   left_.palm_twist.reset();
@@ -663,7 +663,7 @@ SparkGuidanceDiagnostics DualArmSparkGuidance::step(
       if (!state.settled_hold_active && !released_this_cycle) {
         return;
       }
-      const Pose model_tcp = robot_.armKinematicsAt(side, model.q).tcp_pose;
+      const Pose model_tcp = robot_.armKinematicsAt(side, model.q).end_effector_pose;
       arm.target.palm = model_tcp;
       cartesian_target = model_tcp;
       cartesian_target_twist.setZero();

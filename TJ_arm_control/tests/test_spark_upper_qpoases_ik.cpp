@@ -32,11 +32,11 @@ SparkUpperQpoasesConfig ikConfig() {
 
 SparkUpperArmTarget targetFromSample(const ArmKinematicSample& sample) {
   SparkUpperArmTarget target;
-  target.palm = sample.tcp_pose;
+  target.palm = sample.end_effector_pose;
   target.elbow = sample.elbow_position;
   target.shoulder = sample.shoulder_position;
   target.wrist = sample.wrist_position;
-  target.hand = sample.tcp_pose.position;
+  target.hand = sample.end_effector_pose.position;
   return target;
 }
 
@@ -118,7 +118,7 @@ TEST(SparkUpperQpoasesIk7, ReducesTwoStagePoseAndElbowErrorWithinLimits) {
              .matrix();
   const ArmKinematicSample initial = robot.armKinematicsAt(side, seed);
   const double initial_pose_error =
-      poseErrorWorld(target.palm, initial.tcp_pose).norm();
+      poseErrorWorld(target.palm, initial.end_effector_pose).norm();
   const double initial_elbow_error = (target.elbow - initial.elbow_position).norm();
 
   PinocchioArmKinematics kinematics(kUrdfPath);
@@ -129,13 +129,13 @@ TEST(SparkUpperQpoasesIk7, ReducesTwoStagePoseAndElbowErrorWithinLimits) {
   EXPECT_LT(result.stage2_error, initial_pose_error + initial_elbow_error);
   const ArmKinematicSample final_sample = robot.armKinematicsAt(side, result.q);
   const double final_pose_error =
-      poseErrorWorld(target.palm, final_sample.tcp_pose).norm();
+      poseErrorWorld(target.palm, final_sample.end_effector_pose).norm();
   const double final_elbow_error =
       (target.elbow - final_sample.elbow_position).norm();
   EXPECT_LT(final_pose_error, initial_pose_error);
   EXPECT_LT(final_pose_error + final_elbow_error,
             initial_pose_error + initial_elbow_error);
-  EXPECT_LT((target.palm.position - final_sample.tcp_pose.position).norm(),
+  EXPECT_LT((target.palm.position - final_sample.end_effector_pose.position).norm(),
             1.0e-3);
   EXPECT_LE(result.stage1_iterations, 10);
   EXPECT_LE(result.stage2_iterations, 10);
@@ -229,7 +229,7 @@ TEST(SparkUpperQpoasesIk7, OtgConsistentSolvePreservesRequestedTcpPose) {
   config.otg_orientation_tolerance_rad = 2.0e-2;
   SparkUpperQpoasesIk7 solver(side, kinematics, limits, config);
   const SparkUpperIkResult result = solver.solveOtgConsistent(
-      raw_shape, target_sample.tcp_pose, previous_q);
+      raw_shape, target_sample.end_effector_pose, previous_q);
 
   ASSERT_TRUE(result.accepted)
       << result.detail << " position_error=" << result.palm_position_error
@@ -238,7 +238,7 @@ TEST(SparkUpperQpoasesIk7, OtgConsistentSolvePreservesRequestedTcpPose) {
   const ArmKinematicSample final_sample =
       robot.armKinematicsAt(side, result.q);
   const Vec6 error =
-      poseErrorWorld(target_sample.tcp_pose, final_sample.tcp_pose);
+      poseErrorWorld(target_sample.end_effector_pose, final_sample.end_effector_pose);
   EXPECT_LT(error.head<3>().norm(), config.otg_position_tolerance_m);
   EXPECT_LT(error.tail<3>().norm(), config.otg_orientation_tolerance_rad);
   EXPECT_TRUE((result.q.array() >=

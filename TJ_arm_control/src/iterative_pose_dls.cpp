@@ -77,7 +77,7 @@ PoseDlsResult IterativePoseDlsIk7::solve(const PoseDlsInput& input) const {
       static_cast<int>((current.array() != input.seed.array()).count());
   result.q = current;
   ArmKinematicSample sample = input.evaluate(current);
-  if (!finitePose(sample.tcp_pose) || !sample.tcp_jacobian.allFinite()) {
+  if (!finitePose(sample.end_effector_pose) || !sample.end_effector_jacobian.allFinite()) {
     result.detail = "invalid_pose_dls_kinematics";
     result.solve_time_us = elapsedMicroseconds(start);
     return result;
@@ -87,7 +87,7 @@ PoseDlsResult IterativePoseDlsIk7::solve(const PoseDlsInput& input) const {
     result.solve_time_us = elapsedMicroseconds(start);
     return result;
   }
-  Vec6 error = poseErrorWorld(input.target, sample.tcp_pose);
+  Vec6 error = poseErrorWorld(input.target, sample.end_effector_pose);
   result.initial_position_error_m = error.head<3>().norm();
   result.initial_orientation_error_rad = error.tail<3>().norm();
   const auto converged = [this](const Vec6& value) {
@@ -128,7 +128,7 @@ PoseDlsResult IterativePoseDlsIk7::solve(const PoseDlsInput& input) const {
   bool best_updated = false;
   for (int iteration = 0; iteration < config_.max_iterations; ++iteration) {
     Eigen::JacobiSVD<Mat67> svd(
-        sample.tcp_jacobian, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        sample.end_effector_jacobian, Eigen::ComputeFullU | Eigen::ComputeFullV);
     if (svd.info() != Eigen::Success || !svd.singularValues().allFinite()) {
       result.detail = "pose_dls_svd_failed";
       break;
@@ -155,8 +155,8 @@ PoseDlsResult IterativePoseDlsIk7::solve(const PoseDlsInput& input) const {
     Vec7 step = pseudo_inverse * commanded_error;
 
     const double rank_tolerance = Eigen::NumTraits<double>::epsilon() *
-        static_cast<double>(std::max(sample.tcp_jacobian.rows(),
-                                     sample.tcp_jacobian.cols())) *
+        static_cast<double>(std::max(sample.end_effector_jacobian.rows(),
+                                     sample.end_effector_jacobian.cols())) *
         std::max(1.0, svd.singularValues().maxCoeff());
     Mat77 nullspace = Mat77::Zero();
     for (int column = 0; column < kArmDof; ++column) {
@@ -219,10 +219,10 @@ PoseDlsResult IterativePoseDlsIk7::solve(const PoseDlsInput& input) const {
       candidate = unprojected.cwiseMax(lower).cwiseMin(upper);
       candidate_sample = input.evaluate(candidate);
       candidate_error =
-          poseErrorWorld(input.target, candidate_sample.tcp_pose);
+          poseErrorWorld(input.target, candidate_sample.end_effector_pose);
       const bool finite_candidate = candidate.allFinite() &&
           candidate_error.allFinite() &&
-          candidate_sample.tcp_jacobian.allFinite();
+          candidate_sample.end_effector_jacobian.allFinite();
       const bool feasible_candidate = finite_candidate &&
           (!input.candidate_feasible ||
            input.candidate_feasible(candidate_sample));

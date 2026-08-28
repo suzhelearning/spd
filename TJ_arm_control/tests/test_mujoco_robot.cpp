@@ -86,12 +86,71 @@ TEST(MujocoRobot, MapsExactlySevenJointsPerArmByName) {
       EXPECT_GT(mapping.limits.upper_position[index], mapping.limits.lower_position[index]);
       EXPECT_NEAR(mapping.limits.velocity[index], 3.1416, 1e-12);
     }
-    EXPECT_GE(mapping.tcp_site_id, 0);
-    EXPECT_EQ(mapping.tcp_body_id, mapping.body_ids.back());
+    EXPECT_EQ(mapping.end_effector_site_name,
+              side == ArmSide::kLeft ? "tcp_L" : "tcp_R");
+    EXPECT_GE(mapping.end_effector_site_id, 0);
+    EXPECT_EQ(mapping.end_effector_body_id, mapping.body_ids.back());
     EXPECT_GE(robot.targetBodyId(side), 0);
     EXPECT_GE(robot.targetMocapId(side), 0);
   }
   EXPECT_NE(robot.targetMocapId(ArmSide::kLeft), robot.targetMocapId(ArmSide::kRight));
+}
+
+TEST(MujocoRobot, ExplicitWristSitesMapToUrdfFrames) {
+  MujocoRobot robot(
+      modelPath(), EndEffectorSiteNames{"l_wrist_target", "r_wrist_target"});
+  EXPECT_EQ(robot.model()->nq, 14);
+  EXPECT_EQ(robot.model()->nv, 14);
+  robot.forward();
+
+  using RowMajorMatrix3d = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>;
+  for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
+    const bool left = side == ArmSide::kLeft;
+    const char* wrist_name = left ? "l_wrist" : "r_wrist";
+    const char* site_name = left ? "l_wrist_target" : "r_wrist_target";
+    const Eigen::Vector3d local_position =
+        left ? Eigen::Vector3d(0.003000180668, -0.131499815111,
+                               0.000300120254)
+             : Eigen::Vector3d(-0.002999866847, -0.131500011019,
+                               0.000250148981);
+    const Eigen::Quaterniond local_quaternion =
+        left ? Eigen::Quaterniond(0.707106781182, -0.707106781187,
+                                  -0.000002597349, 0.0)
+             : Eigen::Quaterniond(-0.000005797922, 0.000003200574,
+                                  0.707106781184, 0.707106781158);
+    const int wrist_body_id =
+        mj_name2id(robot.model(), mjOBJ_BODY, wrist_name);
+    const int site_id = mj_name2id(robot.model(), mjOBJ_SITE, site_name);
+    ASSERT_GE(wrist_body_id, 0);
+    ASSERT_GE(site_id, 0);
+    EXPECT_EQ(robot.mapping(side).end_effector_site_name, site_name);
+    EXPECT_EQ(robot.mapping(side).end_effector_site_id, site_id);
+    EXPECT_EQ(robot.mapping(side).end_effector_body_id, wrist_body_id);
+    EXPECT_EQ(robot.model()->site_bodyid[site_id], wrist_body_id);
+    EXPECT_TRUE(robot.endEffectorJacobianWorld(side).allFinite());
+
+    const int link7_body_id = robot.mapping(side).body_ids.back();
+    const Eigen::Vector3d parent_position = Eigen::Map<const Eigen::Vector3d>(
+        &robot.data()->xpos[3 * link7_body_id]);
+    const Eigen::Matrix3d parent_rotation =
+        Eigen::Map<const RowMajorMatrix3d>(
+            &robot.data()->xmat[9 * link7_body_id]);
+    const Pose actual = robot.endEffectorPose(side);
+    const Eigen::Vector3d expected_position =
+        parent_position + parent_rotation * local_position;
+    const Eigen::Matrix3d expected_rotation =
+        parent_rotation * local_quaternion.normalized().toRotationMatrix();
+    EXPECT_TRUE(actual.position.isApprox(expected_position, 1e-8))
+        << toString(side);
+    EXPECT_LT((actual.rotation - expected_rotation).norm(), 1e-8)
+        << toString(side);
+  }
+}
+
+TEST(MujocoRobot, MissingExplicitEndEffectorSiteIsRejected) {
+  EXPECT_THROW(
+      MujocoRobot(modelPath(), EndEffectorSiteNames{"missing", "r_wrist_target"}),
+      std::runtime_error);
 }
 
 TEST(MujocoRobot, Joint4UsesHumanLikeElbowRange) {
@@ -176,11 +235,11 @@ TEST(MujocoRobot, MapsVelocityStateAndKeepsArmsIsolated) {
   EXPECT_TRUE(robot.armVelocity(ArmSide::kRight).isApprox(right_velocity));
 }
 
-TEST(MujocoRobot, TcpPosesAreFiniteProperRotations) {
+TEST(MujocoRobot, EndEffectorPosesAreFiniteProperRotations) {
   MujocoRobot robot(modelPath());
   robot.forward();
   for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
-    const Pose pose = robot.tcpPose(side);
+    const Pose pose = robot.endEffectorPose(side);
     EXPECT_TRUE(pose.position.allFinite());
     EXPECT_TRUE(pose.rotation.allFinite());
     EXPECT_TRUE((pose.rotation.transpose() * pose.rotation).isApprox(Eigen::Matrix3d::Identity(),
@@ -198,8 +257,8 @@ TEST(MujocoRobot, ArbitraryArmKinematicsDoesNotMutateActualState) {
   robot.setArmPosition(ArmSide::kLeft, left_actual);
   robot.setArmPosition(ArmSide::kRight, right_actual);
   robot.forward();
-  const Pose left_pose_before = robot.tcpPose(ArmSide::kLeft);
-  const Pose right_pose_before = robot.tcpPose(ArmSide::kRight);
+  const Pose left_pose_before = robot.endEffectorPose(ArmSide::kLeft);
+  const Pose right_pose_before = robot.endEffectorPose(ArmSide::kRight);
 
   Vec7 left_model = left_actual;
   left_model[0] += 0.20;
@@ -207,11 +266,11 @@ TEST(MujocoRobot, ArbitraryArmKinematicsDoesNotMutateActualState) {
   const ArmKinematicSample sample =
       robot.armKinematicsAt(ArmSide::kLeft, left_model);
 
-  EXPECT_GT((sample.tcp_pose.position - left_pose_before.position).norm(),
+  EXPECT_GT((sample.end_effector_pose.position - left_pose_before.position).norm(),
             1e-4);
-  EXPECT_TRUE(sample.tcp_pose.position.allFinite());
-  EXPECT_TRUE(sample.tcp_pose.rotation.allFinite());
-  EXPECT_TRUE(sample.tcp_jacobian.allFinite());
+  EXPECT_TRUE(sample.end_effector_pose.position.allFinite());
+  EXPECT_TRUE(sample.end_effector_pose.rotation.allFinite());
+  EXPECT_TRUE(sample.end_effector_jacobian.allFinite());
   EXPECT_TRUE(sample.shoulder_position.allFinite());
   EXPECT_TRUE(sample.elbow_position.allFinite());
   EXPECT_TRUE(sample.wrist_position.allFinite());
@@ -227,10 +286,10 @@ TEST(MujocoRobot, ArbitraryArmKinematicsDoesNotMutateActualState) {
     plus[column] += kFiniteDifferenceStep;
     minus[column] -= kFiniteDifferenceStep;
     const Eigen::Vector3d finite_difference =
-        (robot.armKinematicsAt(ArmSide::kLeft, plus).tcp_pose.position -
-         robot.armKinematicsAt(ArmSide::kLeft, minus).tcp_pose.position) /
+        (robot.armKinematicsAt(ArmSide::kLeft, plus).end_effector_pose.position -
+         robot.armKinematicsAt(ArmSide::kLeft, minus).end_effector_pose.position) /
         (2.0 * kFiniteDifferenceStep);
-    EXPECT_TRUE(sample.tcp_jacobian.col(column).head<3>().isApprox(
+    EXPECT_TRUE(sample.end_effector_jacobian.col(column).head<3>().isApprox(
         finite_difference, 1e-7));
     const Eigen::Vector3d elbow_finite_difference =
         (robot.armKinematicsAt(ArmSide::kLeft, plus).elbow_position -
@@ -253,8 +312,8 @@ TEST(MujocoRobot, ArbitraryArmKinematicsDoesNotMutateActualState) {
   }
   EXPECT_TRUE(robot.armPosition(ArmSide::kLeft).isApprox(left_actual, 1e-12));
   EXPECT_TRUE(robot.armPosition(ArmSide::kRight).isApprox(right_actual, 1e-12));
-  const Pose left_pose_after = robot.tcpPose(ArmSide::kLeft);
-  const Pose right_pose_after = robot.tcpPose(ArmSide::kRight);
+  const Pose left_pose_after = robot.endEffectorPose(ArmSide::kLeft);
+  const Pose right_pose_after = robot.endEffectorPose(ArmSide::kRight);
   EXPECT_TRUE(left_pose_after.position.isApprox(left_pose_before.position,
                                                 1e-12));
   EXPECT_TRUE(left_pose_after.rotation.isApprox(left_pose_before.rotation,

@@ -19,13 +19,13 @@ constexpr const char* kMujocoModelPath =
 void expectSamplesNear(const ArmKinematicSample& pinocchio_sample,
                        const ArmKinematicSample& mujoco_sample) {
   constexpr double kTolerance = 1.0e-5;
-  EXPECT_TRUE(pinocchio_sample.tcp_pose.position.isApprox(
-      mujoco_sample.tcp_pose.position, kTolerance));
-  EXPECT_LT(rotationDistance(pinocchio_sample.tcp_pose.rotation,
-                             mujoco_sample.tcp_pose.rotation),
+  EXPECT_TRUE(pinocchio_sample.end_effector_pose.position.isApprox(
+      mujoco_sample.end_effector_pose.position, kTolerance));
+  EXPECT_LT(rotationDistance(pinocchio_sample.end_effector_pose.rotation,
+                             mujoco_sample.end_effector_pose.rotation),
             kTolerance);
-  EXPECT_TRUE(pinocchio_sample.tcp_jacobian.isApprox(
-      mujoco_sample.tcp_jacobian, kTolerance));
+  EXPECT_TRUE(pinocchio_sample.end_effector_jacobian.isApprox(
+      mujoco_sample.end_effector_jacobian, kTolerance));
   EXPECT_TRUE(pinocchio_sample.shoulder_position.isApprox(
       mujoco_sample.shoulder_position, kTolerance));
   EXPECT_TRUE(pinocchio_sample.elbow_position.isApprox(

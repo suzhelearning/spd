@@ -325,7 +325,7 @@ void setInitialConfiguration(MujocoRobot& robot,
 
 DualArmTargets currentTargets(MujocoRobot& robot) {
   robot.forward();
-  return {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)};
+  return {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)};
 }
 
 std::unique_ptr<DualArmController> makeController(MujocoRobot& robot,
@@ -753,8 +753,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         direct_left_state.q = robot.armPosition(ArmSide::kLeft);
         direct_right_state = ArmMotionState{};
         direct_right_state.q = robot.armPosition(ArmSide::kRight);
-        left_otg.reset(robot.tcpPose(ArmSide::kLeft));
-        right_otg.reset(robot.tcpPose(ArmSide::kRight));
+        left_otg.reset(robot.endEffectorPose(ArmSide::kLeft));
+        right_otg.reset(robot.endEffectorPose(ArmSide::kRight));
         last_spark_targets = currentTargets(robot);
         last_spark_references = directReferences(last_spark_targets);
         spark_diagnostics = {};
@@ -953,7 +953,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               arm.target = reference.pose;
               arm.q_ref = state.q;
               arm.q_actual = robot.armPosition(side);
-              arm.current = robot.tcpPose(side);
+              arm.current = robot.endEffectorPose(side);
               arm.tcp_actual = arm.current;
               arm.pose_error = poseErrorWorld(arm.target, arm.current);
               arm.actual_pose_error = arm.pose_error;
@@ -1020,12 +1020,12 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               : controller->reference(ArmSide::kRight);
       diagnostics.left.q_actual = robot.armPosition(ArmSide::kLeft);
       diagnostics.right.q_actual = robot.armPosition(ArmSide::kRight);
-      diagnostics.left.tcp_actual = robot.tcpPose(ArmSide::kLeft);
-      diagnostics.right.tcp_actual = robot.tcpPose(ArmSide::kRight);
+      diagnostics.left.tcp_actual = robot.endEffectorPose(ArmSide::kLeft);
+      diagnostics.right.tcp_actual = robot.endEffectorPose(ArmSide::kRight);
       diagnostics.left.current = robot.armKinematicsAt(
-          ArmSide::kLeft, diagnostics.left.q_ref).tcp_pose;
+          ArmSide::kLeft, diagnostics.left.q_ref).end_effector_pose;
       diagnostics.right.current = robot.armKinematicsAt(
-          ArmSide::kRight, diagnostics.right.q_ref).tcp_pose;
+          ArmSide::kRight, diagnostics.right.q_ref).end_effector_pose;
       diagnostics.left.reference = config.cartesian_otg.enabled
                                        ? references.left
                                        : CartesianReference{desired.left};
@@ -1989,8 +1989,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       sample.right_reference_pose = config.cartesian_otg.enabled
                                         ? references.right.pose
                                         : desired.right;
-      sample.left_actual_pose = robot.tcpPose(ArmSide::kLeft);
-      sample.right_actual_pose = robot.tcpPose(ArmSide::kRight);
+      sample.left_actual_pose = robot.endEffectorPose(ArmSide::kLeft);
+      sample.right_actual_pose = robot.endEffectorPose(ArmSide::kRight);
       if (!telemetry->tryPush(sample)) {
         ++telemetry_drops;
       }
@@ -3434,7 +3434,8 @@ int runPicoHeadless(const Options& options,
 int runViewer(const Options& options, BoundedSpscQueue<ViewerCommand>& commands,
               LatestSnapshotExchange<ViewerSnapshot>& snapshots,
               BoundedSpscQueue<JointKinematicsSample>& joint_plot_queue,
-              std::atomic<bool>& running, std::thread& control_thread) {
+              std::atomic<bool>& running, bool use_wrist_end_effector,
+              std::thread& control_thread) {
   if (glfwInit() == GLFW_FALSE) {
     throw std::runtime_error("GLFW initialization failed; use --headless without a display");
   }
@@ -3445,7 +3446,11 @@ int runViewer(const Options& options, BoundedSpscQueue<ViewerCommand>& commands,
   }
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
-  MujocoRobot render_robot(options.model_path);
+  const EndEffectorSiteNames end_effector_sites =
+      use_wrist_end_effector
+          ? EndEffectorSiteNames{"l_wrist_target", "r_wrist_target"}
+          : EndEffectorSiteNames{};
+  MujocoRobot render_robot(options.model_path, end_effector_sites);
   ViewerApplication application(render_robot, commands);
   application.show_pico_skeleton = options.pico_skeleton_overlay;
   application.target_left_body = mj_name2id(render_robot.model(), mjOBJ_BODY, "target_L");
@@ -3586,6 +3591,9 @@ int run(int argc, char** argv) {
       config.joint_limits.hard_jerk_enabled = true;
     }
   }
+  const bool use_wrist_end_effector =
+      options.pico_teleop &&
+      config.ik_algorithm == IkAlgorithm::kHierarchicalQp;
   if (options.model_state_only_override.has_value()) {
     config.controller.model_state_only = *options.model_state_only_override;
   }
@@ -3612,7 +3620,11 @@ int run(int argc, char** argv) {
     pico_receiver = std::make_unique<PicoUdpReceiver>(
         std::move(receiver_options), pico_frames);
   }
-  MujocoRobot control_robot(options.model_path);
+  const EndEffectorSiteNames end_effector_sites =
+      use_wrist_end_effector
+          ? EndEffectorSiteNames{"l_wrist_target", "r_wrist_target"}
+          : EndEffectorSiteNames{};
+  MujocoRobot control_robot(options.model_path, end_effector_sites);
   std::unique_ptr<ArmTargetUdpOutput> arm_target_output;
   if (!options.no_arm_target_output) {
     arm_target_output = std::make_unique<ArmTargetUdpOutput>(
@@ -3707,7 +3719,7 @@ int run(int argc, char** argv) {
                            running, control_thread);
     } else {
       result = runViewer(options, commands, snapshots, joint_plot_queue,
-                         running, control_thread);
+                         running, use_wrist_end_effector, control_thread);
     }
   } catch (...) {
     running.store(false, std::memory_order_release);

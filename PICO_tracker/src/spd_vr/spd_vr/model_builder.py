@@ -212,9 +212,12 @@ def _urdf_joint_limits(path: Path) -> dict[str, dict[str, float]]:
 
 
 def _ensure_unique_injected(base_root: ET.Element, hand_root: ET.Element, side: str) -> None:
+    root_name = f"{side[0]}_wrist"
     for tag in ("body", "joint", "actuator"):
         existing = _named(base_root, tag)
         for name in _named(hand_root, tag):
+            if tag == "body" and name == root_name:
+                continue
             if name in existing:
                 raise ValueError(f"duplicate {tag} while attaching {side} hand: {name}")
 
@@ -231,6 +234,7 @@ def _append_hand(
     if worldbody is None:
         raise ValueError("Tianji model has no worldbody")
     suffix = "L" if side == "left" else "R"
+    lower = side[0]
     link7 = next((body for body in base_root.iter("body") if body.attrib.get("name") == f"Link7_{suffix}"), None)
     if link7 is None:
         raise ValueError(f"missing Link7_{suffix} in Tianji model")
@@ -242,7 +246,36 @@ def _append_hand(
     position, rotation = mount
     root_body.set("pos", " ".join(f"{value:.12g}" for value in position))
     root_body.set("quat", " ".join(f"{value:.12g}" for value in _quat_from_matrix(rotation)))
-    link7.append(root_body)
+    target_site_name = f"{lower}_wrist_target"
+    target_site = next(
+        (site for site in root_body.iter("site") if site.attrib.get("name") == target_site_name),
+        None,
+    )
+    if target_site is None:
+        target_site = ET.Element(
+            "site",
+            name=target_site_name,
+            pos="0 0 0",
+            quat="1 0 0 0",
+            size="0.008",
+            rgba="1 0.2 0.2 1" if side == "left" else "0.2 0.4 1 1",
+        )
+        root_body.insert(0, target_site)
+
+    existing_root = next(
+        (body for body in link7.findall("body") if body.attrib.get("name") == root_body.attrib.get("name")),
+        None,
+    )
+    if existing_root is None:
+        link7.append(root_body)
+    else:
+        existing_root.set("pos", root_body.attrib["pos"])
+        existing_root.set("quat", root_body.attrib["quat"])
+        existing_sites = _named(existing_root, "site")
+        for child in root_body:
+            if child.tag == "site" and child.attrib.get("name") in existing_sites:
+                continue
+            existing_root.append(child)
 
     asset = base_root.find("asset")
     if asset is None:
@@ -454,6 +487,18 @@ def _manifest_from_model(
     urdf_limits: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     root = ET.parse(xml_path).getroot()
+    wrist_targets = {
+        "left_body": "l_wrist",
+        "left_site": "l_wrist_target",
+        "right_body": "r_wrist",
+        "right_site": "r_wrist_target",
+    }
+    bodies = _named(root, "body")
+    sites = _named(root, "site")
+    for name in wrist_targets.values():
+        collection = sites if name.endswith("_target") else bodies
+        if name not in collection:
+            raise ValueError(f"generated wrist target name is missing: {name}")
     joints = _named(root, "joint")
     actuators = {
         item.attrib.get("joint"): item
@@ -473,6 +518,23 @@ def _manifest_from_model(
         pass
     except Exception as exc:
         raise RuntimeError(f"generated model cannot be loaded: {exc}") from exc
+    if model is not None and mujoco_module is not None:
+        for body_key, site_key in (
+            ("left_body", "left_site"),
+            ("right_body", "right_site"),
+        ):
+            body_id = mujoco_module.mj_name2id(
+                model, mujoco_module.mjtObj.mjOBJ_BODY, wrist_targets[body_key]
+            )
+            site_id = mujoco_module.mj_name2id(
+                model, mujoco_module.mjtObj.mjOBJ_SITE, wrist_targets[site_key]
+            )
+            if body_id < 0 or site_id < 0:
+                raise ValueError("MuJoCo wrist target address resolution failed")
+            if int(model.site_bodyid[site_id]) != body_id:
+                raise ValueError("wrist target site is attached to the wrong body")
+        if int(model.nu) != 54:
+            raise ValueError(f"expected 54 generated actuators, got {model.nu}")
     entries = []
     for index, (side, group, name) in enumerate(MANIFEST_ORDER):
         if name not in joints or name not in actuators:
@@ -529,6 +591,7 @@ def _manifest_from_model(
             "camera_hz": 30,
         },
         "joints": entries,
+        "wrist_targets": wrist_targets,
         "calibration_version": calibration["version"],
     }
 

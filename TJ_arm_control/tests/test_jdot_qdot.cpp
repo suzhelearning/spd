@@ -33,14 +33,14 @@ TEST(MujocoJdotQdot, MatchesIndependentCenteredDirectionalDerivative) {
         qdot[joint] = 0.4 * unit(generator);
       }
       const Vec6 model =
-          robot.tcpJacobianDotTimesVelocityWorld(side, q, qdot);
+          robot.endEffectorJacobianDotTimesVelocityWorld(side, q, qdot);
 
       robot.setArmPosition(side, q + kEpsilon * qdot);
       robot.forward();
-      const Vec6 plus = robot.tcpJacobianWorld(side) * qdot;
+      const Vec6 plus = robot.endEffectorJacobianWorld(side) * qdot;
       robot.setArmPosition(side, q - kEpsilon * qdot);
       robot.forward();
-      const Vec6 minus = robot.tcpJacobianWorld(side) * qdot;
+      const Vec6 minus = robot.endEffectorJacobianWorld(side) * qdot;
       const Vec6 numeric = (plus - minus) / (2.0 * kEpsilon);
 
       EXPECT_LT((model - numeric).norm(), 1e-5);

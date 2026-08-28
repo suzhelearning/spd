@@ -31,10 +31,10 @@ PicoTeleopFrame frameFromRobot(MujocoRobot& robot, const Vec7& left_q,
   frame.upper_limb_skeleton.valid = true;
   frame.upper_limb_skeleton.points = {
       left.shoulder_position, left.elbow_position, left.wrist_position,
-      left.tcp_pose.position, right.shoulder_position, right.elbow_position,
-      right.wrist_position, right.tcp_pose.position};
-  frame.left = left.tcp_pose;
-  frame.right = right.tcp_pose;
+      left.end_effector_pose.position, right.shoulder_position, right.elbow_position,
+      right.wrist_position, right.end_effector_pose.position};
+  frame.left = left.end_effector_pose;
+  frame.right = right.end_effector_pose;
   return frame;
 }
 
@@ -78,10 +78,10 @@ TEST(SparkGuidance, ProducesCartesianTargetsAndSoftPostureWithoutCommandingRobot
   frame.upper_limb_skeleton.valid = true;
   frame.upper_limb_skeleton.points = {
       left.shoulder_position, left.elbow_position, left.wrist_position,
-      left.tcp_pose.position, right.shoulder_position, right.elbow_position,
-      right.wrist_position, right.tcp_pose.position};
-  frame.left = left.tcp_pose;
-  frame.right = right.tcp_pose;
+      left.end_effector_pose.position, right.shoulder_position, right.elbow_position,
+      right.wrist_position, right.end_effector_pose.position};
+  frame.left = left.end_effector_pose;
+  frame.right = right.end_effector_pose;
   ASSERT_TRUE(guidance.updatePicoFrame(frame).valid);
 
   const SparkGuidanceDiagnostics result = guidance.step(
@@ -260,9 +260,9 @@ TEST(SparkGuidance,
   const ArmKinematicSample right_ik =
       robot.armKinematicsAt(ArmSide::kRight, result.right.q_ik);
   const Vec6 left_error = poseErrorWorld(
-      result.cartesian_references.left.pose, left_ik.tcp_pose);
+      result.cartesian_references.left.pose, left_ik.end_effector_pose);
   const Vec6 right_error = poseErrorWorld(
-      result.cartesian_references.right.pose, right_ik.tcp_pose);
+      result.cartesian_references.right.pose, right_ik.end_effector_pose);
   EXPECT_LT(left_error.head<3>().norm(),
             config.spark_upper_qpoases.otg_position_tolerance_m);
   EXPECT_LT(left_error.tail<3>().norm(),
@@ -787,9 +787,9 @@ TEST(SparkGuidance, HeadroomSettledHoldEntersImmediatelyWhenTargetIsStale) {
   EXPECT_EQ(held.left.settled_hold_reason, SparkSettledHoldReason::kStale);
   EXPECT_EQ(held.right.settled_hold_reason, SparkSettledHoldReason::kStale);
   const Pose left_tcp =
-      robot.armKinematicsAt(ArmSide::kLeft, left_model.q).tcp_pose;
+      robot.armKinematicsAt(ArmSide::kLeft, left_model.q).end_effector_pose;
   const Pose right_tcp =
-      robot.armKinematicsAt(ArmSide::kRight, right_model.q).tcp_pose;
+      robot.armKinematicsAt(ArmSide::kRight, right_model.q).end_effector_pose;
   EXPECT_TRUE(held.cartesian_references.left.pose.position.isApprox(
       left_tcp.position, 1.0e-12));
   EXPECT_TRUE(held.cartesian_references.left.pose.rotation.isApprox(

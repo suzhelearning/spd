@@ -69,6 +69,9 @@
                   <geom type="mesh" rgba="0 1 0 1" mesh="Link7_L"/>
                   <geom size="0.025" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1"/>
                   <site name="tcp_L" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" size="0.008" rgba="1 0.2 0.2 1"/>
+                  <body name="l_wrist" pos="0.003000180668 -0.131499815111 0.000300120254" quat="0.707106781182 -0.707106781187 -0.000002597349 0">
+                    <site name="l_wrist_target" pos="0 0 0" quat="1 0 0 0" size="0.008" rgba="1 0.2 0.2 1"/>
+                  </body>
                 </body>
               </body>
             </body>
@@ -113,6 +116,9 @@
                   <geom type="mesh" rgba="0 1 0 1" mesh="Link7_R"/>
                   <geom size="0.025" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" contype="0" conaffinity="0" group="1" density="0" rgba="1 1 1 1"/>
                   <site name="tcp_R" pos="0 -0.095 0" quat="0.499998 0.5 -0.5 0.500002" size="0.008" rgba="0.2 0.4 1 1"/>
+                  <body name="r_wrist" pos="-0.002999866847 -0.131500011019 0.000250148981" quat="-0.000005797922 0.000003200574 0.707106781184 0.707106781158">
+                    <site name="r_wrist_target" pos="0 0 0" quat="1 0 0 0" size="0.008" rgba="0.2 0.4 1 1"/>
+                  </body>
                 </body>
               </body>
             </body>
