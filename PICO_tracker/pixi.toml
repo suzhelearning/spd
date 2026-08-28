@@ -57,6 +57,7 @@ libopencv = "*"
 opencv = "*"
 pcl = "*"
 yaml-cpp = "*"
+nlohmann_json = "*"
 openssl = "*"
 libusb = "*"
 

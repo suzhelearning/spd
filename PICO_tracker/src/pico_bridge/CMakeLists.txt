@@ -18,6 +18,8 @@ find_package(builtin_interfaces REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(nlohmann_json REQUIRED)
+
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BleFrame.msg"
@@ -29,6 +31,12 @@ add_executable(pico_bridge_node src/pico_bridge_node.cpp)
 add_executable(tianji_mujoco_teleop_bridge src/tianji_mujoco_teleop_bridge_node.cpp)
 add_library(pico_tracking_epoch_store STATIC src/tracking_epoch_store.cpp)
 add_library(tianji_teleop_geometry STATIC src/tianji_teleop_geometry.cpp)
+add_library(xrobotoolkit_hand_decoder STATIC src/xrobotoolkit_hand_decoder.cpp)
+target_include_directories(xrobotoolkit_hand_decoder PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(xrobotoolkit_hand_decoder PUBLIC nlohmann_json::nlohmann_json)
+
 target_include_directories(tianji_teleop_geometry PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -86,6 +94,7 @@ install(TARGETS pico_smpl_ground_node DESTINATION lib/${PROJECT_NAME})
 install(TARGETS pico_foot_imu_fusion_node DESTINATION lib/${PROJECT_NAME})
 install(TARGETS tianji_teleop_geometry DESTINATION lib)
 install(TARGETS tianji_teleop_protocol DESTINATION lib)
+install(TARGETS xrobotoolkit_hand_decoder DESTINATION lib)
 install(PROGRAMS scripts/smpl_mujoco_visualizer.py DESTINATION lib/${PROJECT_NAME} RENAME smpl_mujoco_visualizer)
 install(PROGRAMS scripts/pico_palm_tcp_calibrator.py DESTINATION lib/${PROJECT_NAME} RENAME pico_palm_tcp_calibrator)
 install(PROGRAMS scripts/pico_palm_wrist_calibrator.py DESTINATION lib/${PROJECT_NAME} RENAME pico_palm_wrist_calibrator)
@@ -128,6 +137,10 @@ install(FILES
   test/test_pico_left_arm_geometry_calibrator.py
   DESTINATION share/${PROJECT_NAME}/test
 )
+install(FILES test/fixtures/xrobotoolkit_hand_state.json
+  DESTINATION share/${PROJECT_NAME}/test/fixtures
+)
+
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
@@ -139,6 +152,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_auto_calibration_state test/test_auto_calibration_state.cpp)
   ament_add_gtest(test_smpl_ground_alignment test/test_smpl_ground_alignment.cpp)
   ament_add_gtest(test_tracking_epoch_store test/test_tracking_epoch_store.cpp)
+  ament_add_gtest(test_xrobotoolkit_hand_decoder test/test_xrobotoolkit_hand_decoder.cpp)
+  target_include_directories(test_xrobotoolkit_hand_decoder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_link_libraries(test_xrobotoolkit_hand_decoder xrobotoolkit_hand_decoder)
   ament_add_gtest(test_tianji_teleop_geometry test/test_tianji_teleop_geometry.cpp)
   target_include_directories(test_tianji_teleop_geometry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
