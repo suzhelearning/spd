@@ -2,7 +2,7 @@
 
 ## 状态
 完成 arm-target v2 跨语言协议与 UnifiedSimulator 单侧 HOLD、stale、pause/resume 门控；保留 Task 5 viewer wrist endpoint/alignment/algorithm guard 行为。
-提交：Task6 implementation commit `3a7cebc`，复核修复 commit `927e939`（`fix: freeze simulator workers while paused`）
+提交：Task6 implementation commit `3a7cebc`；复核修复 commits `927e939`、`31bd2fd`（worker pause/queue fixes）
 
 ## 改动文件
 - `TJ_arm_control/include/tianji_qp_ik/arm_target_protocol.hpp`
@@ -27,6 +27,8 @@
 - 恢复 `start_arm_udp()` 的局部 stop Event 绑定，并保留 receiver 生命周期的 stop/close 退出路径。
 - stale validity 在每个 physics tick 即时传播到 `_applied_*`，非 due tick 不再报告旧 target live，q 仍保持。
 - pause 设置 worker pause barrier/ack；camera 与 recorder 不消费已有队列任务，resume 后继续消费。
+- 恢复 `_camera_drop_count` 初始化，补充 property 回归断言。
+- camera/recorder dequeue 与 pause 之间使用共享锁；竞态下已取出的请求继续无损处理，暂停新请求不 dequeue，resume 后消费队列。
 
 ## Deferred / concerns
 - Task 2/3 XRoboToolkit SDK、relay、TJVR wrist wire 仍按简报保持 deferred；未实现或假设 live source。
