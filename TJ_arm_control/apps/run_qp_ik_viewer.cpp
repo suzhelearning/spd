@@ -834,6 +834,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
            command.type == ViewerCommandType::kResetNominal)) {
         wrist_alignment.reset();
         latest_wrist_alignment = {};
+        latest_left_target_accepted = false;
+        latest_right_target_accepted = false;
         latest_wrist_alignment.left.hold_reason = "alignment_reset";
         latest_wrist_alignment.right.hold_reason = "alignment_reset";
       }
