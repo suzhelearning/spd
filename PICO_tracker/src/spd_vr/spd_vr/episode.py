@@ -154,6 +154,10 @@ class EpisodeController:
             return f"start ignored in {self.state.value}"
         self.episode_id += 1
         self.state_epoch += 1
+        if getattr(self.simulator, "paused", False):
+            set_paused = getattr(self.simulator, "set_paused", None)
+            if set_paused is not None:
+                set_paused(False)
         scene_result = self.task_spec.reset(self.seed + self.episode_id - 1)
         self._manifest = copy.deepcopy(scene_result.manifest())
         if self._has_run_metadata:
@@ -213,6 +217,10 @@ class EpisodeController:
     def _finish(self) -> str:
         if self.state not in {EpisodeState.RECORDING, EpisodeState.PAUSED}:
             return f"finish ignored in {self.state.value}"
+        if self.state == EpisodeState.PAUSED:
+            set_paused = getattr(self.simulator, "set_paused", None)
+            if set_paused is not None:
+                set_paused(False)
         if self.recorder is not None:
             self.recorder.finish_episode()
         self.state = EpisodeState.IDLE
@@ -223,6 +231,10 @@ class EpisodeController:
     def _skip(self) -> str:
         if self.state not in {EpisodeState.RECORDING, EpisodeState.PAUSED}:
             return f"skip ignored in {self.state.value}"
+        if self.state == EpisodeState.PAUSED:
+            set_paused = getattr(self.simulator, "set_paused", None)
+            if set_paused is not None:
+                set_paused(False)
         if self.recorder is not None:
             self.recorder.discard_episode("operator_skip")
         self.counters["skips"] += 1

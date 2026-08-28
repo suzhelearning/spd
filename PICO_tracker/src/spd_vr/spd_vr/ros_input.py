@@ -124,6 +124,10 @@ class LiveInputMailbox:
             if not self._pause_seeded:
                 self._paused = value
                 self._pause_seeded = True
+                if value:
+                    self._latest_hands = None
+                    self._pause_edge_count += 1
+                    self._commands.put(EpisodeCommandType.PAUSE)
                 return
             if value == self._paused:
                 return

@@ -86,3 +86,30 @@ def test_pause_binds_simulator_and_manifest_copies_teleop_metadata():
     assert controller.state is EpisodeState.RECORDING
     assert controller.state_epoch == paused_epoch + 1
     assert simulator.set_paused_calls == [True, False]
+
+
+def test_finish_skip_and_next_start_leave_simulator_unpaused():
+    simulator = _Simulator()
+    recorder = _Recorder()
+    controller = EpisodeController(simulator, _Task(), recorder=recorder)
+
+    controller.enqueue(EpisodeCommandType.START)
+    assert controller.process_one() == "started"
+    controller.enqueue(EpisodeCommandType.PAUSE)
+    assert controller.process_one() == "paused"
+    controller.enqueue(EpisodeCommandType.FINISH)
+    assert controller.process_one() == "finished"
+    assert simulator.paused is False
+    assert recorder.finished == 1
+
+    controller.enqueue(EpisodeCommandType.START)
+    assert controller.process_one() == "started"
+    controller.enqueue(EpisodeCommandType.PAUSE)
+    assert controller.process_one() == "paused"
+    controller.enqueue(EpisodeCommandType.SKIP)
+    assert controller.process_one() == "skipped"
+    assert simulator.paused is False
+
+    controller.enqueue(EpisodeCommandType.START)
+    assert controller.process_one() == "started"
+    assert simulator.paused is False

@@ -1,10 +1,13 @@
 from types import ModuleType, SimpleNamespace
+import json
 import sys
 
 import numpy as np
 import pytest
-
-from spd_vr.runtime import run_runtime
+from spd_vr.episode import EpisodeCommandType
+import spd_vr.retarget_pair as retarget_pair_module
+import spd_vr.runtime as runtime_module
+from spd_vr.runtime import _convert_live_hands, run_runtime
 
 
 class _FakeNode:
@@ -137,6 +140,69 @@ def test_mailbox_is_latest_only_and_pause_edges_clear_frames(monkeypatch):
     assert rclpy.node.destroyed is True
 
 
+def test_initial_true_pause_is_forwarded_and_invalid_side_isolated(monkeypatch):
+    from spd_vr.ros_input import LiveInputMailbox
+
+    rclpy = _install_fake_ros(monkeypatch)
+    mailbox = LiveInputMailbox("/pico/hands", "/spd_vr/pause")
+    pause_callback = rclpy.node.subscriptions["/spd_vr/pause"]
+    pause_callback(_Bool(True))
+    assert mailbox.paused is True
+    assert mailbox.take_episode_commands() == [EpisodeCommandType.PAUSE]
+    mailbox.close()
+
+    bad = _Hands(5)
+    bad.left_joints[4].position.x = float("nan")
+    frame = _convert_live_hands(bad)
+    assert frame.left_active is False
+    assert frame.right_active is True
+    assert np.isfinite(frame.left_hand).all()
+    assert frame.right_hand.shape == (26, 7)
+
+
+def test_live_mailbox_is_closed_when_simulator_setup_fails(tmp_path, monkeypatch):
+    class _Task:
+        def reset(self, _seed):
+            return SimpleNamespace(
+                manifest=lambda: {"scene": "test"},
+                objects=[],
+            )
+
+    class _Mailbox:
+        instances = []
+
+        def __init__(self, hands_topic, pause_topic):
+            self.closed = False
+            self.hands_topic = hands_topic
+            self.pause_topic = pause_topic
+            self.__class__.instances.append(self)
+
+        def close(self):
+            self.closed = True
+
+    class _Pair:
+        def __init__(self, *_args):
+            pass
+
+    def fail_simulator(**_kwargs):
+        raise RuntimeError("simulator setup failure")
+
+    monkeypatch.setattr(runtime_module, "LiveInputMailbox", _Mailbox)
+    monkeypatch.setattr(retarget_pair_module, "WujiRetargetPair", _Pair)
+    monkeypatch.setattr(runtime_module, "get_task", lambda _scene, _task: _Task())
+    monkeypatch.setattr(runtime_module, "write_scene_model", lambda *_args: None)
+    monkeypatch.setattr(runtime_module, "UnifiedSimulator", fail_simulator)
+    with pytest.raises(RuntimeError, match="simulator setup failure"):
+        run_runtime(
+            output=tmp_path,
+            scene="jenga",
+            task="handover_lr",
+            duration_s=0.01,
+            mock=False,
+        )
+    assert len(_Mailbox.instances) == 1
+    assert _Mailbox.instances[0].closed is True
+
 def test_mock_runtime_still_writes_a_valid_episode(tmp_path):
     episode = run_runtime(
         output=tmp_path,
@@ -147,5 +213,6 @@ def test_mock_runtime_still_writes_a_valid_episode(tmp_path):
         headless=True,
         mock=True,
     )
-    assert (episode / "episode.hdf5").is_file()
+    manifest = json.loads((episode / "manifest.json").read_text())
+    assert manifest["task_reset_manifest"]["teleop"]["input"] == "mock_pico_hands"
     assert (episode / "manifest.json").is_file()

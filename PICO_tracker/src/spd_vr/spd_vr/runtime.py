@@ -50,6 +50,81 @@ def _mock_hand_frame(timestamp_ns: int, sequence: int, epoch: int) -> Any:
         left[joint, :3] = (0.01 * joint, 0.001 * joint, 0.002 * joint)
         right[joint, :3] = (-0.01 * joint, 0.001 * joint, 0.002 * joint)
     return PicoHandFrame(left, right, True, True, epoch, sequence, timestamp_ns)
+def _identity_hand_array() -> np.ndarray:
+    value = np.zeros((26, 7), dtype=np.float64)
+    value[:, 6] = 1.0
+    return value
+
+
+def _decode_ros_side(values: Any, name: str, input_type: Any) -> np.ndarray:
+    rows = []
+    for pose in values:
+        position = getattr(pose, "position", pose)
+        if all(hasattr(position, axis) for axis in ("x", "y", "z")):
+            row = [position.x, position.y, position.z]
+            orientation = getattr(pose, "orientation", None)
+            if orientation is not None and all(
+                hasattr(orientation, axis) for axis in ("x", "y", "z", "w")
+            ):
+                row.extend([orientation.x, orientation.y, orientation.z, orientation.w])
+            else:
+                row.extend([0.0, 0.0, 0.0, 1.0])
+        else:
+            row = list(position)
+            if len(row) == 3:
+                row.extend([0.0, 0.0, 0.0, 1.0])
+        rows.append(row)
+    return input_type._array(rows, name)
+
+
+def _convert_live_hands(message: Any) -> Any:
+    """Convert one ROS frame while isolating malformed left/right sides."""
+    from .pico_hands import PicoHandFrame, PicoHandsInput
+
+    try:
+        return PicoHandsInput(message).frame
+    except Exception:
+        # PicoHandsInput intentionally validates a complete atomic message.
+        # For live operation, retain the valid side and mark only the bad side
+        # inactive; the inactive side receives a finite non-active placeholder
+        # so the recorder can still persist the complete frame.
+        pass
+
+    def side(name: str) -> tuple[np.ndarray, bool, float]:
+        active = bool(getattr(message, f"{name}_active", True))
+        try:
+            value = _decode_ros_side(
+                getattr(message, f"{name}_joints"), f"{name}_joints", PicoHandsInput
+            )
+        except Exception:
+            return _identity_hand_array(), False, 1.0
+        try:
+            scale = float(getattr(message, f"{name}_scale", 1.0))
+            if not np.isfinite(scale) or scale <= 0.0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return _identity_hand_array(), False, 1.0
+        return value, active, scale
+
+    header = getattr(message, "header", None)
+    stamp = getattr(header, "stamp", None)
+    if stamp is not None:
+        timestamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+    else:
+        timestamp_ns = int(getattr(message, "timestamp_ns", 0))
+    left_hand, left_active, left_scale = side("left")
+    right_hand, right_active, right_scale = side("right")
+    return PicoHandFrame(
+        left_hand=left_hand,
+        right_hand=right_hand,
+        left_active=left_active,
+        right_active=right_active,
+        tracking_epoch=int(getattr(message, "tracking_epoch", 0)),
+        sequence_id=int(getattr(message, "sequence_id", 0)),
+        timestamp_ns=timestamp_ns,
+        left_scale=left_scale,
+        right_scale=right_scale,
+    )
 
 
 def _arm_frame(simulator: UnifiedSimulator, sequence: int, epoch: int, timestamp_ns: int) -> ArmTargetFrame:
@@ -114,21 +189,13 @@ def run_runtime(
     mailbox: LiveInputMailbox | None = None
     hand_retargeter: Any = _MockRetargeter()
     if not mock:
-        # Keep ROS and the real Wuji dependency out of deterministic mock
-        # imports.  LiveInputMailbox gives an explicit missing-dependency
-        # error before any MuJoCo model is constructed.
-        mailbox = LiveInputMailbox(hands_topic, pause_topic)
-        try:
-            from .retarget_pair import WujiRetargetPair
+        from .retarget_pair import WujiRetargetPair
 
-            config_dir = Path(__file__).resolve().parents[1] / "config"
-            hand_retargeter = WujiRetargetPair(
-                config_dir / "wuji2_pico_left.yaml",
-                config_dir / "wuji2_pico_right.yaml",
-            )
-        except Exception:
-            mailbox.close()
-            raise
+        config_dir = Path(__file__).resolve().parents[1] / "config"
+        hand_retargeter = WujiRetargetPair(
+            config_dir / "wuji2_pico_left.yaml",
+            config_dir / "wuji2_pico_right.yaml",
+        )
 
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -144,6 +211,10 @@ def run_runtime(
     provider = SyntheticCameraProvider()
     simulator: UnifiedSimulator | None = None
     try:
+        if not mock:
+            # Lazy ROS import/node creation is inside the cleanup scope so
+            # every later setup failure destroys the node and context.
+            mailbox = LiveInputMailbox(hands_topic, pause_topic)
         simulator = UnifiedSimulator(
             model_path=model_path,
             manifest_path=manifest_path,
@@ -160,7 +231,7 @@ def run_runtime(
             seed=seed,
             recorder=recorder,
             run_metadata={
-                "input": "xrobotoolkit_pico_hands",
+                "input": "mock_pico_hands" if mock else "xrobotoolkit_pico_hands",
                 "left_site": "l_wrist_target",
                 "right_site": "r_wrist_target",
                 "wrist_position_scale": wrist_position_scale,
@@ -248,9 +319,7 @@ def run_runtime(
             else:
                 latest = mailbox.take_latest_hands()
                 if latest is not None:
-                    from .pico_hands import PicoHandsInput
-
-                    frame = PicoHandsInput(latest).frame
+                    frame = _convert_live_hands(latest)
                     simulator.on_pico_hands(frame, now_ns=time.monotonic_ns())
                     record_hand_frame(frame)
 
