@@ -15,6 +15,8 @@ from spd_vr.pico_frames import (
     PicoFrameError,
     PicoStreamDecoder,
     decode_hand,
+    PicoHand,
+    PicoPose,
     decode_head_pose,
     decode_world_reset_yaw,
 )
@@ -142,6 +144,46 @@ def test_typed_decoders_reject_invalid_semantics(frame, error):
         decoder(frame)
 
 
+def test_active_hand_rejects_non_unit_quaternions_but_inactive_hand_allows_them():
+    joints = np.zeros((26, 7), dtype="<f4")
+    invalid_active = PicoFrame(
+        FRAME_TYPE_HAND_LEFT,
+        1,
+        bytes([1]) + struct.pack("<f", 1.0) + joints.tobytes(),
+    )
+    with pytest.raises(PicoFrameError, match="invalid_quaternion"):
+        decode_hand(invalid_active)
+
+    inactive = PicoFrame(
+        FRAME_TYPE_HAND_LEFT,
+        1,
+        bytes([0]) + struct.pack("<f", 1.0) + joints.tobytes(),
+    )
+    assert decode_hand(inactive).active is False
+
+
+def test_pico_typed_dataclasses_own_read_only_array_copies():
+    position = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+    quaternion = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    joints = np.zeros((26, 7), dtype=np.float32)
+    joints[:, 6] = 1.0
+    pose = PicoPose(position, quaternion)
+    hand = PicoHand(True, 1.0, joints)
+
+    position[0] = 99.0
+    quaternion[3] = 0.0
+    joints[0, 0] = 99.0
+    assert pose.position[0] == pytest.approx(1.0)
+    assert pose.quaternion_xyzw[3] == pytest.approx(1.0)
+    assert hand.joints[0, 0] == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="read-only"):
+        pose.position[0] = 5.0
+    with pytest.raises(ValueError, match="read-only"):
+        pose.quaternion_xyzw[0] = 5.0
+    with pytest.raises(ValueError, match="read-only"):
+        hand.joints[0, 0] = 5.0
+
+
 def test_pairer_uses_same_timestamp_and_latest_replacement():
     pairer = HandPairer()
     old_left = PicoFrame(FRAME_TYPE_HAND_LEFT, 20, hand_payload(x=1.0))
@@ -195,6 +237,22 @@ def test_epoch_change_and_world_reset_clear_incomplete_pair():
     )
     assert pair is not None
     assert pair.epoch == 3
+
+
+def test_pairer_rejects_epoch_rollback_and_non_integral_epoch_without_resetting():
+    pairer = HandPairer()
+    left = PicoFrame(FRAME_TYPE_HAND_LEFT, 40, hand_payload(x=1.0))
+    right = PicoFrame(FRAME_TYPE_HAND_RIGHT, 40, hand_payload(x=2.0))
+    assert pairer.accept(left, epoch=2) is None
+
+    with pytest.raises(PicoFrameError, match="epoch_rollback"):
+        pairer.accept(right, epoch=1)
+    with pytest.raises(PicoFrameError, match="invalid_epoch"):
+        pairer.accept(right, epoch=2.5)
+
+    pair = pairer.accept(right, epoch=2)
+    assert pair is not None
+    assert pair.epoch == 2
 
 
 def test_pairer_ignores_generic_frames():

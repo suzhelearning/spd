@@ -41,13 +41,14 @@ class TrackingProtocolError(ValueError):
 
 def _array(name: str, value: object, shape: tuple[int, ...]) -> np.ndarray:
     try:
-        array = np.asarray(value, dtype=np.float32)
+        array = np.array(value, dtype=np.float32, copy=True, order="C")
     except (TypeError, ValueError) as exc:
         raise TrackingProtocolError("invalid_array", name) from exc
     if array.shape != shape:
         raise TrackingProtocolError(
             "wrong_shape", f"{name} must have shape {shape}, got {array.shape}"
         )
+    array.setflags(write=False)
     return array
 
 

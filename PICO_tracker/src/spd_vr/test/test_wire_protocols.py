@@ -49,6 +49,33 @@ def identity_tracking_frame(*, sequence: int = 1, epoch: int = 1) -> TrackingFra
     )
 
 
+def test_tracking_frame_owns_read_only_array_copies():
+    head = np.array([0.0, 0.0, 1.6, 0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+    left = np.zeros((26, 7), dtype=np.float32)
+    right = np.zeros((26, 7), dtype=np.float32)
+    left[:, 6] = 1.0
+    right[:, 6] = 1.0
+    frame = replace(
+        identity_tracking_frame(),
+        head_pose=head,
+        left_hand=left,
+        right_hand=right,
+    )
+
+    head[0] = 99.0
+    left[0, 0] = 99.0
+    right[0, 0] = 99.0
+    assert frame.head_pose[0] == pytest.approx(0.0)
+    assert frame.left_hand[0, 0] == pytest.approx(0.0)
+    assert frame.right_hand[0, 0] == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="read-only"):
+        frame.head_pose[0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        frame.left_hand[0, 0] = 1.0
+    with pytest.raises(ValueError, match="read-only"):
+        frame.right_hand[0, 0] = 1.0
+
+
 def with_tracking_crc(packet: bytearray) -> bytes:
     struct.pack_into("<I", packet, 12, crc32(memoryview(packet)[16:]))
     return bytes(packet)

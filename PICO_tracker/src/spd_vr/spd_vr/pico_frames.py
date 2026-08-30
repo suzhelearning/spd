@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import struct
 from dataclasses import dataclass
+from numbers import Integral
 
 import numpy as np
 
@@ -34,6 +35,19 @@ class PicoFrameError(ValueError):
     def __init__(self, code: str, detail: str | None = None) -> None:
         self.code = code
         super().__init__(f"{code}: {detail}" if detail else code)
+
+
+def _readonly_array(
+    value: object, shape: tuple[int, ...], name: str
+) -> np.ndarray:
+    try:
+        array = np.array(value, dtype=np.float32, copy=True, order="C")
+    except (TypeError, ValueError) as exc:
+        raise PicoFrameError("invalid_array", name) from exc
+    if array.shape != shape:
+        raise PicoFrameError("wrong_shape", name)
+    array.setflags(write=False)
+    return array
 
 
 @dataclass(frozen=True)
@@ -67,14 +81,14 @@ class PicoPose:
     quaternion_xyzw: np.ndarray
 
     def __post_init__(self) -> None:
-        position = np.asarray(self.position, dtype=np.float32)
-        quaternion = np.asarray(self.quaternion_xyzw, dtype=np.float32)
-        if position.shape != (3,):
-            raise PicoFrameError("wrong_shape", "position")
-        if quaternion.shape != (4,):
-            raise PicoFrameError("wrong_shape", "quaternion_xyzw")
-        object.__setattr__(self, "position", position)
-        object.__setattr__(self, "quaternion_xyzw", quaternion)
+        object.__setattr__(
+            self, "position", _readonly_array(self.position, (3,), "position")
+        )
+        object.__setattr__(
+            self,
+            "quaternion_xyzw",
+            _readonly_array(self.quaternion_xyzw, (4,), "quaternion_xyzw"),
+        )
 
 
 @dataclass(frozen=True)
@@ -84,12 +98,11 @@ class PicoHand:
     joints: np.ndarray
 
     def __post_init__(self) -> None:
-        joints = np.asarray(self.joints, dtype=np.float32)
-        if joints.shape != _HAND_SHAPE:
-            raise PicoFrameError("wrong_shape", "joints")
         object.__setattr__(self, "active", bool(self.active))
         object.__setattr__(self, "scale", float(self.scale))
-        object.__setattr__(self, "joints", joints)
+        object.__setattr__(
+            self, "joints", _readonly_array(self.joints, _HAND_SHAPE, "joints")
+        )
 
 
 @dataclass(frozen=True)
@@ -147,6 +160,14 @@ def decode_hand(frame: PicoFrame) -> PicoHand:
     )
     if not np.all(np.isfinite(joints)):
         raise PicoFrameError("non_finite_value", "joints")
+    if active_value:
+        quaternion_norms = np.linalg.norm(
+            joints[:, 3:7].astype(np.float64, copy=False), axis=1
+        )
+        if np.any(
+            np.abs(quaternion_norms - 1.0) > _QUATERNION_TOLERANCE
+        ):
+            raise PicoFrameError("invalid_quaternion", "hand_joints")
     return PicoHand(bool(active_value), scale, joints)
 
 
@@ -191,10 +212,16 @@ class HandPairer:
         self._right = None
 
     def accept(self, frame: PicoFrame, epoch: int) -> PairedHands | None:
-        if isinstance(epoch, bool) or not 0 < int(epoch) <= 0xFFFFFFFFFFFFFFFF:
+        if (
+            isinstance(epoch, bool)
+            or not isinstance(epoch, Integral)
+            or not 0 < int(epoch) <= 0xFFFFFFFFFFFFFFFF
+        ):
             raise PicoFrameError("invalid_epoch")
         epoch = int(epoch)
-        if self._epoch != epoch:
+        if self._epoch is not None and epoch < self._epoch:
+            raise PicoFrameError("epoch_rollback")
+        if self._epoch is None or epoch > self._epoch:
             self.reset()
             self._epoch = epoch
 

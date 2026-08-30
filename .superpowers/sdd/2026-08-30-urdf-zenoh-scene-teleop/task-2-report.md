@@ -26,3 +26,11 @@
 ## Concerns
 
 - 聚焦 pytest 唯一 warning 来自环境 `hppfcl` 提示改用 `coal`，与本任务无关；无其他 concern。
+
+## Review fix round 1
+
+- 修改：active hand 的 26 个 quaternion 增加 `1e-3` norm gate；`HandPairer` 严格接受非 bool `Integral` epoch、拒绝 rollback 且仅在更大 epoch 清 pending；`TrackingFrame`、`PicoPose`、`PicoHand` 持有独立只读数组副本。
+- 测试：新增 active/inactive quaternion、epoch rollback/non-integral 且 pending 保留、三类 frozen dataclass 外部源隔离与写保护回归。
+- RED：4 个新增 nodeid 真实结果 `4 failed, 1 warning in 0.14s`。
+- 回归 GREEN：相同 4 个 nodeid 真实结果 `4 passed, 1 warning in 0.11s`。
+- 最终聚焦：`pixi run python -m pytest src/spd_vr/test/test_wire_protocols.py src/spd_vr/test/test_pico_frames.py src/spd_vr/test/test_arm_target_protocol.py -q` → `42 passed, 1 warning in 0.13s`；涉及文件为 `pico_frames.py`、`wire/tracking.py`、`test_pico_frames.py`、`test_wire_protocols.py` 和本报告。
