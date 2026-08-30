@@ -1,145 +1,193 @@
-# URDF-First Zenoh Scene Teleoperation Design
+# URDF-First Python Zenoh Scene Teleoperation Design
 
 **Date:** 2026-08-30
 
-**Status:** Approved for implementation planning
+**Status:** Approved direction; supersedes the mixed C++/Python design
 
-## Goal
+## 目标
 
-Use `/home/current/syz/spd/assets/tianji_wuji2/tianji_wuji2.urdf` as the only structural and physical model source for a real-PICO, ROS-free teleoperation path. PICO optical hand tracking drives the complete Tianji dual-arm and bilateral Wuji2 model in a PC MuJoCo window. This feature controls simulation only and never sends commands to physical Tianji or Wuji2 hardware.
+使用 `/home/current/syz/spd/assets/tianji_wuji2/tianji_wuji2.urdf` 作为唯一结构与物理模型来源，实现真实 PICO 光学手追踪到 PC MuJoCo 完整天际双臂和双 Wuji2 手的 ROS-free、simulation-only 场景遥操作链。
 
-The first delivered scene is an empty free-teleoperation scene with a ground plane. Session control uses the PC keyboard. PICO-to-robot alignment is established from a user-held neutral pose at startup and after explicit reset.
+所有项目业务代码、进程入口、协议、IK、模型编译和生命周期管理统一使用 Python 3.11。允许加载供应商提供的 PXREARobotSDK `.so`，以及 MuJoCo、OSQP、CoACD 等 Python 包内部的原生扩展；项目不新增或维护 C/C++ 遥操作代码、CMake 目标、zenoh-pico 或跨语言协议夹具。
 
-## Current-State Facts
+首个场景为空场景：完整机器人、ground plane、灯光和操作相机。PC 键盘控制会话。启动和显式重对齐时，用户保持中立姿态建立 PICO 到机器人腕部的左右独立映射。
 
-The authoritative URDF contains:
+## 已确认事实
 
-- 80 links;
-- 79 joints: 25 fixed and 54 revolute;
-- 62 collision mesh references and 62 visual mesh references;
-- the same manufacturer STL for visual and collision on all 62 meshed links;
-- approximately 754,533 collision-source triangles;
-- the complete Tianji base and bilateral arm assembly;
-- `JointWuji2_L`, `JointWuji2_R`, `l_wrist`, `r_wrist`, and both five-finger Wuji2 chains.
+权威 URDF 包含：
 
-The current SPD-VR model builder is hybrid: it starts from a Tianji MJCF, appends standalone Wuji2 MJCF files, and uses the integrated URDF only for mount transforms and limits. The current live runtime imports `rclpy` through `LiveInputMailbox`, has no Zenoh input, and does not launch a unified MuJoCo operator window. The current live startup script still references old ROS processes and an undefined `optical_inner` command. These paths are not the target architecture.
+- 80 个 link、79 个 joint，其中 54 个 revolute joint；
+- 双臂各 7 个 revolute joint，双手各 20 个 revolute joint；
+- 62 个唯一厂家 STL，visual 与 collision 都引用这些网格；
+- 14 个无 geometry、无 inertial 的 fixed frame；
+- `TCP_Link_L/R` 各声明 `0.05 kg` 质量和全零惯量，通过 fixed joint 连接 `Link7_L/R`；
+- 24 个命名为 `*_axis_[0-2]` 的坐标轴调试 cylinder visual；
+- 没有 joint `<dynamics>`，因此生成模型的默认 damping 必须由编译器显式记录。
 
-## Scope
+PXREARobotSDK ABI 为：
 
-### In scope
+```c
+int PXREAInit(void* context, pfPXREAClientCallback callback, unsigned mask);
+int PXREADeinit(void);
+typedef void (*pfPXREAClientCallback)(
+    void* context, PXREAClientCallbackType type, int status, void* userData);
+typedef struct {
+    char devID[32];
+    uint64_t dataSize;
+    const char* dataPtr;
+} PXREADevCustomMessage;
+```
 
-- A deterministic URDF-to-MuJoCo compiler.
-- Manufacturer STL visual geometry without simplification.
-- Multi-convex collision geometry derived from the URDF collision meshes.
-- A full 54-DoF simulated plant and a 14-DoF arm IK projection generated from the same URDF.
-- A PXREARobotSDK-to-Zenoh bridge for existing PICO custom tracking frames.
-- A Zenoh-connected Tianji QP IK process using URDF-derived wrist sites.
-- A Python MuJoCo viewer/plant that drives arms and both Wuji2 hands.
-- Per-side neutral-pose alignment, validity, stale HOLD, and solver HOLD.
-- PC keyboard start/pause, re-alignment, reset, and exit.
-- Pixi-managed build, launch, status, stop, and verification commands.
-- Mock and real-PICO end-to-end validation.
+PICO 内层帧使用 14-byte little-endian header，magic `0xAB`；光学左手为 `0x38`，右手为 `0x39`，hand payload 固定 733 bytes：`active:uint8`、`scale:float32`、26 组 `xyz + quaternion_xyzw`。
 
-### Out of scope
+## 范围
 
-- Physical Tianji or Wuji2 actuator output.
-- ROS, DDS, ROS messages, or ROS launch files in the new live path.
-- PICO-headset rendering or stereo scene return to the Android/XR app.
-- Task objects, scoring, recording workflows, or the six-scene/17-task registry in the first delivery.
-- Optical-hand gesture session controls.
-- Silent primitive collision fallback.
-- Keeping the old hybrid generated model as a compatibility alias.
+### 包含
 
-Legacy ROS tools outside the new SPD-VR live entry point remain untouched.
+- 确定性 URDF-to-MuJoCo 编译器；
+- 厂家 STL 原样 visual；
+- 基于 URDF collision mesh 的 CoACD 多凸碰撞代理；
+- 同源生成 54-DoF `unified_plant.xml` 和 14-DoF `arm_ik.xml`；
+- Python `ctypes` PXREARobotSDK bridge；
+- Python Zenoh peer 通信和固定二进制协议；
+- Python MuJoCo Jacobian + OSQP 双臂 QP IK；
+- Python Wuji retarget、MuJoCo physics、operator viewer；
+- 独立左右侧对齐、有效性、stale HOLD、solver HOLD；
+- PC 键盘 START/PAUSE/RESUME/REALIGN/RESET/SHUTDOWN；
+- Pixi 管理的构建、启动、状态、停止和验收命令；
+- mock 和真实 PICO 端到端验收。
 
-## Architecture
+### 不包含
 
-The compiler produces two MuJoCo models from one URDF:
+- 物理 Tianji 或 Wuji2 输出；
+- 新 live path 中的 ROS、DDS、ROS message 或 ROS launch；
+- PICO 头显渲染或立体画面回传；
+- 任务物体、评分、录制和六场景/17 任务注册表；
+- 手势会话控制；
+- 碰撞分解失败时的 primitive 或单 hull 静默回退；
+- C/C++ 遥操作实现、跨语言兼容层或第二套 live 协议。
+
+仓库中与新 `spd-teleop` 无关的旧 ROS 工具不在本次删除范围内，但新入口不得 import 或启动它们。
+
+## 总体架构
+
+模型构建链：
 
 ```text
 assets/tianji_wuji2/tianji_wuji2.urdf
         |
-        +-- unified_plant.xml   54-DoF dual arms + bilateral hands
-        `-- arm_ik.xml          14-DoF arm projection + wrist target sites
+        +-- unified_plant.xml   54-DoF 双臂 + 双手 plant
+        `-- arm_ik.xml          14-DoF 双臂 projection + wrist sites
 ```
 
-The live path uses three application processes and no separate Zenoh router:
+运行时固定三个 Python 进程，不启动单独的 Zenoh router：
 
 ```text
 PICO XR App
     |
     | ADB reverse + RoboticsService + PXREARobotSDK custom bytes
     v
-pico_zenoh_bridge (C++)
-    |  spd/vr/v1/tracking
-    +--------------------------+
-    v                          v
-tianji_zenoh_ik (C++)     spd_vr_viewer (Python)
-    ^                          |
-    | spd/vr/v1/control        | Wuji retarget + single MuJoCo owner
-    |                          |
-    +--------------------------+
-    | spd/vr/v1/arm_targets    v
-    +-------------------- unified MjModel/MjData
+python -m spd_vr.pxrea_bridge
+    | listens tcp/127.0.0.1:7447
+    | spd/vr/v1/tracking
+    +---------------------------+
+    v                           v
+python -m spd_vr.arm_ik     python -m spd_vr.viewer
+    |                           |
+    | spd/vr/v1/arm_targets     | Wuji retarget
+    +-------------------------->| 单一 MjModel/MjData owner
+    ^                           |
+    +---- spd/vr/v1/control ----+
 ```
 
-`pico_zenoh_bridge` listens as a Zenoh peer at `tcp/127.0.0.1:7447`. The IK and viewer processes explicitly connect to that endpoint. A missing peer produces HOLD, not queued replay. No `zenohd`, ROS daemon, or DDS discovery service is required.
+Bridge 以 Zenoh peer 模式监听 `tcp/127.0.0.1:7447`；IK 和 viewer 显式连接。不存在 `zenohd`、ROS daemon 或 DDS discovery。断连立即使下游 target 无效；重连不回放旧 target，必须重新对齐。
 
-## URDF Compiler
+## Python 进程边界
 
-### Source authority
+### `spd_vr.pxrea_bridge`
 
-The integrated URDF is authoritative for:
+职责：
 
-- link and joint topology;
-- fixed mount chains;
-- link inertial values;
-- joint axes, origins, limits, and dynamics;
-- visual and collision mesh identity and transforms;
-- left/right wrist body frames;
-- arm and hand joint ordering.
+- 通过 `ctypes.CDLL` 加载 `${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so`；
+- 用 `ctypes.Structure` 精确声明 `PXREADevCustomMessage`，用 `ctypes.CFUNCTYPE` 声明回调；
+- 固定 `argtypes/restype`，在进程生命周期内强引用 callback；
+- `PXREAInit` 成功后恰好调用一次 `PXREADeinit`；
+- 维护设备在线、连接、丢包和 epoch 状态；
+- 解码 PICO 内层帧并配对左右手；
+- 发布 tracking/status，不发送任何 SDK 控制、机器人或手部命令。
 
-Existing Tianji and Wuji2 MJCF files are not structural inputs. MJCF-only data is limited to generated actuator, solver, contact, site, lighting, ground, and camera settings owned by the compiler.
+SDK callback 只允许：验证 `userData` 和 `dataSize`、从 SDK-owned pointer 复制最多 2,048 bytes、把不可变 `bytes` 非阻塞放入有界队列、更新 drop counter 并返回。callback 不做 struct 解码、Zenoh publication、IK、retarget、日志格式化或阻塞等待。队列满时丢弃最旧项，内存上限固定。
 
-### Validation before generation
+内层流解析器支持一个 callback 中的半帧、单帧和多帧；最大声明 payload 为 733 bytes。错误 magic、超长 payload 或无法恢复的流错误清空 buffer，并记录原因。World reset、SDK reconnect 和设备切换增加 epoch，并清空未配对数据。
 
-Compilation fails before writing final artifacts when any of the following is true:
+只有 source timestamp 和 epoch 都一致的左右手才组成 tracking frame。新 timestamp 到达时丢弃旧的不完整 pair。无歧义时自动选择唯一在线设备；多设备时要求 `--device` 明确指定。
 
-- the URDF has zero or multiple roots;
-- link or joint names are duplicated;
-- a parent/child reference is missing or the graph is disconnected;
-- a mesh file is missing or has a non-finite transform/scale;
-- mass is non-positive, or an inertia is non-finite/non-physical outside the narrow source-derived fixed-link policy below;
-- a revolute joint has missing, non-finite, or inverted limits;
-- the required `l_wrist` or `r_wrist` chain is absent;
-- the revolute counts are not 54 overall and 14 for the arm projection.
+### `spd_vr.arm_ik`
 
-The authoritative file contains 14 geometry-free fixed frames with no `<inertial>`, which remain massless frames, and two fixed TCP links with positive `0.05 kg` mass but an exact zero inertia tensor. The compiler interprets only `TCP_Link_L/R` as source-declared fixed point masses: it transforms each mass through its fixed joint, combines it into the direct parent `Link7_L/R` mass, center of mass, and tensor with the parallel-axis theorem, revalidates the combined inertia, and emits no separate TCP inertial. The manifest records the original mass, transform, destination link, and combined result. A missing inertial is accepted only on a fixed link with no visual/collision geometry. Every other missing or non-physical inertia is a build failure. This preserves the exact URDF mass and transform while avoiding invented epsilon or geometry-derived inertias.
+职责：
 
-### Visual geometry
+- 加载并验证 `arm_ik.xml` 和 manifest hash；
+- 订阅 tracking/control；
+- 从 OpenXR hand joint index 1 读取 Wrist；
+- 独立维护左右侧中立姿态对齐和 HOLD 状态；
+- 以 200 Hz 运行 MuJoCo kinematics/Jacobian + OSQP QP；
+- 发布 272-byte arm target 和 status；
+- 不打开 GUI、不发送物理设备命令。
 
-Visual geoms use the manufacturer STL files exactly as referenced by the URDF. They are not decimated or converted to primitives. Generated MJCF mesh paths are relative and portable within the workspace output layout.
+IK 进程有自己的 14-DoF projection `MjModel/MjData`，只用于运动学，不拥有完整 plant。左右臂分别求解，一个侧失败不阻塞另一侧。
 
-The URDF also contains 24 named `*_axis_[0-2]` cylinder visuals used as coordinate debug markers. They are not manufacturer meshes and are omitted from the operator scene to avoid axis clutter; the manifest records every omission. Any other primitive visual and every primitive collision geometry is rejected rather than silently substituted.
+### `spd_vr.viewer`
 
-### Collision geometry
+职责：
 
-MuJoCo mesh collision uses a convex hull, so passing a non-convex manufacturer mesh directly would fill concavities such as finger gaps. Collision geometry is therefore generated from the same URDF mesh with deterministic CoACD multi-convex decomposition:
+- 加载并验证 `unified_plant.xml` 与 manifests；
+- 拥有 live path 中唯一完整 plant 的 `MjModel/MjData`；
+- 订阅 tracking、arm target 和 control；
+- 每个新 hand frame 对左右手各运行一次 authoritative Wuji retarget；
+- 在 480 Hz physics tick 边界应用最新有效 target；
+- 在 60 Hz 渲染 PC operator window，render 不作为 physics clock；
+- 发布 control/status，提供键盘和 HUD；
+- 不发送物理硬件命令。
 
-- fixed random seed;
-- at most 16 convex pieces per link;
-- at most 64 hull vertices per piece;
-- cache key includes STL SHA-256, URDF scale, CoACD version, and all decomposition parameters;
-- cache writes use a temporary directory followed by atomic rename;
-- a failed decomposition never falls back to a box, capsule, or one-hull approximation;
-- adjacent parent-child links are excluded from self-collision;
-- non-adjacent arm, cross-arm, palm, and finger pairs remain eligible for collision.
+## URDF 编译器
 
-Every output piece must be finite, non-empty, manifold enough for MuJoCo compilation, and have positive volume. Deterministic surface sampling checks the generated union against the source mesh. Bilateral hand links require p95 bidirectional surface distance at or below 1.5 mm; arm/base links require at or below 3 mm. Exceeding the limit is a build failure.
+### 唯一来源和预检
 
-### Generated artifacts
+URDF 对 topology、fixed mount、inertial、joint axis/origin/limit、visual/collision identity 和 transform、wrist frame、joint ordering 都是唯一权威来源。现有 Tianji/Wuji MJCF 不能作为结构输入。
 
-The clean-cutover output is:
+生成前必须拒绝：
+
+- 零个或多个 root；
+- 重复 link/joint、缺失 parent/child、断图或环；
+- 缷失 mesh、非有限 transform/scale；
+- revolute limit 缺失、非有限或倒置；
+- 缺失 `l_wrist`/`r_wrist` 链；
+- full revolute count 不是 54，或 arm projection count 不是 14；
+- 除下述窄策略外缺失/非物理 inertial。
+
+14 个无 geometry 的 fixed frame 保持无质量 frame。仅 `TCP_Link_L/R` 被解释为 source-declared fixed point mass：将质量经 fixed transform 聚合到 `Link7_L/R`，用平行轴定理更新父 link 的 mass、COM 和 inertia，重新验证正定性，不生成独立 TCP inertial。manifest 记录原始质量、transform、目标 link 和聚合结果。其他非物理 inertia 直接失败。
+
+URDF 中 24 个 `*_axis_[0-2]` 调试 cylinder visual 从 operator scene 中省略并写入 manifest；其他 primitive visual/collision 不允许静默替代。
+
+### Visual 和 collision
+
+Visual 使用 URDF 引用的厂家 STL，不降采样。生成 XML 的 mesh 路径相对输出目录，拷贝或链接策略由 artifact writer 统一管理。
+
+Collision 使用固定参数 CoACD：
+
+- seed `0`；
+- 每 link 最多 16 个 convex piece；
+- 每 piece 最多 64 个 hull vertex；
+- `OMP_NUM_THREADS=1`；
+- cache key 包含 STL SHA-256、URDF scale、CoACD 版本和全部参数；
+- 临时目录完成后 atomic rename；
+- 失败不回退 box/capsule/single hull；
+- 相邻 parent-child link 排除 self-collision；
+- 非相邻双臂、跨臂、掌部和手指保持可碰撞。
+
+每个 piece 必须 finite、non-empty、正体积且能被 MuJoCo 编译。固定 surface sampling 验证双向距离：双手 p95 不超过 1.5 mm；臂/基座不超过 3 mm。
+
+### 产物
 
 ```text
 PICO_tracker/src/spd_vr/generated/
@@ -150,28 +198,28 @@ PICO_tracker/src/spd_vr/generated/
 └── actuator_calibration.yaml
 ```
 
-`unified_plant.xml` has 54 revolute DoFs and all fixed links required for appearance and collision. `arm_ik.xml` is a projection of the same source graph with 14 revolute arm DoFs and fixed chains through `l_wrist` and `r_wrist`. It includes sites named `l_wrist_target` and `r_wrist_target` at the corresponding URDF wrist body origins.
+`unified_plant.xml` 恰好 54 revolute DoF。`arm_ik.xml` 恰好 14 revolute DoF，并在 URDF `l_wrist`、`r_wrist` body origin 设置 `l_wrist_target`、`r_wrist_target` site。
 
-The manifests record compiler version, URDF hash, every STL hash, output hashes, joint/link maps, source transforms, decomposition parameters and metrics, actuator mapping, wrist sites, and model dimensions. Both runtime processes reject a source or output hash mismatch.
+Manifest 记录 compiler version、URDF hash、全部 STL hash、输出 hash、joint/link map、source transform、CoACD 参数和质量指标、actuator map、wrist site、model dimensions、默认 damping。所有运行进程在启动时验证 source/output hash；不匹配时拒绝运行。
 
-The previous `tianji_wuji2_spd.xml` hybrid artifact is removed after every consumer and test migrates.
+## Python wire contract
 
-## Zenoh Tracking Contract
+固定 key：
 
-### Source decoding
+```text
+spd/vr/v1/tracking
+spd/vr/v1/arm_targets
+spd/vr/v1/control
+spd/vr/v1/status/bridge
+spd/vr/v1/status/ik
+spd/vr/v1/status/viewer
+```
 
-The bridge links the installed `PXREARobotSDK.h` and `libPXREARobotSDK.so`. It receives `PXREADeviceCustomMessage` bytes and reuses the existing PICO frame IDs:
+只有一个 canonical Python codec。使用 `struct.Struct` 显式 little-endian 编解码，不用 ctypes struct 直接作为 wire，不依赖 pickle，不保留 C++ fixture。
 
-- `0x05`: optional head pose;
-- `0x06`: world reset;
-- `0x38`: left optical hand;
-- `0x39`: right optical hand.
+### Tracking v1
 
-Each hand payload remains `active:uint8`, `scale:float32`, and 26 OpenXR-ordered `xyz + quaternion_xyzw` poses. The bridge pairs left and right only when source timestamp and tracking epoch match. A newer timestamp invalidates an incomplete older pair. Device reconnect and world reset increment the epoch and clear all pending state.
-
-### Atomic tracking frame
-
-`spd/vr/v1/tracking` uses a fixed 1,540-byte little-endian binary frame:
+`spd/vr/v1/tracking` 固定 1,540 bytes：
 
 ```text
 uint32 magic                 // "SVT1"
@@ -185,134 +233,83 @@ int64  source_timestamp_ns
 int64  bridge_monotonic_ns
 float32 left_scale
 float32 right_scale
-float32 head_pose[7]         // xyz + quaternion_xyzw; zero when invalid
+float32 head_pose[7]
 float32 left_hand[26][7]
 float32 right_hand[26][7]
 ```
 
-The decoder rejects wrong magic, version, size, CRC, non-finite values, non-positive epoch, non-monotonic sequence/timestamp, non-positive scale, or non-unit quaternions outside the normalization tolerance. Head validity never gates a valid paired hand frame.
+Decoder 拒绝错误 magic/version/size/CRC、non-finite、epoch/sequence 非正、同 epoch 时间或 sequence 回退、scale 非正、active pose quaternion 与单位长度偏差超过 `1e-3`。head 无效不阻止有效双手 frame。
 
-Zenoh tracking subscribers use latest-only semantics. Old frames are not replayed after reconnect.
+### Arm target v2
 
-## Arm Target and Control Contracts
+沿用现有 272-byte `SPDA` v2 layout：sequence、tracking epoch、source/control timestamp、左右 q/qdot、valid mask、左右 HOLD reason、reserved 和 CRC。新增 HOLD enum 只占用现有 1-byte reason，不改变 layout：`NONE`、`INPUT_STALE`、`SOLVER_FAILURE`、`PAUSED`、`INACTIVE`、`ALIGNING`、`DISCONNECTED`、`EPOCH_CHANGE`。
 
-`spd/vr/v1/arm_targets` carries the existing 272-byte arm-target v2 schema. Its semantic fields remain:
+### Control v1
 
-- sequence, epoch, source and send timestamps;
-- left and right q/qdot vectors;
-- independent left/right validity;
-- independent HOLD reason;
-- reserved-byte validation.
+`spd/vr/v1/control` 固定 40 bytes：magic `SVC1`、version、command、declared size、CRC、sequence、monotonic timestamp、8-byte zero reserved。命令为 START、PAUSE、RESUME、REALIGN、RESET、SHUTDOWN。sequence 重复幂等；回退拒绝。
 
-One canonical C++ implementation and one canonical Python implementation share golden byte vectors. UDP-specific wrappers are removed from the new live path after all users migrate.
+Status 使用 JSON，只用于诊断，不作为控制输入。
 
-`spd/vr/v1/control` is a small versioned binary command frame with sequence, monotonic timestamp, command enum, and CRC. Supported commands are START, PAUSE, RESUME, REALIGN, RESET, and SHUTDOWN. Control publication is reliable and ordered; duplicate sequence IDs are idempotent.
+Zenoh tracking 和 arm target 使用 latest-only mailbox；callback 只复制 sample payload 并覆盖单槽。control 使用 ordered/reliable publication，并由接收状态中的最后 sequence 形成可见 acknowledgement。
 
-Status is diagnostic JSON under:
+## 对齐、QP 和 HOLD
+
+每侧独立状态：
 
 ```text
-spd/vr/v1/status/bridge
-spd/vr/v1/status/ik
-spd/vr/v1/status/viewer
+DISCONNECTED -> WAITING_INPUT -> STABILIZING -> ALIGNED
+ALIGNED -> HOLD_STALE | HOLD_INACTIVE | HOLD_SOLVER | HOLD_PAUSED
+HOLD_* -> STABILIZING -> ALIGNED
 ```
 
-Status JSON is never consumed as a control input.
+STABILIZING 需要连续 10 个 Wrist frame。相邻接受 frame 的 translation 变化不得超过 0.02 m，orientation geodesic 变化不得超过 0.15 rad。
 
-## Runtime Components
-
-### `pico_zenoh_bridge`
-
-Responsibilities:
-
-- initialize/deinitialize PXREARobotSDK exactly once;
-- select one online device or require an explicit serial when ambiguous;
-- decode, validate, pair, and publish atomic tracking frames;
-- reserve monotonic sequence and tracking epoch state;
-- expose callback rate, pair drops, invalid frames, SDK state, Zenoh state, and source latency;
-- publish no arm, hand actuator, or physical hardware command.
-
-The SDK callback copies the SDK-owned bytes into a bounded queue and returns immediately. Parsing and Zenoh publication happen outside the callback. Queue overflow drops the oldest tracking candidate and increments a counter.
-
-### `tianji_zenoh_ik`
-
-Responsibilities:
-
-- load and verify `arm_ik.xml` plus manifest;
-- subscribe to tracking and control;
-- derive each Wrist from optical hand joint index 1;
-- maintain independent left/right neutral alignment and validity;
-- run the existing Tianji QP IK at 200 Hz;
-- publish independent arm targets and HOLD reasons;
-- never instantiate a GUI or physical device output.
-
-### `spd_vr_viewer`
-
-Responsibilities:
-
-- load and verify `unified_plant.xml` plus manifests;
-- own the only live `MjModel`/`MjData` pair;
-- subscribe to tracking, arm targets, and control acknowledgements;
-- run Wuji retarget once for each new hand frame;
-- apply latest accepted targets only at 480 Hz physics tick boundaries;
-- render the PC operator window at 60 Hz without making rendering the physics clock;
-- show the ground plane and no task objects in the first delivery;
-- expose keyboard controls and an operator HUD;
-- never send real hardware commands.
-
-## Alignment and Control State
-
-Each side has an independent state:
+对齐变换：
 
 ```text
-DISCONNECTED
-  -> WAITING_INPUT
-  -> STABILIZING
-  -> ALIGNED
-  -> HOLD_STALE | HOLD_INACTIVE | HOLD_SOLVER
-  -> ALIGNED
+T_robot_from_pico,s = T_urdf_wrist,s,neutral @ inverse(T_pico_wrist,s,neutral)
 ```
 
-STABILIZING requires 10 consecutive accepted Wrist frames. The window rejects a frame when translation changes by more than 0.02 m or orientation changes by more than 0.15 rad from the preceding accepted sample.
+默认 position scale 为 1.0，并在 status 中报告。左右独立对齐。epoch 变化、timestamp rollback、REALIGN、RESET、PAUSE 后 RESUME 使两侧重新进入稳定窗口；单手 inactive 只影响对应侧。
 
-At successful neutral alignment for side `s`:
+Tracking 和 arm target 超过 50 ms 没有新有效 frame 即 stale。HOLD 保留最后有效 target，不跳零、不跳中立位、不应用失败求解结果。
+
+每侧 QP 在固定 5 ms tick 求解速度 `dq`：
 
 ```text
-T_robot_from_pico,s = T_urdf_wrist,s,neutral * inverse(T_pico_wrist,s,neutral)
+min  0.5 * ||J(q) dq - v_des||^2_W
+   + 0.5 * lambda_damp * ||dq||^2
+   + 0.5 * lambda_home * ||dq - dq_home||^2
+s.t. lower(q, dt) <= dq <= upper(q, dt)
 ```
 
-The default position scale is 1.0 and is recorded in status and run metadata. Left and right alignment are independent. One side can be ALIGNED while the other is inactive or stabilizing.
+其中：
 
-A tracking epoch change, source timestamp rollback, explicit REALIGN, or RESET invalidates both alignments. A side-specific active loss invalidates only that side's live target and keeps its last accepted actuator target.
+```text
+lower = max(-velocity_limit, (q_min - q) / dt)
+upper = min(+velocity_limit, (q_max - q) / dt)
+```
 
-Tracking and arm targets become stale after 50 ms without a newly accepted frame. Stale, inactive, malformed, or solver-failed input produces `valid=false` with a specific HOLD reason. HOLD retains the last valid target; it never jumps to zero, neutral, or an unverified new pose.
+`v_des` 由 position error 和 SO(3) log orientation error 除以 `dt` 得到，并分别限幅。`J` 使用 MuJoCo Python `mj_jacSite`。QP 用 Python `osqp` API 和 SciPy sparse matrix；每侧预建 workspace，tick 中只 update 数值并 warm start，禁止每 tick 重建 solver 或分配与 DoF 成比例的大对象。只有 OSQP status `solved`/`solved inaccurate`、解 finite 且满足 bound tolerance 时才积分并发布。失败时该侧 HOLD_SOLVER。
 
-Wuji retarget output is reordered by the generated manifest and clamped to URDF limits. Failure or inactivity on one hand does not block the opposite hand.
+Wuji retarget 读取 26-joint OpenXR hand，按 generated manifest 重排到各 20-DoF hand actuator，并 clamp URDF limit；一手失败不影响另一手。
 
-## Keyboard and Viewer Behavior
+## Viewer 与会话控制
 
-The PC MuJoCo viewer owns session controls:
+键位：
 
-- Space: START, PAUSE, or RESUME;
-- R: REALIGN both sides;
-- N: RESET q, qvel, ctrl, simulation time, and both alignments;
-- Q or Escape: SHUTDOWN.
+- Space：START、PAUSE 或 RESUME；
+- R：左右 REALIGN；
+- N：清空 q、qvel、ctrl、simulation time 和两侧 alignment；
+- Q 或 Escape：SHUTDOWN。
 
-While paused, physics, retarget, QP publication, recording hooks, and target application are frozen. Health/status reception may continue. Resume requires a fresh alignment window; stale pre-pause input is never applied.
+PAUSE 冻结 physics、retarget、IK target publication 和 target application；status reception 可继续。RESUME 必须重新经过 10-frame alignment，旧 frame 不重放。
 
-The HUD shows:
+HUD 显示：SDK/Zenoh 状态、tracking/target rate、source/bridge latency、drop/invalid counter、左右 alignment/HOLD、physics p95/max、active contacts、source/generated hash 状态。
 
-- SDK device and Zenoh connection state;
-- tracking and arm-target rates;
-- source-to-viewer and bridge-to-viewer latency;
-- sequence drops and invalid-frame counters;
-- left/right alignment state and HOLD reason;
-- physics step p95/max;
-- active contacts and collision warnings;
-- source and generated model hash status.
+## 启停与前置检查
 
-## Startup and Shutdown
-
-Pixi tasks are the supported operator interface:
+支持的 Pixi 接口：
 
 ```bash
 pixi run spd-model
@@ -322,120 +319,62 @@ pixi run spd-teleop-status
 pixi run spd-teleop-stop
 ```
 
-`spd-model` compiles and validates both models. `spd-teleop` verifies that:
+`spd-teleop` 在启动三个进程前验证：ADB reverse、RoboticsService/PICO、SDK `.so` 可加载、MuJoCo/OSQP/CoACD/Zenoh/display、source/generated hash、端口 7447 空闲、无已运行 SPD-VR session。
 
-- `adb.sh status` reports the expected reverse;
-- RoboticsService and the selected PICO are available;
-- the official SDK header/library load;
-- CoACD, MuJoCo, Zenoh, and display dependencies are present;
-- source and generated hashes match;
-- `127.0.0.1:7447` is free;
-- no existing SPD-VR session is active.
+启动器创建恰好三个 tmux window：`pxrea_bridge`、`arm_ik`、`viewer`。不启动或提及旧 PICO ROS driver、M0、optical/SMPL bridge、Manus、DDS 或 ROS 环境变量。
 
-The startup script creates exactly three tmux windows:
+停止先发布 SHUTDOWN，再按 viewer、IK、bridge 顺序等待。超时后只对已验证身份的本 session 进程升级信号。不得停止并非本次启动的 ADB supervisor。
 
-```text
-pico_zenoh_bridge
-tianji_zenoh_ik
-spd_vr_viewer
-```
+## 失败语义
 
-The clean-cutover script does not start or mention old PICO driver, M0, optical/SMPL ROS bridges, Manus, DDS, or ROS environment variables.
+- SDK disconnect：bridge 保持运行并报告 disconnected；下游 HOLD；
+- Zenoh disconnect：立即使 target 无效；重连需新 sequence 和 alignment；
+- 单手 inactive：仅对应侧 HOLD_INACTIVE；
+- tracking/target stale：50 ms 后对应侧 HOLD_STALE；
+- QP failure：仅对应侧 HOLD_SOLVER；
+- epoch/reset：清空 pending pair、latest frame 和两侧 alignment；
+- model/manifest/hash mismatch：在 viewer/SDK 初始化前拒绝启动；
+- CoACD/质量门失败：`spd-model` 失败，不生成替代碰撞；
+- viewer close 或 Q/Escape：有序 shutdown；不存在物理输出 drain。
 
-Shutdown first publishes SHUTDOWN, then waits for viewer, IK, and bridge in that order. It escalates only after a bounded graceful timeout and validates process identity before signaling. It does not stop an ADB supervisor it did not start.
+## 验证与验收
 
-## Failure Handling
+### 单元与模型契约
 
-- SDK disconnect: bridge remains alive and publishes disconnected status; downstream enters HOLD.
-- Zenoh disconnect: latest control targets are invalidated immediately; reconnect requires fresh sequence and alignment.
-- One hand inactive: only that side enters HOLD_INACTIVE.
-- Tracking/target stale: corresponding side enters HOLD_STALE after 50 ms.
-- QP failure: only the failed side enters HOLD_SOLVER.
-- Epoch/reset: pending pairs, latest frames, and both alignments are cleared.
-- Model/manifest/hash mismatch: process refuses startup before opening the viewer or SDK.
-- Collision compilation failure or quality threshold failure: `spd-model` fails; no primitive fallback.
-- Viewer close or Q/Escape: orderly control shutdown; no physical output exists to drain.
+- PXREA ctypes layout、callback lifetime、最大复制、queue overflow；
+- PICO 半帧/单帧/多帧、错误 header、左右配对和 epoch；
+- 三种协议的 size、CRC、reserved、NaN/Inf、quaternion、sequence/epoch；
+- URDF topology、54/14 DoF、fixed wrist transform、point-mass 聚合；
+- visual mesh identity、relative path、deterministic collision cache/hash、p95 距离门；
+- 两个 MJCF 可加载且 joint/site/actuator map 完整；
+- 独立对齐、jump reject、stale/inactive/solver HOLD、pause/reset/latest-only；
+- QP position/velocity boundary、不可达 target、单侧 solver failure。
 
-## Dependencies
+### Hardware-free 端到端
 
-Pixi owns all new open-source dependencies. Expected additions include:
+Fake PXREA callback 通过真实 Python Zenoh session 发送至少 12 组 paired frames，验证：
 
-- MuJoCo Python/C++ runtime already used by the repository;
-- Python `eclipse-zenoh`;
-- Zenoh Pico C/C++ library and CMake target;
-- CoACD Python bindings;
-- mesh parsing and deterministic surface-sampling support;
-- existing `wuji-retargeting` editable package.
+- 三个入口均为 Python module，进程命令不含 C++ binary；
+- 左 Wrist motion 只改变左臂 target；
+- 右 Wrist rotation 只改变右臂 target；
+- finger motion 只改变对应 Wuji2 joint；
+- 54 个 plant q/qvel/ctrl 全部 finite；
+- headless/offscreen viewer 渲染厂家 mesh；
+- shutdown 后无 Zenoh peer、tmux session 或 child process。
 
-The official SDK remains an external system dependency. Its root is configurable through `PXREA_SDK_ROOT`, with `/opt/apps/roboticsservice/SDK` as the discovered workstation default. Build and runtime diagnostics print the exact header and shared library selected.
+### 性能与碰撞
 
-## Verification
+- IK 200 Hz，单侧 OSQP solve p95 小于 5 ms；
+- physics 480 Hz，step p95 小于 2.083 ms；
+- render 60 Hz 且不控制 physics clock；
+- tracking overload 只产生有界 drop，不增长内存；
+- ground、cross-arm、palm、finger contact finite，无 NaN 或爆炸能量；
+- collision proxy 在固定环境下输出 hash 稳定并满足几何误差门。
 
-### URDF/compiler tests
+### 真实 PICO
 
-- full topology, unique names, one root, connected graph;
-- 54 unified and 14 arm revolute DoFs;
-- fixed-chain wrist transforms;
-- visual mesh identity and relative-path portability;
-- limits, inertials, actuator mapping, and source hashes;
-- deterministic collision cache and output hashes;
-- collision p95 surface-distance gates;
-- both MJCF files load and expose required joint/site names;
-- source edits invalidate generated manifests.
+在 RoboticsService、ADB reverse、XR app 运行时验证：连续 paired hands、10-frame 无跳变对齐、左右腕独立驱动、双手五指 retarget、遮挡单手只 HOLD 该侧、Space/R/N/Q 行为、无 ROS 进程、无物理机器人输出。
 
-### Cross-language protocol tests
+## Clean cutover
 
-- C++ encode to Python decode and Python encode to C++ decode;
-- checked-in golden vectors for tracking, arm target, and control;
-- wrong magic/version/size/CRC;
-- NaN/Inf, invalid quaternion, timestamp rollback, epoch transition;
-- left/right timestamp mismatch and incomplete-pair replacement;
-- duplicate control sequence idempotence.
-
-### State and control tests
-
-- 10-frame independent alignment;
-- left-only/right-only active and movement;
-- translation/orientation jump rejection;
-- stale/inactive/solver HOLD without zero jump;
-- pause freezes physics and target publication;
-- reset clears q/qvel/ctrl/time/alignment;
-- epoch transition rejects old data;
-- latest-only behavior under publisher overload.
-
-### Hardware-free integration
-
-A fake PXREA callback emits at least 12 paired frames through real Zenoh sessions. Tests verify:
-
-- left Wrist movement changes only left arm target;
-- right Wrist rotation changes only right arm target;
-- finger motion changes only the corresponding Wuji2 joints;
-- all 54 plant positions, velocities, and controls remain finite;
-- viewer headless/offscreen mode renders the manufacturer meshes;
-- process shutdown leaves no Zenoh peer, tmux session, or child process.
-
-### Performance and collision
-
-- physics runs at 480 Hz with step-time p95 below 2.083 ms on the target workstation;
-- operator rendering runs at 60 Hz without controlling the physics clock;
-- collision proxies compile deterministically and remain under the approved geometric-error gates;
-- ground, cross-arm, palm, and finger contacts remain finite and do not produce explosive energy or NaNs;
-- tracking overload causes bounded drops, not unbounded memory growth.
-
-### Real PICO acceptance
-
-With RoboticsService, ADB reverse, and the XR app running:
-
-- the bridge receives continuous paired optical hands;
-- 10 stable frames align both wrists without a target jump;
-- left/right wrist motion drives the matching simulated arm only;
-- each five-finger hand follows optical articulation through Wuji retarget;
-- occluding one hand holds only that side;
-- Space freezes and resume requires fresh alignment;
-- R realigns, N resets, and Q exits cleanly;
-- no ROS process starts and no new live module imports ROS;
-- no physical Tianji/Wuji2 command is emitted.
-
-## Clean Cutover
-
-Implementation migrates every new SPD-VR live caller to the generated manifests and Zenoh contracts. It removes obsolete hybrid model consumers, UDP-only live arm wiring, and old six-window live startup commands. It does not add compatibility aliases or a second live protocol. Legacy ROS applications outside the new `spd-teleop` path remain available but are not dependencies of this feature.
+迁移所有新 SPD-VR live caller 到 Python 三进程、generated manifests 和唯一 Python wire codec。删除旧 hybrid `tianji_wuji2_spd.xml` consumer、live UDP arm wiring、ROS live branch 和旧六窗口启动逻辑；不保留 compatibility alias。与新 live path 无关的旧 ROS 应用可以继续存在，但不是本功能依赖。
