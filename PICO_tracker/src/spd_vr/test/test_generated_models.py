@@ -70,6 +70,14 @@ def test_verify_artifacts_rejects_source_or_output_tampering(tmp_path: Path, mon
     source.write_bytes(URDF.read_bytes() + b"\n")
     with pytest.raises(ValueError):
         verify_artifacts(manifest_path, source)
+    import yaml
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    visual = result.output_dir / manifest["visual_meshes"][0]["output_file"]
+    visual_bytes = visual.read_bytes()
+    visual.write_bytes(visual_bytes + b"\n")
+    with pytest.raises(ValueError):
+        verify_artifacts(manifest_path, URDF)
+    visual.write_bytes(visual_bytes)
     xml = result.full_model
     original = xml.read_bytes()
     xml.write_bytes(original + b"\n")

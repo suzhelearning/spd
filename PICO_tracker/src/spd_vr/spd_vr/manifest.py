@@ -57,8 +57,9 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
         if not float(entry["range"][1]) > float(entry["range"][0]):
             raise ManifestError(f"invalid range at {expected}")
     arm_order = document.get("arm_joint_order")
-    if not isinstance(arm_order, list) or len(arm_order) != 14 or any(name not in joint_order for name in arm_order):
-        raise ManifestError("manifest must contain exactly 14 arm joints")
+    expected_arm_order = [entry["joint"] for entry in joints if entry.get("group") == "arm"]
+    if arm_order != expected_arm_order or len(arm_order) != 14 or len(set(arm_order)) != 14:
+        raise ManifestError("manifest arm_joint_order must exactly match the 14 arm joints")
     wrist = document.get("wrist_targets")
     if wrist != {
         "left_body": "l_wrist",

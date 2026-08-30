@@ -341,6 +341,7 @@ def _manifest_document(
     excludes: tuple[tuple[str, str], ...],
     dimensions: Mapping[str, Mapping[str, int]],
     output_hashes: Mapping[str, str],
+    urdf_sha256: str,
 ) -> dict[str, Any]:
     by_name = {joint.name: joint for joint in model.joints}
     joints: list[dict[str, Any]] = []
@@ -370,8 +371,7 @@ def _manifest_document(
     return {
         "version": 1,
         "compiler": "spd-urdf-first-mjcf-1",
-        "dof": 54,
-        "source": {"urdf": str(model.source_path), "urdf_sha256": _sha256(model.source_path), "meshes": mesh_hashes},
+        "source": {"urdf": model.source_path.name, "urdf_sha256": urdf_sha256, "meshes": mesh_hashes},
         "outputs": dict(output_hashes),
         "manifest_sha256": "",
         "models": {key: dict(value) for key, value in dimensions.items()},
@@ -404,23 +404,16 @@ def _manifest_document(
 
 
 def _publish_atomic(temp_root: Path, output_root: Path) -> None:
+    """Publish one complete directory with one POSIX atomic rename.
+
+    Replacing an existing directory would require a visible removal or a
+    second rename.  Refuse that operation instead of creating a gap or an
+    orphan backup; callers can choose a fresh output directory.
+    """
     output_root.parent.mkdir(parents=True, exist_ok=True)
-    backup = output_root.parent / f".{output_root.name}.old-{os.getpid()}"
-    if backup.exists():
-        shutil.rmtree(backup)
-    try:
-        if output_root.exists():
-            os.replace(output_root, backup)
-        os.replace(temp_root, output_root)
-    except Exception:
-        if output_root.exists():
-            shutil.rmtree(output_root, ignore_errors=True)
-        if backup.exists():
-            os.replace(backup, output_root)
-        raise
-    finally:
-        if backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+    if output_root.exists():
+        raise ArtifactError(f"refusing to replace existing artifact directory: {output_root}")
+    os.replace(temp_root, output_root)
 
 
 def compile_models(
@@ -430,10 +423,14 @@ def compile_models(
 ) -> ModelManifest:
     """Compile and atomically publish the two MJCF models and three YAML files."""
     source = Path(urdf_path).resolve()
+    source_bytes = source.read_bytes()
+    source_sha256 = _sha256_bytes(source_bytes)
     output = Path(output_dir).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = Path(cache_dir).resolve() if cache_dir is not None else output.parent / "collision_cache"
     model = aggregate_fixed_point_masses(load_urdf(source))
+    if source.read_bytes() != source_bytes:
+        raise ArtifactError("authoritative URDF changed during compilation")
     axis_visuals = _inspect_primitives(source)
     if len(model.revolute_joints) != 54:
         raise ArtifactError(f"full model requires 54 revolute joints, found {len(model.revolute_joints)}")
@@ -473,9 +470,12 @@ def compile_models(
             excludes,
             dimensions,
             output_hashes,
+            source_sha256,
         )
         manifest_document["manifest_sha256"] = _sha256_bytes(_yaml_bytes(manifest_document))
         (temp / "model_manifest.yaml").write_bytes(_yaml_bytes(manifest_document))
+        if _sha256_bytes(source.read_bytes()) != source_sha256:
+            raise ArtifactError("authoritative URDF changed during compilation")
         _publish_atomic(temp, output)
         temp = Path()
     except Exception:
@@ -518,6 +518,22 @@ def verify_artifacts(manifest_path: str | Path, urdf_path: str | Path) -> Verifi
             mesh_path = source.parent / mesh_path
         if _sha256(mesh_path) != expected:
             raise ArtifactError(f"source mesh hash mismatch: {name}")
+    visual_meshes = document.get("visual_meshes")
+    if not isinstance(visual_meshes, list):
+        raise ArtifactError("published visual mesh records are missing")
+    for record in visual_meshes:
+        if not isinstance(record, dict):
+            raise ArtifactError("invalid visual mesh record")
+        output_file = record.get("output_file")
+        filename = record.get("filename")
+        if not isinstance(output_file, str) or not isinstance(filename, str):
+            raise ArtifactError("visual mesh record paths are missing")
+        expected = source_meshes.get(filename)
+        if expected is None:
+            raise ArtifactError(f"visual mesh source is not declared: {filename}")
+        published = _resolve_child_path(output, output_file)
+        if not published.is_file() or _sha256(published) != expected:
+            raise ArtifactError(f"published visual mesh hash mismatch: {output_file}")
     outputs = document.get("outputs")
     if not isinstance(outputs, dict):
         raise ArtifactError("manifest output hashes are missing")

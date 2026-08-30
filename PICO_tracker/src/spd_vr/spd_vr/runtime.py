@@ -19,6 +19,7 @@ from .recorder import EpisodeRecorder
 from .ros_input import LiveInputMailbox
 from .scenes.model_scene import write_scene_model
 from .scenes.registry import get_task
+from .model_compiler.artifacts import verify_artifacts
 from .simulator import UnifiedSimulator
 
 
@@ -238,11 +239,13 @@ def run_runtime(
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     task_spec = get_task(scene, task)
-    scene_result = task_spec.reset(seed)
-    base_model = Path(__file__).resolve().parents[1] / "generated/tianji_wuji2_spd.xml"
+    generated = Path(__file__).resolve().parents[1] / "generated"
+    urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
+    verified = verify_artifacts(generated / "model_manifest.yaml", urdf)
+    base_model = verified.full_model
     model_path = output / "tianji_wuji2_spd_scene.xml"
     write_scene_model(base_model, scene_result, model_path)
-    manifest_path = Path(__file__).resolve().parents[1] / "generated/joint_manifest.yaml"
+    manifest_path = verified.manifest_path
     recorder = EpisodeRecorder(output)
     # The synthetic provider is retained for the recorder schema in both
     # modes; it is never used as a Wrist alignment input.

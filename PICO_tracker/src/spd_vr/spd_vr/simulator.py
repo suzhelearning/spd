@@ -26,6 +26,7 @@ from .arm_target_protocol import (
 )
 from .camera import CameraError, CameraFrame
 from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_model_addresses
+from .model_compiler.artifacts import verify_artifacts
 
 if TYPE_CHECKING:
     from .pico_hands import PicoHandFrame
@@ -178,8 +179,15 @@ class UnifiedSimulator:
             raise ImportError("mujoco is required for UnifiedSimulator") from exc
         self._mujoco = mujoco
         module_dir = Path(__file__).resolve().parents[1]
-        model_path = Path(model_path) if model_path is not None else module_dir / "generated/tianji_wuji2_spd.xml"
-        manifest_path = Path(manifest_path) if manifest_path is not None else module_dir / "generated/joint_manifest.yaml"
+        if model_path is None or manifest_path is None:
+            generated = module_dir / "generated"
+            urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
+            verified = verify_artifacts(generated / "model_manifest.yaml", urdf)
+            model_path = verified.full_model if model_path is None else Path(model_path)
+            manifest_path = verified.manifest_path if manifest_path is None else Path(manifest_path)
+        else:
+            model_path = Path(model_path)
+            manifest_path = Path(manifest_path)
         self.manifest_document = load_manifest(manifest_path)
         if model is None:
             model = mujoco.MjModel.from_xml_path(str(model_path))
