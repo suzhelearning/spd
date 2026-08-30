@@ -313,6 +313,7 @@ def _run_fake_source(
     listen: bool = False,
     endpoint: str = "tcp/127.0.0.1:7447",
     key: str = TRACKING_KEY,
+    wait_for_shutdown: bool = False,
 ) -> int:
     queue = BoundedCallbackQueue()
     core = BridgeCore()
@@ -353,6 +354,17 @@ def _run_fake_source(
             queue.put(event)
             if delay_ms:
                 stop.wait(delay_ms / 1000.0)
+        if wait_for_shutdown and not stop.is_set():
+            while not stop.is_set() and not core._shutdown:
+                sample = control_mailbox.take_new(generation)
+                if sample is not None:
+                    generation, control = sample
+                    try:
+                        core.accept_control(control)
+                    except ValueError:
+                        pass
+                    worker._publish_status()
+                stop.wait(0.05)
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -453,6 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--key", default=TRACKING_KEY)
     parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     parser.add_argument("--listen", action="store_true")
+    parser.add_argument("--wait-for-shutdown", action="store_true")
     args = parser.parse_args(argv)
     if args.fake_source_jsonl is not None:
         return _run_fake_source(
@@ -460,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
             listen=args.listen,
             endpoint=args.endpoint,
             key=args.key,
+            wait_for_shutdown=args.wait_for_shutdown,
         )
     return _run_sdk(args)
 

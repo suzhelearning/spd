@@ -1,14 +1,14 @@
 # Task 12 报告：硬件无关 Python teleoperation E2E
 
-## 交付
+## Round 1 修复
 
-- `PICO_tracker/scripts/test_spd_teleop_e2e.py`：单一 E2E harness。
-- 生产路径使用真实 `spd_vr.pxrea_bridge` fake-source queue、`spd_vr.arm_ik`、`spd_vr.viewer` 模块命令；所有子进程使用 argv、独立 process group、bounded wait，并在异常/超时时终止并回收。
-- 启动前运行 `spd_vr.preflight` 并调用 authoritative `verify_artifacts`。缺少或验证失败时不启动任何生产进程，JSON `blocked=true`、exit 2。
-- `--synthetic` 只运行已有 `arm_ik --self-test` 与 `viewer --headless --synthetic` smoke，JSON 全部标记 `synthetic=true`，不代表生产 artifact PASS。
-- `PICO_tracker/pixi.toml` 增加 `spd-teleop-e2e`，保留用户已有 `pico-adb` 行。
+- `test_spd_teleop_e2e.py` 的同步命令也使用独立 process group；超时对整个 group 执行 TERM/KILL 并 wait。
+- fake JSONL 按 `pico_frames.decode_hand` 的真实布局生成：`active=1` offset 0、`scale=<f` offset 1、26×7 `<f4` offset 5；左右 wrist translation/rotation 和 finger flex 非零，并在写盘前 decode 断言。
+- 生产 gate 对 preflight 任意非零立即 fail-closed；缺失 artifact 文案只列本次实际 missing，不拼接历史 Link_Base 数字。
+- bridge 增加显式 `--wait-for-shutdown`（默认 fake CLI 行为不变），E2E 使用该模式，避免 JSONL EOF 先于 SHUTDOWN 自然退出。
+- 生产 PASS 现在要求 status ready、control ack、全部 invariant、SHUTDOWN 后三进程自然 exit code 0、无 orphan；未观测的 finite/contact/HOLD/epoch 等不会伪造为 PASS。
 
-## 生产 artifact gate（当前预期阻塞）
+## 生产 artifact gate（当前阻塞）
 
 命令：
 
@@ -17,24 +17,18 @@ cd PICO_tracker
 OMP_NUM_THREADS=1 pixi run python scripts/test_spd_teleop_e2e.py --json /tmp/spd-teleop-e2e.json
 ```
 
-实际结果：命令以 exit 2 结束；未启动 bridge/IK/viewer；`/tmp/spd-teleop-e2e.json` 的关键输出为：
+实际输出（exit 2）：
 
 ```text
 blocked=true
 synthetic=false
 stage=artifact-gate
 status=blocked
-reason=authoritative artifacts blocked: Link_Base.STL p95 surface error 0.036785362 m exceeds the required arm/base 0.003 m gate; required artifacts missing: unified_plant.xml, arm_ik.xml, model_manifest.yaml, collision_manifest.yaml, actuator_calibration.yaml
+reason=required artifacts missing: unified_plant.xml, arm_ik.xml, model_manifest.yaml, collision_manifest.yaml, actuator_calibration.yaml
 preflight.exit_code=1
 ```
 
-Preflight 原始 stdout 中 artifact 检查为：
-
-```text
-{"detail": "missing generated artifacts: unified_plant.xml, arm_ik.xml, model_manifest.yaml, collision_manifest.yaml, actuator_calibration.yaml", "name": "artifacts", "ok": false}
-```
-
-这保留 Task 7 authoritative blocker：`Link_Base.STL` 的 arm/base p95 为 `0.036785362 m`，超过必需 `0.003 m`；没有 synthetic fallback，也没有伪造 authoritative PASS。
+脚本没有启动任何生产子进程。`preflight` 原始 artifact 检查为 `ok=false`，并报告同一组实际 missing 文件。Task 7 的历史 authoritative blocker 仍记录在 Task 7 报告中，但本次 missing-only 检查没有把未在本次验证读取到的 `Link_Base.STL` p95 数字冒充本次结果。
 
 ## Explicit synthetic framework evidence
 
@@ -45,7 +39,7 @@ cd PICO_tracker
 OMP_NUM_THREADS=1 pixi run python scripts/test_spd_teleop_e2e.py --synthetic --json /tmp/spd-teleop-e2e-synthetic.json
 ```
 
-实际结果：exit 0。脚本确实运行已有模块：
+实际输出（exit 0）：
 
 ```text
 self-test: ticks=400 finite=400 solver_failures=0 elapsed_s=1.997 rate_hz=200.33 synthetic=true
@@ -69,9 +63,10 @@ evidence.physics.ticks=480
 
 ```bash
 cd PICO_tracker
-pixi run python -m py_compile scripts/test_spd_teleop_e2e.py
+pixi run python -m py_compile scripts/test_spd_teleop_e2e.py src/spd_vr/spd_vr/pxrea_bridge.py
+pixi run python -m pytest src/spd_vr/test/test_pxrea_bridge.py::test_fake_source_jsonl_uses_worker_path_and_rejects_malformed_line -q
 ```
 
-输出为空，exit 0。
+结果：py_compile 无输出 exit 0；focused bridge smoke `1 passed`。另以无 shell argv 子进程验证 `_run` 超时，结果 `timeout=0.2`、`exit=-15`，说明整个 process group 被回收。
 
 碰撞动力学和独立性能大套件按用户裁决 deferred；本任务保留单一可运行 E2E harness、真实进程清理、finite/status/control boundary，以及 artifact fail-closed 证据。

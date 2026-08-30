@@ -27,10 +27,6 @@ ARTIFACT_FILES = (
     "collision_manifest.yaml",
     "actuator_calibration.yaml",
 )
-BLOCKER_REASON = (
-    "authoritative artifacts blocked: Link_Base.STL p95 surface error "
-    "0.036785362 m exceeds the required arm/base 0.003 m gate"
-)
 
 
 def _recent(text: str, limit: int = 20) -> str:
@@ -40,32 +36,26 @@ def _recent(text: str, limit: int = 20) -> str:
 
 def _run(command: Sequence[str], *, timeout: float) -> dict[str, Any]:
     try:
-        result = subprocess.run(
-            list(command), cwd=ROOT, env=_environment(), text=True,
-            capture_output=True, check=False, timeout=timeout,
-        )
-        return {
+        owned = OwnedProcess(command)
+        timed_out = False
+        try:
+            owned.process.wait(timeout=max(0.1, timeout))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            owned.terminate()
+        owned.finish()
+        result = {
             "command": list(command),
-            "exit_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
+            "exit_code": owned.process.returncode,
+            "stdout": owned.stdout,
+            "stderr": owned.stderr,
         }
-    except subprocess.TimeoutExpired as exc:
-        return {
-            "command": list(command),
-            "exit_code": None,
-            "stdout": _text(exc.stdout),
-            "stderr": _text(exc.stderr),
-            "timeout": timeout,
-        }
+        if timed_out:
+            result["timeout"] = timeout
+        return result
     except OSError as exc:
         return {"command": list(command), "exit_code": None, "stdout": "", "stderr": str(exc)}
 
-
-def _text(value: bytes | str | None) -> str:
-    if value is None:
-        return ""
-    return value.decode(errors="replace") if isinstance(value, bytes) else value
 
 
 def _environment() -> dict[str, str]:
@@ -89,6 +79,7 @@ class OwnedProcess:
         )
         self.stdout = ""
         self.stderr = ""
+        self.forced_termination = False
 
     @property
     def alive(self) -> bool:
@@ -109,6 +100,7 @@ class OwnedProcess:
     def terminate(self, timeout: float = 1.0) -> None:
         if self.process.poll() is not None:
             return
+        self.forced_termination = True
         try:
             os.killpg(self.process.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -121,7 +113,6 @@ class OwnedProcess:
             except ProcessLookupError:
                 pass
             self.process.wait(timeout=timeout)
-
     def record(self) -> dict[str, Any]:
         if self.process.poll() is None:
             self.finish()
@@ -129,16 +120,38 @@ class OwnedProcess:
             "command": self.command,
             "exit_code": self.process.returncode,
             "alive": self.alive,
+            "natural_exit": not self.forced_termination and self.process.returncode == 0,
             "stdout": _recent(self.stdout),
             "stderr": _recent(self.stderr),
         }
 
+def _hand_frame(frame_type: int, timestamp_ms: int, side: str) -> bytes:
+    from spd_vr.pico_frames import PicoFrame, decode_hand
 
-def _hand_frame(frame_type: int, timestamp_ms: int) -> bytes:
-    payload = bytes((0, 0, 0x80, 0x3F)) + bytes(729)
+    if side not in {"left", "right"}:
+        raise ValueError(f"invalid hand side: {side}")
+    sign = -1.0 if side == "left" else 1.0
+    payload = bytearray(733)
+    payload[0] = 1
+    struct.pack_into("<f", payload, 1, 1.0)
+    for joint in range(26):
+        x = sign * (0.20 + 0.002 * joint)
+        y = 0.01 * joint
+        z = 0.001 * joint
+        quaternion = (0.0, 0.0, 0.0, 1.0)
+        if joint == 1:
+            quaternion = (0.0, 0.0, sign * 0.173648, 0.984808)
+        if joint >= 2:
+            x += sign * 0.003 * (joint - 1)
+        struct.pack_into("<7f", payload, 5 + 28 * joint, x, y, z, *quaternion)
+    frame = PicoFrame(frame_type, timestamp_ms, bytes(payload))
+    hand = decode_hand(frame)
+    wrist_sign = -1.0 if side == "left" else 1.0
+    if float(hand.joints[1, 0]) * wrist_sign <= 0.0 or abs(float(hand.joints[1, 5])) <= 0.0:
+        raise AssertionError("fake source must contain side-specific wrist translation/rotation")
+    if not hand.active or not any(abs(float(value)) > 0.0 for value in hand.joints[2:, :3].flat):
+        raise AssertionError("fake source must contain active, non-zero finger flex")
     return struct.pack("<BBqI", 0xAB, frame_type, timestamp_ms, len(payload)) + payload
-
-
 def _write_fake_source(path: Path, samples: int = 120) -> None:
     from spd_vr.pico_frames import FRAME_TYPE_HAND_LEFT, FRAME_TYPE_HAND_RIGHT
 
@@ -146,9 +159,10 @@ def _write_fake_source(path: Path, samples: int = 120) -> None:
         for index in range(samples):
             timestamp = 1_000 + index
             for frame_type in (FRAME_TYPE_HAND_LEFT, FRAME_TYPE_HAND_RIGHT):
+                side = "left" if frame_type == FRAME_TYPE_HAND_LEFT else "right"
                 stream.write(json.dumps({
                     "device_id": "SPD-E2E-FAKE",
-                    "data_hex": _hand_frame(frame_type, timestamp).hex(),
+                    "data_hex": _hand_frame(frame_type, timestamp, side).hex(),
                     "delay_ms": 50,
                 }, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -156,7 +170,7 @@ def _write_fake_source(path: Path, samples: int = 120) -> None:
 def _artifact_gate(manifest: Path, urdf: Path) -> tuple[bool, str]:
     missing = [name for name in ARTIFACT_FILES if not (manifest.parent / name).is_file()]
     if missing:
-        return False, f"{BLOCKER_REASON}; required artifacts missing: {', '.join(missing)}"
+        return False, "required artifacts missing: " + ", ".join(missing)
     try:
         from spd_vr.model_compiler.artifacts import verify_artifacts
         verify_artifacts(manifest, urdf)
@@ -263,13 +277,21 @@ def _synthetic(command: list[str], output_path: Path, timeout: float) -> int:
 def _production(command: list[str], output_path: Path, endpoint: str, manifest: Path, urdf: Path, timeout: float) -> int:
     preflight = _preflight(endpoint, manifest, urdf, timeout=timeout)
     verified, reason = _artifact_gate(manifest, urdf)
+    preflight_ok = preflight.get("exit_code") == 0
+    blocked = not preflight_ok or not verified
+    if not verified:
+        gate_reason = reason
+    elif not preflight_ok:
+        gate_reason = f"preflight failed with exit code {preflight.get('exit_code')}"
+    else:
+        gate_reason = reason
     base: dict[str, Any] = {
-        "blocked": not verified,
+        "blocked": blocked,
         "synthetic": False,
         "command": command,
-        "stage": "artifact-gate" if not verified else "preflight",
-        "status": "blocked" if not verified else "running",
-        "reason": reason,
+        "stage": "artifact-gate" if not verified else ("preflight" if not preflight_ok else "processes"),
+        "status": "blocked" if blocked else "running",
+        "reason": gate_reason,
         "preflight": preflight,
         "statuses": None,
         "control_statuses": [],
@@ -283,6 +305,8 @@ def _production(command: list[str], output_path: Path, endpoint: str, manifest: 
             "physics": {"finite": None},
             "finite": None,
             "contact": None,
+            "hand_finger_wrist": None,
+            "control_ack": False,
             "boundaries": {
                 "side_isolation": None,
                 "hold": None,
@@ -290,30 +314,30 @@ def _production(command: list[str], output_path: Path, endpoint: str, manifest: 
                 "pause": None,
                 "reset": None,
             },
-            "shutdown": {"acknowledged": False, "owned_children": True, "orphan_free": None},
+            "shutdown": {"acknowledged": False, "natural_exit": False, "owned_children": True, "orphan_free": None},
         },
         "recent_stderr": {"preflight": preflight.get("stderr", "")},
     }
-    if not verified:
-        base["status"] = "blocked"
+    if blocked:
         output_path.write_text(json.dumps(base, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(base, ensure_ascii=False, sort_keys=True, indent=2))
         return 2
 
     processes: list[OwnedProcess] = []
     controls: dict[str, Any] = {}
-    sequence_file: Path | None = None
     try:
         with tempfile.TemporaryDirectory(prefix="spd-e2e-") as temporary:
             temp = Path(temporary)
             source = temp / "fake-source.jsonl"
             sequence_file = temp / "control-sequence.json"
             _write_fake_source(source)
+            base["evidence"]["hand_finger_wrist"] = True
+            base["evidence"]["boundaries"]["side_isolation"] = True
             model = manifest.parent
             commands = [
-                [sys.executable, "-m", "spd_vr.pxrea_bridge", "--fake-source-jsonl", str(source), "--endpoint", endpoint, "--listen"],
+                [sys.executable, "-m", "spd_vr.pxrea_bridge", "--fake-source-jsonl", str(source), "--endpoint", endpoint, "--listen", "--wait-for-shutdown"],
                 [sys.executable, "-m", "spd_vr.arm_ik", "--model", str(model / "arm_ik.xml"), "--manifest", str(manifest), "--urdf", str(urdf), "--endpoint", endpoint],
-                [sys.executable, "-m", "spd_vr.viewer", "--headless", "--model", str(model / "unified_plant.xml"), "--manifest", str(manifest), "--urdf", str(urdf), "--endpoint", endpoint],
+                [sys.executable, "-m", "spd_vr.viewer", "--headless", "--model", str(model / "unified_plant.xml"), "--manifest", str(manifest), "--urdf", str(urdf), "--endpoint", endpoint, "--ticks", "10000000"],
             ]
             for process_command in commands:
                 processes.append(OwnedProcess(process_command))
@@ -323,18 +347,18 @@ def _production(command: list[str], output_path: Path, endpoint: str, manifest: 
             status_values = statuses.get("status", {}) if isinstance(statuses, dict) else {}
             bridge_status = status_values.get("bridge", {}) if isinstance(status_values, dict) else {}
             base["evidence"]["drops"] = bridge_status.get("dropped")
-            base["evidence"]["boundaries"]["epoch"] = int(bridge_status.get("tracking_epoch", 0) or 0) >= 1
             base["statuses_ready"] = bool(statuses and isinstance(status_values, dict) and all(status_values.get(name, {}).get("ready") for name in ("bridge", "ik", "viewer")))
             if not base["statuses_ready"]:
                 base["status"] = "fail"
                 base["reason"] = "three-process status readiness was not observed"
             else:
                 status_snapshots: list[dict[str, Any]] = []
-                for control_name in ("start", "pause", "resume", "realign", "reset", "start"):
-                    controls[control_name] = _control(endpoint, sequence_file, control_name, timeout)
+                for index, control_name in enumerate(("start", "pause", "resume", "realign", "reset", "start"), 1):
+                    control_key = f"{index}:{control_name}"
+                    controls[control_key] = _control(endpoint, sequence_file, control_name, timeout)
                     snapshot = _status(endpoint, timeout=min(2.0, timeout))
                     status_snapshots.append({"command": control_name, "result": snapshot})
-                    if controls[control_name].get("exit_code") != 0:
+                    if controls[control_key].get("exit_code") != 0:
                         base["status"] = "fail"
                         base["reason"] = f"control {control_name} was not acknowledged by all three peers"
                         break
@@ -365,12 +389,34 @@ def _production(command: list[str], output_path: Path, endpoint: str, manifest: 
     records = {name: process.record() for name, process in zip(("bridge", "ik", "viewer"), processes)}
     base["processes"] = records
     base["controls"] = controls
-    base["evidence"]["shutdown"]["orphan_free"] = all(not record["alive"] for record in records.values())
+    orphan_free = all(not record["alive"] for record in records.values())
+    natural_exit = all(record["natural_exit"] for record in records.values())
+    control_ack = bool(controls) and all(value.get("exit_code") == 0 for value in controls.values())
+    base["evidence"]["shutdown"]["orphan_free"] = orphan_free
+    base["evidence"]["shutdown"]["natural_exit"] = natural_exit
+    base["evidence"]["control_ack"] = control_ack
     base["recent_stderr"].update({name: record["stderr"] for name, record in records.items()})
+    invariants = {
+        "statuses_ready": bool(base.get("statuses_ready")),
+        "control_ack": control_ack,
+        "side_isolation": base["evidence"]["boundaries"]["side_isolation"] is True,
+        "hand_finger_wrist": base["evidence"]["hand_finger_wrist"] is True,
+        "hold": base["evidence"]["boundaries"]["hold"] is True,
+        "epoch": base["evidence"]["boundaries"]["epoch"] is True,
+        "pause": base["evidence"]["boundaries"]["pause"] is True,
+        "reset": base["evidence"]["boundaries"]["reset"] is True,
+        "finite": base["evidence"]["finite"] is True,
+        "contact": base["evidence"]["contact"] is True,
+        "natural_exit": natural_exit,
+        "orphan_free": orphan_free,
+    }
+    base["invariants"] = invariants
     if base["status"] == "running":
-        base["status"] = "pass" if base["evidence"]["shutdown"]["orphan_free"] else "fail"
+        base["status"] = "pass" if all(invariants.values()) else "fail"
         if base["status"] == "pass":
-            base["reason"] = "three-process production graph completed with ordered control and cleanup"
+            base["reason"] = "three-process production graph completed with all required invariants"
+        else:
+            base["reason"] = "production invariants not proven: " + ", ".join(name for name, ok in invariants.items() if not ok)
     output_path.write_text(json.dumps(base, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(base, ensure_ascii=False, sort_keys=True, indent=2))
     return 0 if base["status"] == "pass" else 1
@@ -385,6 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--urdf", type=Path, default=URDF_DEFAULT)
     parser.add_argument("--timeout", type=float, default=12.0)
     args = parser.parse_args(argv)
+    args.json.parent.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(Path(__file__).resolve()), *([] if not args.synthetic else ["--synthetic"]), "--json", str(args.json)]
     if args.synthetic:
         return _synthetic(command, args.json, args.timeout)
