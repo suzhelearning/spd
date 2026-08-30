@@ -33,6 +33,14 @@ from .pxrea_sdk import (
 )
 from .wire import STATUS_BRIDGE_KEY, TRACKING_KEY, TrackingFrame, encode_tracking
 
+_LIFECYCLE_TYPES = {
+    PXREA_SERVER_CONNECT,
+    PXREA_SERVER_DISCONNECT,
+    PXREA_DEVICE_FIND,
+    PXREA_DEVICE_MISSING,
+    PXREA_DEVICE_CONNECT,
+}
+
 
 @dataclass(frozen=True)
 class BridgeStatus:
@@ -92,9 +100,11 @@ class BridgeCore:
 
     def status_json(self, dropped: int = 0) -> str:
         return json.dumps(self.status(dropped), sort_keys=True, separators=(",", ":"))
-
     def accept_event(self, event: CallbackEvent | tuple[str, bytes] | Any) -> list[bytes]:
         device_id, raw, event_type = self._event_parts(event)
+        if event_type not in _LIFECYCLE_TYPES and not device_id:
+            self._invalid_payloads += 1
+            return []
         if event_type in {
             PXREA_SERVER_CONNECT,
             PXREA_SERVER_DISCONNECT,
@@ -177,6 +187,23 @@ def _identity_head() -> tuple[float, ...]:
     return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
 
 
+def _install_signal_handlers(stop: threading.Event) -> dict[int, Any]:
+    old_handlers: dict[int, Any] = {}
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            old_handlers[sig] = signal.signal(sig, lambda *_: stop.set())
+    except Exception:
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
+        raise
+    return old_handlers
+
+
+def _restore_signal_handlers(old_handlers: dict[int, Any]) -> None:
+    for sig, handler in old_handlers.items():
+        signal.signal(sig, handler)
+
+
 class BridgeWorker:
     """Run BridgeCore on a worker thread and keep publication out of callbacks."""
 
@@ -257,27 +284,36 @@ def _run_fake_source(
     path: Path,
     publisher: Callable[[bytes], None] | None = None,
     status_publisher: Callable[[bytes], None] | None = None,
+    *,
+    listen: bool = False,
+    endpoint: str = "tcp/127.0.0.1:7447",
+    key: str = TRACKING_KEY,
 ) -> int:
     queue = BoundedCallbackQueue()
     core = BridgeCore()
     node = None
     worker = None
+    stop = threading.Event()
+    old_handlers: dict[int, Any] = {}
     try:
         if publisher is None or status_publisher is None:
             from .zenoh_transport import ZenohNode, peer_config
 
-            node = ZenohNode(peer_config(listen=False, endpoint="tcp/127.0.0.1:7447"))
+            node = ZenohNode(peer_config(listen=listen, endpoint=endpoint))
             if publisher is None:
-                publisher = node.declare_publisher(TRACKING_KEY).put
+                publisher = node.declare_publisher(key).put
             if status_publisher is None:
                 status_publisher = node.declare_publisher(STATUS_BRIDGE_KEY).put
+        old_handlers = _install_signal_handlers(stop)
         core.set_ready()
         worker = BridgeWorker(queue, core, publisher, status_publisher)
         worker.start()
         for event, delay_ms in _read_fake_events(path):
+            if stop.is_set():
+                break
             queue.put(event)
             if delay_ms:
-                time.sleep(delay_ms / 1000.0)
+                stop.wait(delay_ms / 1000.0)
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -287,6 +323,7 @@ def _run_fake_source(
             worker.stop()
         if node is not None:
             node.close()
+        _restore_signal_handlers(old_handlers)
     print(core.status_json(queue.dropped_overflow))
     return 0
 
@@ -311,8 +348,7 @@ def _run_sdk(args: argparse.Namespace) -> int:
         worker = BridgeWorker(queue, core, publisher.put, status_publisher.put)
         client = PXREAClient.load_library(args.sdk_library)
         client.queue = queue
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            old_handlers[sig] = signal.signal(sig, lambda *_: stop.set())
+        old_handlers = _install_signal_handlers(stop)
         worker.start()
         with client:
             core.set_ready()
@@ -328,8 +364,7 @@ def _run_sdk(args: argparse.Namespace) -> int:
             client.close()
         if node is not None:
             node.close()
-        for sig, handler in old_handlers.items():
-            signal.signal(sig, handler)
+        _restore_signal_handlers(old_handlers)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -342,7 +377,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--listen", action="store_true")
     args = parser.parse_args(argv)
     if args.fake_source_jsonl is not None:
-        return _run_fake_source(args.fake_source_jsonl)
+        return _run_fake_source(
+            args.fake_source_jsonl,
+            listen=args.listen,
+            endpoint=args.endpoint,
+            key=args.key,
+        )
     return _run_sdk(args)
 
 
