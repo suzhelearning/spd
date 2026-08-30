@@ -1,8 +1,17 @@
+import json
+
 import numpy as np
 
 import spd_vr.arm_ik as arm_ik
 from spd_vr.arm_ik import DualArmController, build_synthetic_fixture
-from spd_vr.wire import ArmTargetHoldReason, ControlCommand, ControlFrame, TrackingFrame
+from spd_vr.wire import (
+    ARM_TARGETS_KEY,
+    STATUS_IK_KEY,
+    ArmTargetHoldReason,
+    ControlCommand,
+    ControlFrame,
+    TrackingFrame,
+)
 
 
 def frame(sequence=1, timestamp=1_000_000_000):
@@ -67,16 +76,26 @@ def test_reset_does_not_drop_queued_shutdown():
 def test_production_ik_uses_connect_only_peer_config(monkeypatch):
     controller, _, _ = build_synthetic_fixture()
     seen: dict[str, object] = {}
+    class Publisher:
+        def __init__(self):
+            self.payloads = []
+
+        def put(self, payload):
+            self.payloads.append(payload)
 
     class FakeNode:
         def __init__(self, config):
             seen["config"] = config
+            self.publishers = {}
+            seen["publishers"] = self.publishers
+
         def declare_latest_subscriber(self, *args):
             return object()
 
-        def declare_publisher(self, *args):
-            return object()
-
+        def declare_publisher(self, key, *args, **kwargs):
+            publisher = Publisher()
+            self.publishers[key] = publisher
+            return publisher
 
         def close(self):
             seen["closed"] = True
@@ -95,4 +114,14 @@ def test_production_ik_uses_connect_only_peer_config(monkeypatch):
     result = arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"])
     assert result == 0
     assert seen["listen"] is False
+    assert set(seen["publishers"]) == {ARM_TARGETS_KEY, STATUS_IK_KEY}
+    status_payloads = seen["publishers"][STATUS_IK_KEY].payloads
+    assert status_payloads
+    status = json.loads(status_payloads[-1])
+    assert status["status"] == "ready"
+    assert status["ready"] is True
+    assert status["running"] is True
+    assert status["paused"] is False
+    assert status["tick_count"] == 0
+    assert status["sequence"] == 0
     assert seen["closed"] is True

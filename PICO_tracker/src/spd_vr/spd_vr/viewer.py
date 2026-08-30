@@ -818,13 +818,18 @@ class ViewerRuntime:
             for mailbox in (getattr(self.plant, "_arm_wire", None), getattr(self.plant, "_tracking_wire", None))
             if mailbox is not None
         )
-        tracking = getattr(getattr(self.plant, "_tracking_mailbox", None), "frame", None)
-        source = getattr(tracking, "source_timestamp_ns", None)
+        tracking_mailbox = getattr(self.plant, "_tracking_mailbox", None)
+        tracking = getattr(tracking_mailbox, "frame", None)
         bridge = getattr(tracking, "bridge_monotonic_ns", None)
-        source_latency = round((now_ns - int(source)) / 1.0e6, 3) if source is not None and 0 <= int(source) <= now_ns else "unknown"
-        bridge_latency = round((int(bridge) - int(source)) / 1.0e6, 3) if bridge is not None and source is not None and int(bridge) >= int(source) else "unknown"
-        bridge_status = self._status.get("bridge", {}).get("ready", "unknown")
-        ik_status = self._status.get("ik", {}).get("running", "unknown")
+        arrival_ns = getattr(tracking_mailbox, "arrival_ns", None)
+        source_latency = "unknown"
+        bridge_latency = (
+            round((int(arrival_ns) - int(bridge)) / 1.0e6, 3)
+            if arrival_ns is not None and bridge is not None and int(arrival_ns) >= int(bridge)
+            else "unknown"
+        )
+        bridge_status = self._status.get("bridge", {}).get("status", self._status.get("bridge", {}).get("ready", "unknown"))
+        ik_status = self._status.get("ik", {}).get("status", self._status.get("ik", {}).get("running", "unknown"))
         return {
             "state": self.session.state.value,
             "zenoh": self._zenoh_status(),

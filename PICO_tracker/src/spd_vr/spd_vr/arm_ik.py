@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+import json
 from dataclasses import dataclass
 import sys
 import time
@@ -24,6 +25,7 @@ from .qp_arm import ArmQPSolver
 from .wire import (
     ARM_TARGETS_KEY,
     CONTROL_KEY,
+    STATUS_IK_KEY,
     TRACKING_KEY,
     ArmTargetFrame,
     ArmTargetHoldReason,
@@ -118,6 +120,7 @@ class DualArmController:
         if self.period_ns <= 0:
             raise ValueError("period_ns must be positive")
         self.publisher = publisher
+        self._status_publisher: Any | None = None
         self.tracking_mailbox: LatestSample[TrackingFrame] = LatestSample()
         self.control_mailbox = _OrderedControlQueue()
         self._tracking_generation = 0
@@ -138,12 +141,29 @@ class DualArmController:
     def running(self) -> bool:
         return self._running
 
+    def _status(self, state: str | None = None) -> dict[str, Any]:
+        if state is None:
+            state = "shutdown" if not self._running else ("paused" if self._paused else "running")
+        return {
+            "status": state,
+            "ready": state != "shutdown",
+            "running": self._running,
+            "paused": self._paused,
+            "tick_count": self.tick_count,
+            "sequence": self._sequence,
+        }
+
+    def _publish_status(self, state: str | None = None) -> None:
+        if self._status_publisher is not None:
+            self._status_publisher.put(json.dumps(self._status(state), separators=(",", ":")).encode())
+
     def connect(self, node: ZenohNode) -> None:
         """Attach existing Zenoh ownership to tracking/control input and target output."""
         node.declare_latest_subscriber(TRACKING_KEY, decode_tracking, self.tracking_mailbox)
         node.declare_latest_subscriber(CONTROL_KEY, decode_control, self.control_mailbox)
         self.publisher = node.declare_publisher(ARM_TARGETS_KEY)
-
+        self._status_publisher = node.declare_publisher(STATUS_IK_KEY)
+        self._publish_status("ready")
     def accept_tracking(self, frame: TrackingFrame | bytes | bytearray | memoryview) -> bool:
         decoded = decode_tracking(frame) if isinstance(frame, (bytes, bytearray, memoryview)) else frame
         if not isinstance(decoded, TrackingFrame):
@@ -193,6 +213,7 @@ class DualArmController:
             self._right_qdot.fill(0.0)
         elif command is ControlCommand.SHUTDOWN:
             self._running = False
+        self._publish_status()
         return True
     def _poll_mailboxes(self) -> None:
         for control in self.control_mailbox.drain():
@@ -283,6 +304,7 @@ class DualArmController:
             self.publisher.put(encode_arm_target(frame))
         self.tick_count += 1
         self._last_tick_ns = now
+        self._publish_status()
         return frame
 
     def run(

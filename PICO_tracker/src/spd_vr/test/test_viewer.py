@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
+import numpy as np
+
 from spd_vr.viewer import PlantController, ViewerRuntime
-from spd_vr.viewer_window import ViewerWindow
-from spd_vr.wire import CONTROL_KEY, ControlCommand, ControlFrame
 from spd_vr.zenoh_transport import CONTROL_CONGESTION_CONTROL
+from spd_vr.viewer_window import ViewerWindow
+from spd_vr.wire import CONTROL_KEY, ControlCommand, ControlFrame, TrackingFrame
 
 
 class Clock:
@@ -143,3 +145,29 @@ def test_viewer_window_uses_real_handle_text_surface_for_hud():
     assert handle.texts[2] == "SPD VR"
     assert "arm_valid_mask: 3" in handle.texts[3]
     assert "physics_hz: 480" in handle.texts[3]
+
+
+def test_hud_keeps_pico_source_latency_unknown_and_uses_bridge_arrival_clock():
+    plant = PlantController.synthetic_fixture()
+    runtime = ViewerRuntime(plant, headless=True, clock_ns=lambda: 1_000, sleep=lambda _: None)
+    hand = np.zeros((26, 7), dtype=np.float32)
+    hand[:, 6] = 1.0
+    frame = TrackingFrame(
+        sequence=1,
+        tracking_epoch=1,
+        source_timestamp_ns=10,
+        bridge_monotonic_ns=100,
+        left_active=False,
+        right_active=False,
+        head_valid=True,
+        left_scale=1.0,
+        right_scale=1.0,
+        head_pose=np.array((0, 0, 1.6, 0, 0, 0, 1), dtype=np.float32),
+        left_hand=hand,
+        right_hand=hand,
+    )
+    plant.submit_tracking(frame, now_ns=200)
+    values = runtime._hud_values(SimpleNamespace(finite=True, arm_valid_mask=0, hand_valid_mask=0), 1_000)
+    assert values["source_latency_ms"] == "unknown"
+    assert values["bridge_latency_ms"] == 0.0
+    plant.close()
