@@ -223,9 +223,14 @@ def _source_and_mesh(mesh: MeshGeometry | trimesh.Trimesh) -> tuple[trimesh.Trim
 
 def _canonical_mesh_arrays(vertices: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     vertices = np.asarray(vertices, dtype="<f8")
-    faces = np.asarray(faces, dtype=np.int64)
-    if vertices.ndim != 2 or vertices.shape[1] != 3 or faces.ndim != 2 or faces.shape[1] != 3:
-        raise CollisionError("CoACD piece must be triangular vertices/faces arrays")
+    raw_faces = np.asarray(faces)
+    if vertices.ndim != 2 or vertices.shape[1] != 3:
+        raise CollisionError("CoACD piece vertices must have shape (N,3)")
+    if raw_faces.ndim != 2 or raw_faces.shape[1] != 3 or not np.isfinite(raw_faces).all():
+        raise CollisionError("CoACD piece faces must be finite triangles")
+    faces = np.asarray(raw_faces, dtype=np.int64)
+    if not np.array_equal(raw_faces, faces):
+        raise CollisionError("CoACD piece face indices must be integers")
     if len(vertices) == 0 or len(faces) == 0 or not np.isfinite(vertices).all():
         raise CollisionError("CoACD piece is empty or non-finite")
     if (faces < 0).any() or (faces >= len(vertices)).any():
