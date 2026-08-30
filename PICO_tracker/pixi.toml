@@ -97,3 +97,4 @@ spd-model = "python -m spd_vr.model_compiler.cli --urdf ../assets/tianji_wuji2/t
 spd-teleop = "bash scripts/start_spd_vr.sh"
 spd-teleop-status = "spd-status"
 spd-teleop-stop = "bash scripts/stop_spd_vr.sh"
+spd-teleop-e2e = "python scripts/test_spd_teleop_e2e.py --json /tmp/spd-teleop-e2e.json"
