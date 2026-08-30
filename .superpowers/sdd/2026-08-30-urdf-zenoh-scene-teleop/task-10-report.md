@@ -300,3 +300,47 @@ The Task7 artifact blocker remains unchanged: `Link_Base.STL` CoACD arm/base
 p95 `0.036785362 m` exceeds the fixed `0.003 m` threshold. The production
 viewer remains manifest/hash verified and fail-closed; synthetic mode remains
 explicit and non-authoritative.
+
+## Review round 5 final evidence
+
+```text
+pixi run python -m py_compile src/spd_vr/spd_vr/session_state.py src/spd_vr/spd_vr/viewer_window.py src/spd_vr/spd_vr/viewer.py src/spd_vr/spd_vr/simulator.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/zenoh_transport.py src/spd_vr/spd_vr/arm_ik.py src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py src/spd_vr/test/test_zenoh_transport.py
+```
+
+```text
+(no output; exit 0)
+```
+
+```text
+pixi run python -m pytest src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py src/spd_vr/test/test_zenoh_transport.py -q
+```
+
+```text
+............................                                             [100%]
+=============================== warnings summary ===============================
+.pixi/envs/default/lib/python3.11/site-packages/hppfcl/__init__.py:3
+  Warning: Please update your 'hppfcl' imports to 'coal'
+
+test/test_arm_ik.py: 10 warnings
+  Warning: "polish" is deprecated. Please use "polishing" instead.
+
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+  Warning: The default value of raise_error will change to True in the future.
+
+28 passed, 14 warnings in 0.56s
+```
+
+```text
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
+```
+
+```text
+headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
+```
+
+Task7 remains blocked at the fixed artifact quality gate: `Link_Base.STL`
+CoACD arm/base p95 `0.036785362 m` exceeds `0.003 m`. Production viewer
+manifest/hash verification remains fail-closed; the explicit synthetic fixture
+is not authoritative artifact evidence.

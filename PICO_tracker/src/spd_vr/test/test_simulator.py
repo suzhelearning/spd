@@ -84,12 +84,12 @@ def test_fresh_alignment_requires_valid_arm_and_hand_from_new_generation():
     )
     plant = PlantController.synthetic_fixture(hand_retargeter=Retarget())
     session = SessionController(plant)
-    session.apply(ControlFrame(1, 1, ControlCommand.START))
-    plant.submit_tracking(tracking, now_ns=2)
-    plant.physics_tick(2)
+    session.apply(ControlFrame(1, 10, ControlCommand.START))
+    plant.submit_tracking(tracking, now_ns=10)
+    plant.physics_tick(10)
     assert plant.requires_fresh_alignment
-    plant.submit_arm_target(arm_frame(plant, 1, 3), now_ns=3)
-    step = plant.physics_tick(3)
+    plant.submit_arm_target(arm_frame(plant, 1, 3, control_timestamp_ns=10), now_ns=11)
+    step = plant.physics_tick(11)
     assert not plant.requires_fresh_alignment
     assert step.arm_valid_mask == 3
     assert step.hand_valid_mask == 3

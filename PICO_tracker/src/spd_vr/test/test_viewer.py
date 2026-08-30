@@ -106,6 +106,10 @@ def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes():
     node = Node()
     runtime.connect(node)
     assert node.publisher_kwargs["congestion_control"] is CONTROL_CONGESTION_CONTROL
+    assert runtime._zenoh_status() == "connected_unmatched"
+    runtime._status_mailboxes["bridge"].put({"ready": True})
+    runtime._poll_status()
+    assert runtime._zenoh_status() == "remote_status"
     runtime.send_control(ControlCommand.START)
     assert node.publisher.payloads
     node.mailboxes[CONTROL_KEY].put(ControlFrame(2, 2, ControlCommand.PAUSE))

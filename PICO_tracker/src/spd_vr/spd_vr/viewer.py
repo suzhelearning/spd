@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 import queue
@@ -19,6 +20,8 @@ from .session_state import SessionController, SessionState
 from .wire import (
     ARM_TARGETS_KEY,
     CONTROL_KEY,
+    STATUS_BRIDGE_KEY,
+    STATUS_IK_KEY,
     TRACKING_KEY,
     ControlCommand,
     ControlFrame,
@@ -32,6 +35,12 @@ from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode
 
 PHYSICS_HZ = 480
 RENDER_HZ = 60
+def _decode_status(payload: bytes) -> Mapping[str, Any]:
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"status": "invalid"}
+    return value if isinstance(value, Mapping) else {"status": "invalid"}
 INPUT_STALE_NS = 50_000_000
 TIMESTEP_NS = 1_000_000_000 // PHYSICS_HZ
 
@@ -243,6 +252,8 @@ class PlantController:
         self._hand_arrival = {"left": None, "right": None}
         self._applied_arm_generation = 0
         self._applied_tracking_generation = 0
+        self._tracking_arrival_ns: list[int] = []
+        self._arm_arrival_ns: list[int] = []
         self._alignment_generation = 0
         self._alignment_ready = {"left": True, "right": True}
         self._fresh_arm_valid = {"left": True, "right": True}
@@ -418,12 +429,12 @@ class PlantController:
             return self._arm_generation
         self._last_arm_sequence = key
         self._arm_generation += 1
+        arrival_ns = int(time.monotonic_ns() if now_ns is None else now_ns)
+        self._arm_arrival_ns.append(arrival_ns)
+        if len(self._arm_arrival_ns) > 32:
+            del self._arm_arrival_ns[:-32]
         with self._arm_lock:
-            self._arm_mailbox = _ArmMailbox(
-                self._arm_generation,
-                frame,
-                int(time.monotonic_ns() if now_ns is None else now_ns),
-            )
+            self._arm_mailbox = _ArmMailbox(self._arm_generation, frame, arrival_ns)
         return self._arm_generation
 
     on_arm_target = submit_arm_target
@@ -444,12 +455,12 @@ class PlantController:
             return self._tracking_generation
         self._last_tracking_sequence = key
         self._tracking_generation += 1
+        arrival_ns = int(time.monotonic_ns() if now_ns is None else now_ns)
+        self._tracking_arrival_ns.append(arrival_ns)
+        if len(self._tracking_arrival_ns) > 32:
+            del self._tracking_arrival_ns[:-32]
         with self._tracking_lock:
-            self._tracking_mailbox = _TrackingMailbox(
-                self._tracking_generation,
-                frame,
-                int(time.monotonic_ns() if now_ns is None else now_ns),
-            )
+            self._tracking_mailbox = _TrackingMailbox(self._tracking_generation, frame, arrival_ns)
         return self._tracking_generation
 
     on_pico_hands = submit_tracking
@@ -630,9 +641,10 @@ class PlantController:
             arm_mailbox = self._arm_mailbox
         if arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
             frame = arm_mailbox.frame
+            frame_token = int(frame.control_timestamp_ns)
             token_ok = (
                 not self._fresh_alignment_required
-                or int(frame.control_timestamp_ns) >= self._required_control_timestamp_ns
+                or (frame_token > 1 and frame_token == self._required_control_timestamp_ns)
             )
             if token_ok:
                 self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
@@ -698,6 +710,12 @@ class ViewerRuntime:
         self.session = session or SessionController(plant)
         self._publisher: Any | None = None
         self._node: Any | None = None
+        self._status_mailboxes = {
+            "bridge": LatestSample(),
+            "ik": LatestSample(),
+        }
+        self._status_generations = {"bridge": 0, "ik": 0}
+        self._status: dict[str, Mapping[str, Any]] = {}
         if window is None:
             window = ViewerWindow(
                 getattr(plant, "model", None),
@@ -720,6 +738,8 @@ class ViewerRuntime:
                 CONTROL_KEY,
                 congestion_control=CONTROL_CONGESTION_CONTROL,
             )
+            node.declare_latest_subscriber(STATUS_BRIDGE_KEY, _decode_status, self._status_mailboxes["bridge"])
+            node.declare_latest_subscriber(STATUS_IK_KEY, _decode_status, self._status_mailboxes["ik"])
             connect = getattr(self.plant, "connect", None)
             if connect is None:
                 raise TypeError("plant does not support Zenoh connections")
@@ -757,20 +777,31 @@ class ViewerRuntime:
 
             self._publisher.put(encode_control(frame))
         return self.session.apply(frame)
+
+    def _poll_status(self) -> None:
+        for name, mailbox in self._status_mailboxes.items():
+            sample = mailbox.take_new(self._status_generations[name])
+            if sample is not None:
+                self._status_generations[name], value = sample
+                self._status[name] = value
     @staticmethod
     def _timing_stats(samples: list[int]) -> tuple[Any, Any]:
         if not samples:
             return "unknown", "unknown"
         values = np.asarray(samples, dtype=np.float64)
         return round(float(np.percentile(values, 95)) / 1.0e6, 3), round(float(np.max(values)) / 1.0e6, 3)
-
     def _zenoh_status(self) -> str:
         if self._publisher is None:
             return "disabled"
-        try:
-            return "matched" if bool(self._publisher.matching_status.matching) else "connected_unmatched"
-        except Exception:
+        if self._status:
+            return "remote_status"
+        return "connected_unmatched"
+    @staticmethod
+    def _observed_rate(arrivals: list[int]) -> Any:
+        if len(arrivals) < 2 or arrivals[-1] <= arrivals[0]:
             return "unknown"
+        return round((len(arrivals) - 1) * 1.0e9 / (arrivals[-1] - arrivals[0]), 3)
+
 
     def _hud_values(self, result: Any, now_ns: int) -> dict[str, Any]:
         arrivals = []
@@ -787,6 +818,13 @@ class ViewerRuntime:
             for mailbox in (getattr(self.plant, "_arm_wire", None), getattr(self.plant, "_tracking_wire", None))
             if mailbox is not None
         )
+        tracking = getattr(getattr(self.plant, "_tracking_mailbox", None), "frame", None)
+        source = getattr(tracking, "source_timestamp_ns", None)
+        bridge = getattr(tracking, "bridge_monotonic_ns", None)
+        source_latency = round((now_ns - int(source)) / 1.0e6, 3) if source is not None and 0 <= int(source) <= now_ns else "unknown"
+        bridge_latency = round((int(bridge) - int(source)) / 1.0e6, 3) if bridge is not None and source is not None and int(bridge) >= int(source) else "unknown"
+        bridge_status = self._status.get("bridge", {}).get("ready", "unknown")
+        ik_status = self._status.get("ik", {}).get("running", "unknown")
         return {
             "state": self.session.state.value,
             "zenoh": self._zenoh_status(),
@@ -805,13 +843,13 @@ class ViewerRuntime:
             "drops": drops,
             "invalid": getattr(self.plant, "invalid_input_count", "unknown"),
             "sdk_status": "unknown",
-            "bridge_status": "unknown",
-            "ik_status": "unknown",
-            "tracking_rate_hz": getattr(self.plant, "tracking_rate_hz", "unknown"),
-            "arm_target_rate_hz": getattr(self.plant, "arm_target_rate_hz", "unknown"),
-            "source_latency_ms": "unknown",
-            "bridge_latency_ms": "unknown",
-            "contact": "unknown",
+            "bridge_status": bridge_status,
+            "ik_status": ik_status,
+            "tracking_rate_hz": self._observed_rate(getattr(self.plant, "_tracking_arrival_ns", [])),
+            "arm_target_rate_hz": self._observed_rate(getattr(self.plant, "_arm_arrival_ns", [])),
+            "source_latency_ms": source_latency,
+            "bridge_latency_ms": bridge_latency,
+            "contact": getattr(getattr(self.plant, "data", None), "ncon", "unknown"),
             "artifact_hash": getattr(self.plant, "artifact_hash", "unknown"),
         }
     def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:
@@ -845,6 +883,7 @@ class ViewerRuntime:
                 if len(self._physics_timing_ns) > 1024:
                     del self._physics_timing_ns[:-1024]
                 count += 1
+                self._poll_status()
                 if hasattr(self.plant, "requires_fresh_alignment") and not self.plant.requires_fresh_alignment:
                     self.session.mark_aligned()
                 if not self.headless and now >= render_deadline:
