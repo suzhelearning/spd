@@ -136,12 +136,20 @@ def _manifest_hand_contract(
     actual_hash = hashlib.sha256(urdf.read_bytes()).hexdigest()
     if not isinstance(expected_hash, str) or actual_hash != expected_hash:
         raise ValueError("authoritative URDF hash mismatch")
+    expected_manifest_hash = document.get("manifest_sha256")
+    normalized = dict(document)
+    normalized["manifest_sha256"] = ""
+    actual_manifest_hash = hashlib.sha256(
+        yaml.safe_dump(normalized, sort_keys=True, allow_unicode=True).encode("utf-8")
+    ).hexdigest()
+    if not isinstance(expected_manifest_hash, str) or actual_manifest_hash != expected_manifest_hash:
+        raise ValueError("model manifest hash mismatch")
     hand_order = document.get("hand_joint_order")
     if not isinstance(hand_order, dict):
         raise ValueError("manifest hand_joint_order is missing")
+    entries = document["joints"]
     actuator_order = document.get("actuator_order")
     by_actuator = {entry["actuator"]: entry for entry in entries}
-
     def side_order(side: str) -> list[str]:
         names = hand_order.get(side)
         if not isinstance(names, list) or len(names) != 20 or len(set(names)) != 20:
@@ -291,16 +299,53 @@ class WujiRetargetPair:
 
     @staticmethod
     def _resilient_input(frame: PicoHandFrame | dict[str, Any] | Any) -> PicoHandsInput:
-        try:
+        """Validate each side independently without retaining malformed data."""
+        if not isinstance(frame, (PicoHandFrame, dict)):
             return PicoHandsInput(frame)
-        except Exception:
-            if not isinstance(frame, PicoHandFrame):
-                raise
-            # Keep side isolation when one raw hand is malformed; each side's
-            # transformation is still validated by get_side_fingers_data().
-            input_frame = PicoHandsInput()
-            input_frame._frame = frame
-            return input_frame
+        raw = frame if isinstance(frame, PicoHandFrame) else PicoHandFrame(
+            frame["left_hand"],
+            frame["right_hand"],
+            bool(frame.get("left_active", True)),
+            bool(frame.get("right_active", True)),
+            int(frame.get("tracking_epoch", 0)),
+            int(frame.get("sequence_id", 0)),
+            int(frame.get("timestamp_ns", 0)),
+            frame.get("left_scale", 1.0),
+            frame.get("right_scale", 1.0),
+        )
+
+        def checked(value: Any, name: str) -> tuple[np.ndarray, bool]:
+            try:
+                return PicoHandsInput._array(value, name), True
+            except (TypeError, ValueError):
+                safe = np.zeros((26, 7), dtype=np.float64)
+                safe[:, 6] = 1.0
+                return safe, False
+
+        left, left_ok = checked(raw.left_hand, "left_hand")
+        right, right_ok = checked(raw.right_hand, "right_hand")
+        try:
+            left_scale = PicoHandsInput._scale(raw.left_scale, "left_scale")
+            left_scale_ok = True
+        except (TypeError, ValueError):
+            left_scale, left_scale_ok = 1.0, False
+        try:
+            right_scale = PicoHandsInput._scale(raw.right_scale, "right_scale")
+            right_scale_ok = True
+        except (TypeError, ValueError):
+            right_scale, right_scale_ok = 1.0, False
+        safe = PicoHandFrame(
+            left,
+            right,
+            bool(raw.left_active and left_ok and left_scale_ok),
+            bool(raw.right_active and right_ok and right_scale_ok),
+            int(raw.tracking_epoch),
+            int(raw.sequence_id),
+            int(raw.timestamp_ns),
+            left_scale,
+            right_scale,
+        )
+        return PicoHandsInput(safe)
 
     def retarget(self, frame: PicoHandFrame | dict[str, Any] | Any) -> RetargetedHands:
         """Retarget both active sides while holding only failed/inactive sides."""

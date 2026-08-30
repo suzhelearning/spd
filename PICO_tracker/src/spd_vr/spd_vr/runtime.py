@@ -225,17 +225,6 @@ def run_runtime(
     if not 1 <= int(arm_bind_port) <= 65535:
         raise ValueError("arm_bind_port must be between 1 and 65535")
 
-    mailbox: LiveInputMailbox | None = None
-    hand_retargeter: Any = _MockRetargeter()
-    if not mock:
-        from .retarget_pair import WujiRetargetPair
-
-        config_dir = Path(__file__).resolve().parents[1] / "config"
-        hand_retargeter = WujiRetargetPair(
-            config_dir / "wuji2_pico_left.yaml",
-            config_dir / "wuji2_pico_right.yaml",
-        )
-
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     task_spec = get_task(scene, task)
@@ -243,6 +232,19 @@ def run_runtime(
     generated = Path(__file__).resolve().parents[1] / "generated"
     urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
     verified = verify_artifacts(generated / "model_manifest.yaml", urdf)
+    mailbox: LiveInputMailbox | None = None
+    hand_retargeter: Any = _MockRetargeter()
+    if not mock:
+        from .retarget_pair import WujiRetargetPair
+
+        config_dir = Path(__file__).resolve().parents[1] / "config"
+        hand_retargeter = WujiRetargetPair.from_manifest(
+            config_dir / "wuji2_pico_left.yaml",
+            config_dir / "wuji2_pico_right.yaml",
+            verified.manifest_path,
+            urdf,
+        )
+
     base_model = verified.full_model
     model_path = output / "tianji_wuji2_spd_scene.xml"
     write_scene_model(base_model, scene_result, model_path)

@@ -1,8 +1,12 @@
+import hashlib
+import yaml
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from spd_vr.pico_hands import PICO_TO_MEDIAPIPE, PicoHandFrame
+import spd_vr.retarget_pair as retarget_pair_module
 from spd_vr.retarget_pair import HandHoldReason, WujiRetargetPair
 
 
@@ -128,3 +132,73 @@ def test_manifest_order_clamps_finite_outputs_and_resets_each_epoch():
     )
     assert epoch_reset.left_valid and epoch_reset.right_valid
     assert left.reset_count == right.reset_count == 2
+
+
+def test_invalid_left_hand_or_scale_holds_left_but_keeps_right():
+    names = [f"joint_{index}" for index in range(20)]
+    pair = WujiRetargetPair(
+        FakeRetargeter(),
+        FakeRetargeter(),
+        left_actuator_joint_names=names,
+        right_actuator_joint_names=names,
+    )
+    frame = _frame(sequence_id=1)
+    left = frame.left_hand.copy()
+    left[0, 0] = np.nan
+    frame = PicoHandFrame(
+        left, frame.right_hand, tracking_epoch=1, sequence_id=1, left_scale=-1.0
+    )
+    result = pair.retarget(frame)
+    assert result.left_valid is False
+    assert result.left_hold_reason is HandHoldReason.INACTIVE
+    assert result.right_valid is True
+
+
+def test_from_manifest_reads_validated_joint_entries(monkeypatch, tmp_path):
+    names = [f"joint_{index}" for index in range(20)]
+    entries = [
+        {
+            "index": index,
+            "side": side,
+            "group": "hand",
+            "joint": f"{side}_{name}",
+            "actuator": f"{side}_{name}_position",
+            "qpos_address": index,
+            "dof_address": index,
+            "range": [-1.0, 1.0],
+            "velocity_limit": None,
+        }
+        for side in ("left", "right")
+        for index, name in enumerate(names)
+    ]
+    document = {
+        "source": {"urdf": "hand.urdf", "urdf_sha256": ""},
+        "hand_joint_order": {
+            "left": [f"left_{name}" for name in names],
+            "right": [f"right_{name}" for name in names],
+        },
+        "actuator_order": [entry["actuator"] for entry in entries],
+        "joints": entries,
+        "manifest_sha256": "",
+    }
+    urdf = tmp_path / "hand.urdf"
+    urdf.write_bytes(b"authoritative")
+    document["source"]["urdf_sha256"] = hashlib.sha256(urdf.read_bytes()).hexdigest()
+    document["manifest_sha256"] = hashlib.sha256(
+        yaml.safe_dump(document, sort_keys=True, allow_unicode=True).encode("utf-8")
+    ).hexdigest()
+    def make_fake(config, hand_side):
+        fake = FakeRetargeter()
+        fake.optimizer.robot.dof_joint_names = [f"{hand_side}_{name}" for name in names]
+        return fake
+
+    monkeypatch.setattr(retarget_pair_module, "Retargeter", SimpleNamespace(
+        from_config=make_fake
+    ))
+    monkeypatch.setattr(retarget_pair_module, "load_manifest", lambda _: document, raising=False)
+    monkeypatch.setattr("spd_vr.manifest.load_manifest", lambda _: document)
+    pair = WujiRetargetPair.from_manifest({}, {}, tmp_path / "model_manifest.yaml", urdf)
+    assert pair._left_perm.shape == pair._right_perm.shape == (20,)
+    document["manifest_sha256"] = "stale"
+    with pytest.raises(ValueError, match="manifest hash"):
+        WujiRetargetPair.from_manifest({}, {}, tmp_path / "model_manifest.yaml", urdf)
