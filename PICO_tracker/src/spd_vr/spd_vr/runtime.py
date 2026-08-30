@@ -1,4 +1,4 @@
-"""Headless/live-friendly SPD VR runtime wiring one simulator and recorder."""
+"""Hardware-free episode runtime for the canonical Python plant."""
 
 from __future__ import annotations
 
@@ -14,161 +14,82 @@ import numpy as np
 
 from .arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason
 from .camera import SyntheticCameraProvider
-from .episode import EpisodeCommandType, EpisodeController
 from .recorder import EpisodeRecorder
-from .ros_input import LiveInputMailbox
-from .scenes.model_scene import write_scene_model
-from .scenes.registry import get_task
-from .model_compiler.artifacts import verify_artifacts
-from .simulator import UnifiedSimulator
-
-
-class _LiveTickPacer:
-    """Pace live physics ticks against a monotonic deadline."""
-
-    def __init__(
-        self,
-        period_ns: int,
-        clock_ns: Any | None = None,
-        sleep: Any | None = None,
-    ) -> None:
-        if int(period_ns) <= 0:
-            raise ValueError("period_ns must be positive")
-        self._period_ns = int(period_ns)
-        self._clock_ns = time.monotonic_ns if clock_ns is None else clock_ns
-        self._sleep = time.sleep if sleep is None else sleep
-        self._deadline_ns: int | None = None
-
-    def reset(self) -> None:
-        self._deadline_ns = None
-
-    def wait(self) -> None:
-        now_ns = int(self._clock_ns())
-        if self._deadline_ns is None:
-            self._deadline_ns = now_ns + self._period_ns
-            return
-        remaining_ns = self._deadline_ns - now_ns
-        if remaining_ns > 0:
-            self._sleep(remaining_ns / 1_000_000_000.0)
-            now_ns = int(self._clock_ns())
-        next_deadline_ns = self._deadline_ns + self._period_ns
-        if next_deadline_ns <= now_ns:
-            next_deadline_ns = now_ns + self._period_ns
-        self._deadline_ns = next_deadline_ns
+from .viewer import PlantController
 
 
 MOCK_EPOCH_NS = 1_700_000_000_000_000_000
 
+
+class _TickPacer:
+    """Pace a caller against an absolute monotonic deadline."""
+
+    def __init__(self, period_ns: int, clock_ns: Any | None = None, sleep: Any | None = None) -> None:
+        if int(period_ns) <= 0:
+            raise ValueError("period_ns must be positive")
+        self.period_ns = int(period_ns)
+        self.clock_ns = time.monotonic_ns if clock_ns is None else clock_ns
+        self.sleep = time.sleep if sleep is None else sleep
+        self.deadline_ns: int | None = None
+
+    def reset(self) -> None:
+        self.deadline_ns = None
+
+    def wait(self) -> int:
+        now = int(self.clock_ns())
+        if self.deadline_ns is None:
+            self.deadline_ns = now
+            return now
+        if now < self.deadline_ns:
+            self.sleep((self.deadline_ns - now) * 1e-9)
+            now = int(self.clock_ns())
+        self.deadline_ns += self.period_ns
+        if self.deadline_ns <= now:
+            self.deadline_ns = now + self.period_ns
+        return now
+
+
+# Kept as a narrow name for existing hardware-free callers; it has no device
+# or network behavior.
+_LiveTickPacer = _TickPacer
+
+
 @dataclass
 class _MockRetargeter:
-    """Deterministic zero-cost hand retargeter used only by ``--mock``."""
+    """Deterministic hand target used by explicit mock episodes."""
 
     def reset_filter(self, *_: Any) -> None:
         return None
 
     def retarget(self, frame: Any) -> Any:
-        return type("MockTarget", (), {
-            "left_qpos": np.zeros(20, dtype=np.float64),
-            "right_qpos": np.zeros(20, dtype=np.float64),
-            "left_valid": bool(frame.left_active),
-            "right_valid": bool(frame.right_active),
-            "left_hold_reason": "none" if frame.left_active else "inactive",
-            "right_hold_reason": "none" if frame.right_active else "inactive",
-        })()
+        return type(
+            "MockTarget",
+            (),
+            {
+                "left_qpos": np.zeros(20, dtype=np.float64),
+                "right_qpos": np.zeros(20, dtype=np.float64),
+                "left_valid": bool(frame.left_active),
+                "right_valid": bool(frame.right_active),
+                "left_hold_reason": "none" if frame.left_active else "inactive",
+                "right_hold_reason": "none" if frame.right_active else "inactive",
+            },
+        )()
 
 
 def _mock_hand_frame(sim_time_ns: int, sequence: int, epoch: int) -> Any:
-    """Build a deterministic frame whose timestamp belongs to sim time."""
     from .pico_hands import PicoHandFrame
+
     left = np.zeros((26, 7), dtype=np.float32)
     right = np.zeros((26, 7), dtype=np.float32)
     left[..., 6] = 1.0
     right[..., 6] = 1.0
-    for joint in range(26):
-        left[joint, :3] = (0.01 * joint, 0.001 * joint, 0.002 * joint)
-        right[joint, :3] = (-0.01 * joint, 0.001 * joint, 0.002 * joint)
     timestamp_ns = MOCK_EPOCH_NS + int(sim_time_ns)
     return PicoHandFrame(left, right, True, True, epoch, sequence, timestamp_ns)
-def _identity_hand_array() -> np.ndarray:
-    value = np.zeros((26, 7), dtype=np.float64)
-    value[:, 6] = 1.0
-    return value
 
 
-def _decode_ros_side(values: Any, name: str, input_type: Any) -> np.ndarray:
-    rows = []
-    for pose in values:
-        position = getattr(pose, "position", pose)
-        if all(hasattr(position, axis) for axis in ("x", "y", "z")):
-            row = [position.x, position.y, position.z]
-            orientation = getattr(pose, "orientation", None)
-            if orientation is not None and all(
-                hasattr(orientation, axis) for axis in ("x", "y", "z", "w")
-            ):
-                row.extend([orientation.x, orientation.y, orientation.z, orientation.w])
-            else:
-                row.extend([0.0, 0.0, 0.0, 1.0])
-        else:
-            row = list(position)
-            if len(row) == 3:
-                row.extend([0.0, 0.0, 0.0, 1.0])
-        rows.append(row)
-    return input_type._array(rows, name)
-
-
-def _convert_live_hands(message: Any) -> Any:
-    """Convert one ROS frame while isolating malformed left/right sides."""
-    from .pico_hands import PicoHandFrame, PicoHandsInput
-
-    try:
-        return PicoHandsInput(message).frame
-    except Exception:
-        # PicoHandsInput intentionally validates a complete atomic message.
-        # For live operation, retain the valid side and mark only the bad side
-        # inactive; the inactive side receives a finite non-active placeholder
-        # so the recorder can still persist the complete frame.
-        pass
-
-    def side(name: str) -> tuple[np.ndarray, bool, float]:
-        active = bool(getattr(message, f"{name}_active", True))
-        try:
-            value = _decode_ros_side(
-                getattr(message, f"{name}_joints"), f"{name}_joints", PicoHandsInput
-            )
-        except Exception:
-            return _identity_hand_array(), False, 1.0
-        try:
-            scale = float(getattr(message, f"{name}_scale", 1.0))
-            if not np.isfinite(scale) or scale <= 0.0:
-                raise ValueError
-        except (TypeError, ValueError):
-            return _identity_hand_array(), False, 1.0
-        return value, active, scale
-
-    header = getattr(message, "header", None)
-    stamp = getattr(header, "stamp", None)
-    if stamp is not None:
-        timestamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
-    else:
-        timestamp_ns = int(getattr(message, "timestamp_ns", 0))
-    left_hand, left_active, left_scale = side("left")
-    right_hand, right_active, right_scale = side("right")
-    return PicoHandFrame(
-        left_hand=left_hand,
-        right_hand=right_hand,
-        left_active=left_active,
-        right_active=right_active,
-        tracking_epoch=int(getattr(message, "tracking_epoch", 0)),
-        sequence_id=int(getattr(message, "sequence_id", 0)),
-        timestamp_ns=timestamp_ns,
-        left_scale=left_scale,
-        right_scale=right_scale,
-    )
-
-
-def _arm_frame(simulator: UnifiedSimulator, sequence: int, epoch: int, timestamp_ns: int) -> ArmTargetFrame:
-    left = tuple(float((entry.range[0] + entry.range[1]) * 0.5) for entry in simulator.joints if entry.side == "left" and entry.group == "arm")
-    right = tuple(float((entry.range[0] + entry.range[1]) * 0.5) for entry in simulator.joints if entry.side == "right" and entry.group == "arm")
+def _arm_frame(plant: PlantController, sequence: int, epoch: int, timestamp_ns: int) -> ArmTargetFrame:
+    left = tuple(float(value) for value in plant._home[:7])
+    right = tuple(float(value) for value in plant._home[27:34])
     return ArmTargetFrame(
         sequence=sequence,
         tracking_epoch=epoch,
@@ -187,251 +108,96 @@ def _arm_frame(simulator: UnifiedSimulator, sequence: int, epoch: int, timestamp
 def run_runtime(
     *,
     output: str | Path,
-    scene: str,
-    task: str,
+    scene: str = "hardware_free",
+    task: str = "mock",
     duration_s: float,
     seed: int = 0,
     headless: bool = True,
-    mock: bool = False,
-    hands_topic: str = "/pico/hands",
-    pause_topic: str = "/spd_vr/pause",
-    arm_bind_host: str = "127.0.0.1",
-    arm_bind_port: int = 15100,
-    wrist_position_scale: float = 1.0,
-    wrist_stable_frames: int = 10,
-    wrist_max_position_step_m: float = 0.02,
-    wrist_max_orientation_step_rad: float = 0.15,
+    mock: bool = True,
 ) -> Path:
+    """Write one deterministic episode without any live/device input path."""
+    del seed, headless
     if not math.isfinite(float(duration_s)) or duration_s <= 0.0:
         raise ValueError("duration_s must be positive")
-    for name, value in (
-        ("wrist_position_scale", wrist_position_scale),
-        ("wrist_max_position_step_m", wrist_max_position_step_m),
-        ("wrist_max_orientation_step_rad", wrist_max_orientation_step_rad),
-    ):
-        if not math.isfinite(float(value)) or float(value) <= 0.0:
-            raise ValueError(f"{name} must be finite and positive")
-    try:
-        stable_frames = float(wrist_stable_frames)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("wrist_stable_frames must be a non-zero positive integer") from exc
-    if (
-        not math.isfinite(stable_frames)
-        or stable_frames <= 0.0
-        or not stable_frames.is_integer()
-    ):
-        raise ValueError("wrist_stable_frames must be a non-zero positive integer")
-    wrist_stable_frames = int(stable_frames)
-    if not 1 <= int(arm_bind_port) <= 65535:
-        raise ValueError("arm_bind_port must be between 1 and 65535")
-
+    if not mock:
+        raise RuntimeError("runtime only supports explicit hardware-free mock episodes")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    task_spec = get_task(scene, task)
-    scene_result = task_spec.reset(seed)
-    generated = Path(__file__).resolve().parents[1] / "generated"
-    urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
-    verified = verify_artifacts(generated / "model_manifest.yaml", urdf)
-    mailbox: LiveInputMailbox | None = None
-    hand_retargeter: Any = _MockRetargeter()
-    if not mock:
-        from .retarget_pair import WujiRetargetPair
-
-        config_dir = Path(__file__).resolve().parents[1] / "config"
-        hand_retargeter = WujiRetargetPair.from_manifest(
-            config_dir / "wuji2_pico_left.yaml",
-            config_dir / "wuji2_pico_right.yaml",
-            verified.manifest_path,
-            urdf,
-        )
-
-    base_model = verified.full_model
-    model_path = output / "tianji_wuji2_spd_scene.xml"
-    write_scene_model(base_model, scene_result, model_path)
-    manifest_path = verified.manifest_path
+    plant = PlantController.synthetic_fixture()
+    camera = SyntheticCameraProvider()
     recorder = EpisodeRecorder(output)
-    # The synthetic provider is retained for the recorder schema in both
-    # modes; it is never used as a Wrist alignment input.
-    provider = SyntheticCameraProvider()
-    simulator: UnifiedSimulator | None = None
+    recorder.start_episode(1, {"scene": scene, "task": task, "synthetic": True})
+    ticks = max(1, int(round(float(duration_s) * plant.physics_hz)))
+    hand_sequence = 0
+    arm_sequence = 0
+    last_hand = -1
+    last_camera = -1
+    last_robot = -1
     try:
-        if not mock:
-            # Lazy ROS import/node creation is inside the cleanup scope so
-            # every later setup failure destroys the node and context.
-            mailbox = LiveInputMailbox(hands_topic, pause_topic)
-        simulator = UnifiedSimulator(
-            model_path=model_path,
-            manifest_path=manifest_path,
-            camera_provider=provider,
-            recorder=None,
-            hand_retargeter=hand_retargeter,
-        )
-        simulator.set_task_object_body_names({item.name for item in scene_result.objects})
-        if mailbox is not None:
-            simulator.start_arm_udp(arm_bind_host, int(arm_bind_port))
-        controller = EpisodeController(
-            simulator,
-            task_spec,
-            seed=seed,
-            recorder=recorder,
-            run_metadata={
-                "input": "mock_pico_hands" if mock else "xrobotoolkit_pico_hands",
-                "left_site": "l_wrist_target",
-                "right_site": "r_wrist_target",
-                "wrist_position_scale": wrist_position_scale,
-                "wrist_stable_frames": wrist_stable_frames,
-                "wrist_max_position_step_m": wrist_max_position_step_m,
-                "wrist_max_orientation_step_rad": wrist_max_orientation_step_rad,
-            },
-        )
-        controller.enqueue(EpisodeCommandType.START)
-        events = controller.process_all()
-        if controller.state.value != "RECORDING":
-            raise RuntimeError(f"episode failed to start: {events}")
-        hand_sequence = 0
-        arm_sequence = 0
-        epoch = 1
-        robot_period_ticks = 8
-        next_mock_arm_ns = 0
-        next_mock_hand_ns = 0
-        mock_arm_period_ns = int(
-            round(1_000_000_000 / float(getattr(simulator, "arm_target_hz", 200)))
-        )
-        mock_hand_period_ns = int(
-            round(1_000_000_000 / float(getattr(simulator, "hand_target_hz", 60)))
-        )
-        live_pacer = None
-        if mailbox is not None:
-            live_pacer = _LiveTickPacer(
-                int(round(1_000_000_000 / float(simulator.physics_hz)))
+        for index in range(ticks):
+            sim_ns = plant.sim_time_ns
+            now_ns = max(1, time.monotonic_ns())
+            arm_sequence += 1
+            plant.submit_arm_target(
+                _arm_frame(plant, arm_sequence, 1, MOCK_EPOCH_NS + sim_ns + 1),
+                now_ns=now_ns,
             )
-        target_sim_ns = float(duration_s) * 1_000_000_000.0
-        last_camera_timestamp = -1
-
-        def record_camera_results() -> None:
-            nonlocal last_camera_timestamp
-            for frames in simulator.drain_camera_results():
-                timestamp = frames["top"].timestamp_ns
-                if timestamp > last_camera_timestamp:
-                    recorder.append_cameras(frames)
-                    last_camera_timestamp = timestamp
-
-        def record_hand_frame(frame: Any) -> None:
-            recorder.append_hands(
-                frame.timestamp_ns,
-                frame.sequence_id,
-                frame.tracking_epoch,
-                frame.left_hand,
-                frame.right_hand,
-                left_active=frame.left_active,
-                right_active=frame.right_active,
-                left_scale=frame.left_scale,
-                right_scale=frame.right_scale,
-            )
-
-        while simulator.sim_time_ns < target_sim_ns:
-            if mailbox is not None:
-                mailbox.spin_once(0.0)
-                for command in mailbox.take_episode_commands():
-                    controller.enqueue(command)
-            controller.process_all()
-            if controller.state.value == "PAUSED":
-                # A paused wall-clock interval does not consume simulated
-                # time, and no input, physics, recording, or camera work is
-                # performed on this path.
-                if live_pacer is not None:
-                    live_pacer.reset()
-                time.sleep(0.001)
-                continue
-            if controller.state.value != "RECORDING":
-                raise RuntimeError(
-                    f"episode left recording state: {controller.state.value}; {controller.last_error}"
+            if index % max(1, plant.physics_hz // plant.hand_target_hz) == 0:
+                hand_sequence += 1
+                hand = _mock_hand_frame(sim_ns, hand_sequence, 1)
+                plant.submit_tracking(hand, now_ns=now_ns)
+                recorder.append_hands(
+                    hand.timestamp_ns,
+                    hand.sequence_id,
+                    hand.tracking_epoch,
+                    hand.left_hand,
+                    hand.right_hand,
+                    left_active=True,
+                    right_active=True,
                 )
-            if live_pacer is not None:
-                live_pacer.wait()
-
-            sim_ns = simulator.sim_time_ns
-            if mailbox is None:
-                if sim_ns >= next_mock_arm_ns:
-                    arm_sequence += 1
-                    timestamp_ns = MOCK_EPOCH_NS + int(sim_ns)
-                    simulator.on_arm_target(
-                        _arm_frame(simulator, arm_sequence, epoch, timestamp_ns),
-                        now_ns=time.monotonic_ns(),
-                    )
-                    while next_mock_arm_ns <= sim_ns:
-                        next_mock_arm_ns += mock_arm_period_ns
-                if sim_ns >= next_mock_hand_ns:
-                    hand_sequence += 1
-                    hand = _mock_hand_frame(sim_ns, hand_sequence, epoch)
-                    simulator.on_pico_hands(
-                        hand, now_ns=time.monotonic_ns()
-                    )
-                    record_hand_frame(hand)
-                    while next_mock_hand_ns <= sim_ns:
-                        next_mock_hand_ns += mock_hand_period_ns
-            else:
-                latest = mailbox.take_latest_hands()
-                if latest is not None:
-                    frame = _convert_live_hands(latest)
-                    simulator.on_pico_hands(frame, now_ns=time.monotonic_ns())
-                    record_hand_frame(frame)
-
-            step = simulator.step()
-            if (step.tick - 1) % robot_period_ticks == 0:
+            step = plant.physics_tick(now_ns)
+            if step.tick % max(1, plant.physics_hz // 60) == 0:
                 recorder.append_robot(
                     step.sim_time_ns,
-                    simulator._manifest_qpos(),
-                    simulator._manifest_qvel(),
-                    simulator._manifest_ctrl(),
+                    plant.data.qpos[:54],
+                    plant.data.qvel[:54],
+                    plant.data.ctrl[:54],
                     arm_valid_mask=step.arm_valid_mask,
-                    hand_valid_mask=(1 if step.hand_left_valid else 0)
-                    | (2 if step.hand_right_valid else 0),
+                    hand_valid_mask=step.hand_valid_mask,
                 )
-                recorder.append_contacts(step.sim_time_ns, {"hand_object": False})
-            record_camera_results()
-
-        # Allow the non-blocking camera worker to finish queued 30 Hz renders.
-        deadline = time.time() + max(1.0, float(duration_s) * 0.1)
-        while time.time() < deadline:
-            record_camera_results()
-            camera_queue = getattr(simulator, "_camera_queue", None)
-            if last_camera_timestamp >= 0 and (
-                camera_queue is None or camera_queue.empty()
-            ):
-                break
-            time.sleep(0.005)
-        controller.enqueue(EpisodeCommandType.FINISH)
-        finish_events = controller.process_all()
-        if controller.state.value != "IDLE":
-            raise RuntimeError(
-                f"episode failed to finish: {finish_events}; {controller.last_error}"
+                last_robot = step.sim_time_ns
+            if step.sim_time_ns > last_camera and step.tick % max(1, plant.physics_hz // 30) == 0:
+                frames = camera.capture(step.sim_time_ns)
+                recorder.append_cameras(frames)
+                last_camera = step.sim_time_ns
+            last_hand = hand_sequence
+        # Ensure every required stream has one sample for very short episodes.
+        if last_robot < 0:
+            recorder.append_robot(
+                plant.sim_time_ns,
+                plant.data.qpos[:54],
+                plant.data.qvel[:54],
+                plant.data.ctrl[:54],
             )
-        return recorder.output_root / "episodes" / str(controller.episode_id)
+        if last_hand < 1:
+            hand = _mock_hand_frame(plant.sim_time_ns, 1, 1)
+            recorder.append_hands(hand.timestamp_ns, 1, 1, hand.left_hand, hand.right_hand, left_active=True, right_active=True)
+        if last_camera < 0:
+            recorder.append_cameras(camera.capture(plant.sim_time_ns))
+        return recorder.finish_episode()
     finally:
-        if simulator is not None:
-            simulator.close()
-        if mailbox is not None:
-            mailbox.close()
+        plant.close()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scene", default="jenga")
-    parser.add_argument("--task", default="handover_lr")
-    parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument("--scene", default="hardware_free")
+    parser.add_argument("--task", default="mock")
+    parser.add_argument("--duration", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--mock", action="store_true")
-    parser.add_argument("--hands-topic", default="/pico/hands")
-    parser.add_argument("--pause-topic", default="/spd_vr/pause")
-    parser.add_argument("--arm-bind-host", default="127.0.0.1")
-    parser.add_argument("--arm-bind-port", type=int, default=15100)
-    parser.add_argument("--wrist-position-scale", type=float, default=1.0)
-    parser.add_argument("--wrist-stable-frames", type=int, default=10)
-    parser.add_argument("--wrist-max-position-step", type=float, default=0.02)
-    parser.add_argument("--wrist-max-orientation-step", type=float, default=0.15)
+    parser.add_argument("--mock", action="store_true", default=True)
     args = parser.parse_args(argv)
     episode = run_runtime(
         output=args.output,
@@ -440,17 +206,9 @@ def main(argv: list[str] | None = None) -> int:
         duration_s=args.duration,
         seed=args.seed,
         headless=args.headless,
-        mock=args.mock,
-        hands_topic=args.hands_topic,
-        pause_topic=args.pause_topic,
-        arm_bind_host=args.arm_bind_host,
-        arm_bind_port=args.arm_bind_port,
-        wrist_position_scale=args.wrist_position_scale,
-        wrist_stable_frames=args.wrist_stable_frames,
-        wrist_max_position_step_m=args.wrist_max_position_step,
-        wrist_max_orientation_step_rad=args.wrist_max_orientation_step,
+        mock=True,
     )
-    print(json.dumps({"episode": str(episode)}, sort_keys=True))
+    print(json.dumps({"episode": str(episode), "synthetic": True}, sort_keys=True))
     return 0
 
 

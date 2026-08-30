@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from contextlib import nullcontext
 import json
 import math
-import socket
 from pathlib import Path
 import queue
 import threading
@@ -258,9 +257,6 @@ class UnifiedSimulator:
         self._next_camera_time_ns = 0
         self._last_camera_frames: Mapping[str, CameraFrame] | None = None
         self._closed = False
-        self._arm_udp_socket: socket.socket | None = None
-        self._arm_udp_thread: threading.Thread | None = None
-        self._arm_udp_stop: threading.Event | None = None
         self._task_object_body_ids: set[int] = set()
 
     def _set_home_state(self) -> None:
@@ -391,46 +387,7 @@ class UnifiedSimulator:
                 source_timestamp_ns=previous.source_timestamp_ns,
                 control_timestamp_ns=previous.control_timestamp_ns,
             )
-    def start_arm_udp(self, host: str = "127.0.0.1", port: int = 15100) -> int:
-        if self._arm_udp_thread is not None:
-            raise RuntimeError("arm UDP receiver is already running")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((host, int(port)))
-        sock.settimeout(0.05)
-        self._arm_udp_socket = sock
-        self._arm_udp_stop = threading.Event()
-        stop = self._arm_udp_stop
-        def receive() -> None:
-            while not stop.is_set():
-                try:
-                    packet, _ = sock.recvfrom(4096)
-                except socket.timeout:
-                    continue
-                except OSError:
-                    break
-                try:
-                    self.on_arm_target_packet(packet, now_ns=time.monotonic_ns())
-                except ValueError:
-                    # Structural packet errors are a HOLD event, not a reason
-                    # for the receiver thread to terminate.
-                    if not self.paused:
-                        self._hold_arm_snapshot(ArmTargetHoldReason.SOLVER_FAILURE)
 
-        self._arm_udp_thread = threading.Thread(target=receive, name="spd-vr-arm-udp", daemon=True)
-        self._arm_udp_thread.start()
-        return int(sock.getsockname()[1])
-
-    def stop_arm_udp(self) -> None:
-        if self._arm_udp_stop is not None:
-            self._arm_udp_stop.set()
-        if self._arm_udp_socket is not None:
-            self._arm_udp_socket.close()
-        if self._arm_udp_thread is not None:
-            self._arm_udp_thread.join(timeout=1.0)
-        self._arm_udp_socket = None
-        self._arm_udp_thread = None
-        self._arm_udp_stop = None
 
     def on_arm_target_packet(self, packet: bytes, *, now_ns: int | None = None) -> ArmSnapshot:
         if self.paused:
@@ -1013,7 +970,6 @@ class UnifiedSimulator:
             return
         self._worker_pause.clear()
         self._closed = True
-        self.stop_arm_udp()
         if self._camera_worker is not None:
             self._camera_worker.stop()
         if self._recorder_stop is not None:
