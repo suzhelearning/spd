@@ -223,6 +223,11 @@ class PlantController:
         self._arm_lock = threading.Lock()
         self._tracking_lock = threading.Lock()
         self._arm_mailbox: _ArmMailbox | None = None
+        self.artifact_hash = (
+            str(verified.manifest.get("manifest_sha256", "unknown"))
+            if verified is not None
+            else "synthetic"
+        )
         self._tracking_mailbox: _TrackingMailbox | None = None
         self._arm_generation = 0
         self._tracking_generation = 0
@@ -242,6 +247,8 @@ class PlantController:
         self._alignment_ready = {"left": True, "right": True}
         self._fresh_arm_valid = {"left": True, "right": True}
         self._fresh_hand_valid = {"left": True, "right": True}
+        self._required_control_timestamp_ns = 0
+        self.invalid_input_count = 0
         self._fresh_alignment_required = False
         self._node: Any | None = None
         self._arm_wire: LatestSample[ArmTargetFrame] | None = None
@@ -332,8 +339,17 @@ class PlantController:
     def requires_fresh_alignment(self) -> bool:
         return self._fresh_alignment_required
 
-    def require_fresh_alignment(self) -> None:
-        self._alignment_generation += 1
+    @property
+    def required_control_timestamp_ns(self) -> int:
+        return self._required_control_timestamp_ns
+
+    def require_fresh_alignment(self, control_timestamp_ns: int | None = None) -> None:
+        self._required_control_timestamp_ns = max(
+            0,
+            int(control_timestamp_ns)
+            if control_timestamp_ns is not None
+            else self._required_control_timestamp_ns,
+        )
         self._fresh_alignment_required = True
         self._alignment_ready = {"left": False, "right": False}
         self._fresh_arm_valid = {"left": False, "right": False}
@@ -359,7 +375,7 @@ class PlantController:
     def mark_alignment_fresh(self) -> None:
         self._update_alignment_ready()
 
-    def reset_home(self) -> None:
+    def reset_home(self, control_timestamp_ns: int | None = None) -> None:
         self._set_home_state()
         self.tick = 0
         self._arm_generation = self._tracking_generation = 0
@@ -368,12 +384,10 @@ class PlantController:
         self._hand_arrival = {"left": None, "right": None}
         self._arm_values = {"left": self._home[:7].copy(), "right": self._home[27:34].copy()}
         self._hand_values = {"left": self._home[7:27].copy(), "right": self._home[34:54].copy()}
-        self.require_fresh_alignment()
+        self.require_fresh_alignment(control_timestamp_ns)
 
     def set_paused(self, paused: bool) -> None:
         self.paused = bool(paused)
-        if not self.paused:
-            self.require_fresh_alignment()
 
     @staticmethod
     def _finite_vector(values: Any, size: int, name: str) -> np.ndarray:
@@ -450,6 +464,7 @@ class PlantController:
         arrival_ns: int,
     ) -> None:
         if not valid:
+            self.invalid_input_count += 1
             self._arm_valid[side] = False
             self._arm_reason[side] = reason
             return
@@ -457,15 +472,21 @@ class PlantController:
             candidate = self._finite_vector(values, 7, f"{side}_q")
             velocity = self._finite_vector(qdot, 7, f"{side}_qdot")
         except ValueError:
+            self.invalid_input_count += 1
             self._arm_valid[side] = False
             self._arm_reason[side] = ArmTargetHoldReason.SOLVER_FAILURE
             return
-        entries = [entry for entry in self.joints if entry.side == side and entry.group == "arm"]
+        entries = sorted(
+            (entry for entry in self.joints if entry.side == side and entry.group == "arm"),
+            key=lambda entry: entry.index,
+        )
         if any(not (entry.range[0] <= value <= entry.range[1]) for entry, value in zip(entries, candidate)):
+            self.invalid_input_count += 1
             self._arm_valid[side] = False
             self._arm_reason[side] = ArmTargetHoldReason.SOLVER_FAILURE
             return
         if any(entry.velocity_limit is not None and abs(value) > entry.velocity_limit for entry, value in zip(entries, velocity)):
+            self.invalid_input_count += 1
             self._arm_valid[side] = False
             self._arm_reason[side] = ArmTargetHoldReason.SOLVER_FAILURE
             return
@@ -504,6 +525,19 @@ class PlantController:
             right_scale=float(getattr(frame, "right_scale", 1.0)),
         )
 
+    @staticmethod
+    def _explicit_hold(reason: Any) -> bool:
+        return reason in {
+            ArmTargetHoldReason.PAUSED,
+            ArmTargetHoldReason.INACTIVE,
+            ArmTargetHoldReason.ALIGNING,
+            ArmTargetHoldReason.DISCONNECTED,
+            "inactive",
+            "paused",
+            "aligning",
+            "disconnected",
+        }
+
     def _process_tracking(self, mailbox: _TrackingMailbox) -> None:
         frame = self._pico_hand_frame(mailbox.frame)
         if hasattr(frame, "left_qpos") and hasattr(frame, "right_qpos"):
@@ -523,17 +557,20 @@ class PlantController:
                 except ValueError:
                     valid, reason = False, "solver_failure"
                 else:
-                    entries = [entry for entry in self.joints if entry.side == side and entry.group == "hand"]
+                    entries = sorted(
+                        (entry for entry in self.joints if entry.side == side and entry.group == "hand"),
+                        key=lambda entry: entry.index,
+                    )
                     if any(not (entry.range[0] <= value <= entry.range[1]) for entry, value in zip(entries, candidate)):
                         valid, reason = False, "invalid"
                     else:
                         self._hand_values[side] = candidate
+            if not valid and not self._explicit_hold(reason):
+                self.invalid_input_count += 1
             self._hand_valid[side] = bool(valid)
             self._hand_reason[side] = "none" if valid else reason
-            if valid:
-                self._hand_arrival[side] = mailbox.arrival_ns
             if self._fresh_alignment_required:
-                self._fresh_hand_valid[side] = bool(valid)
+                self._fresh_hand_valid[side] = bool(valid) or self._explicit_hold(reason)
         if self._fresh_alignment_required:
             self._update_alignment_ready()
 
@@ -589,11 +626,19 @@ class PlantController:
             arm_mailbox = self._arm_mailbox
         if arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
             frame = arm_mailbox.frame
-            self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
-            self._arm_side("right", frame.right_q, frame.right_qdot, bool(frame.valid_mask & RIGHT_VALID), frame.right_hold_reason, arm_mailbox.arrival_ns)
+            token_ok = (
+                not self._fresh_alignment_required
+                or int(frame.control_timestamp_ns) >= self._required_control_timestamp_ns
+            )
+            if token_ok:
+                self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
+                self._arm_side("right", frame.right_q, frame.right_qdot, bool(frame.valid_mask & RIGHT_VALID), frame.right_hold_reason, arm_mailbox.arrival_ns)
+            else:
+                self._arm_valid = {"left": False, "right": False}
+                self._arm_reason = {"left": ArmTargetHoldReason.INPUT_STALE, "right": ArmTargetHoldReason.INPUT_STALE}
             if self._fresh_alignment_required:
-                self._fresh_arm_valid["left"] = self._arm_valid["left"]
-                self._fresh_arm_valid["right"] = self._arm_valid["right"]
+                self._fresh_arm_valid["left"] = token_ok and (self._arm_valid["left"] or self._explicit_hold(frame.left_hold_reason))
+                self._fresh_arm_valid["right"] = token_ok and (self._arm_valid["right"] or self._explicit_hold(frame.right_hold_reason))
                 self._update_alignment_ready()
             self._applied_arm_generation = arm_mailbox.generation
         self._refresh_stale(now)
@@ -660,6 +705,8 @@ class ViewerRuntime:
             )
         self.window = window
         self._next_sequence = 1
+        self._physics_timing_ns: list[int] = []
+        self._render_timing_ns: list[int] = []
     def connect(self, node: Any) -> None:
         if self._node is not None:
             raise RuntimeError("runtime is already connected")
@@ -706,26 +753,46 @@ class ViewerRuntime:
 
             self._publisher.put(encode_control(frame))
         return self.session.apply(frame)
+    @staticmethod
+    def _timing_stats(samples: list[int]) -> tuple[Any, Any]:
+        if not samples:
+            return "unknown", "unknown"
+        values = np.asarray(samples, dtype=np.float64)
+        return round(float(np.percentile(values, 95)) / 1.0e6, 3), round(float(np.max(values)) / 1.0e6, 3)
+
     def _hud_values(self, result: Any, now_ns: int) -> dict[str, Any]:
-        ages = [
-            now_ns - int(arrival)
-            for arrival in (
-                getattr(self.plant, "_arm_arrival", {}).values()
-                if hasattr(self.plant, "_arm_arrival")
-                else ()
-            )
-            if arrival is not None
-        ]
+        arrivals = []
+        for name in ("_arm_arrival", "_hand_arrival"):
+            arrivals.extend(getattr(self.plant, name, {}).values())
+        ages = [now_ns - int(arrival) for arrival in arrivals if arrival is not None]
+        physics_p95, physics_max = self._timing_stats(self._physics_timing_ns)
+        render_p95, render_max = self._timing_stats(self._render_timing_ns)
+        arm_reason = getattr(self.plant, "_arm_reason", {})
+        hand_reason = getattr(self.plant, "_hand_reason", {})
+        alignment = getattr(self.plant, "_alignment_ready", {})
+        drops = sum(
+            int(getattr(mailbox, "dropped_count", 0))
+            for mailbox in (getattr(self.plant, "_arm_wire", None), getattr(self.plant, "_tracking_wire", None))
+            if mailbox is not None
+        )
         return {
             "state": self.session.state.value,
+            "zenoh": "connected" if self._node is not None else "disabled",
             "physics_finite": getattr(result, "finite", True),
-            "physics_hz": PHYSICS_HZ,
-            "render_hz": RENDER_HZ,
+            "physics_p95_ms": physics_p95,
+            "physics_max_ms": physics_max,
+            "render_p95_ms": render_p95,
+            "render_max_ms": render_max,
+            "arm_left": f"{alignment.get('left', 'unknown')}:{arm_reason.get('left', 'unknown')}",
+            "arm_right": f"{alignment.get('right', 'unknown')}:{arm_reason.get('right', 'unknown')}",
+            "hand_left": f"{alignment.get('left', 'unknown')}:{hand_reason.get('left', 'unknown')}",
+            "hand_right": f"{alignment.get('right', 'unknown')}:{hand_reason.get('right', 'unknown')}",
             "arm_valid_mask": getattr(result, "arm_valid_mask", 0),
             "hand_valid_mask": getattr(result, "hand_valid_mask", 0),
-            "input_age_ms": round(max(ages, default=0) / 1.0e6, 3),
-            "drops": 0,
-            "artifact": "synthetic" if getattr(self.plant, "synthetic", False) else "verified",
+            "input_age_ms": round(max(ages, default=0) / 1.0e6, 3) if ages else "unknown",
+            "drops": drops,
+            "invalid": getattr(self.plant, "invalid_input_count", "unknown"),
+            "artifact_hash": getattr(self.plant, "artifact_hash", "unknown"),
         }
     def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:
         if ticks is not None and int(ticks) < 0:
@@ -752,7 +819,11 @@ class ViewerRuntime:
                     if callable(is_running) and not is_running():
                         self._shutdown_from_window()
                         break
+                timing_start = time.perf_counter_ns()
                 result = self.plant.physics_tick(now)
+                self._physics_timing_ns.append(time.perf_counter_ns() - timing_start)
+                if len(self._physics_timing_ns) > 1024:
+                    del self._physics_timing_ns[:-1024]
                 count += 1
                 if hasattr(self.plant, "requires_fresh_alignment") and not self.plant.requires_fresh_alignment:
                     self.session.mark_aligned()
@@ -762,7 +833,11 @@ class ViewerRuntime:
                         update_hud(self._hud_values(result, now))
                     sync = getattr(self.window, "sync", None)
                     if sync is not None:
+                        timing_start = time.perf_counter_ns()
                         sync()
+                        self._render_timing_ns.append(time.perf_counter_ns() - timing_start)
+                        if len(self._render_timing_ns) > 1024:
+                            del self._render_timing_ns[:-1024]
                     while render_deadline <= now:
                         render_deadline += render_period_ns
                 physics_deadline += period_ns

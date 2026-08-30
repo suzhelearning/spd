@@ -127,7 +127,7 @@ class DualArmController:
         self._paused = False
         self._running = True
         self._sequence = 0
-        self._last_tick_ns: int | None = None
+        self._last_control_timestamp_ns: int | None = None
         self.tick_count = 0
         self.left_q = np.asarray(self.left_solver.home, dtype=float).copy()
         self.right_q = np.asarray(self.right_solver.home, dtype=float).copy()
@@ -166,6 +166,7 @@ class DualArmController:
             return False
         if not accepted:
             return False
+        self._last_control_timestamp_ns = int(control.monotonic_timestamp_ns)
         command = control.command
         if command is ControlCommand.START:
             self._paused = False
@@ -193,14 +194,13 @@ class DualArmController:
         elif command is ControlCommand.SHUTDOWN:
             self._running = False
         return True
-
     def _poll_mailboxes(self) -> None:
+        for control in self.control_mailbox.drain():
+            self.accept_control(control)
         sample = self.tracking_mailbox.take_new(self._tracking_generation)
         if sample is not None:
             self._tracking_generation, tracking = sample
             self.accept_tracking(tracking)
-        for control in self.control_mailbox.drain():
-            self.accept_control(control)
 
 
     @staticmethod
@@ -270,7 +270,7 @@ class DualArmController:
             sequence=self._sequence,
             tracking_epoch=max(1, epoch),
             source_timestamp_ns=max(1, source_timestamp),
-            control_timestamp_ns=max(1, now),
+            control_timestamp_ns=max(1, self._last_control_timestamp_ns if self._last_control_timestamp_ns is not None else now),
             valid_mask=valid_mask,
             left_hold_reason=left.reason,
             right_hold_reason=right.reason,

@@ -154,3 +154,105 @@ The production artifact blocker is unchanged: `Link_Base.STL` still fails the
 fixed CoACD gate at arm/base p95 `0.036785362 m` versus `0.003 m`; production
 viewer remains fail-closed and this round adds no synthetic fallback to that
 path.
+
+## Review round 3 verification
+
+Scoped compilation:
+
+```text
+pixi run python -m py_compile src/spd_vr/spd_vr/session_state.py src/spd_vr/spd_vr/viewer_window.py src/spd_vr/spd_vr/viewer.py src/spd_vr/spd_vr/simulator.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/zenoh_transport.py src/spd_vr/spd_vr/arm_ik.py src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py
+```
+
+Output:
+
+```text
+(no output; exit 0)
+```
+
+Scoped tests:
+
+```text
+pixi run python -m pytest src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py -q
+```
+
+Output:
+
+```text
+...................                                                      [100%]
+=============================== warnings summary ===============================
+.pixi/envs/default/lib/python3.11/site-packages/hppfcl/__init__.py:3
+  Warning: Please update your 'hppfcl' imports to 'coal'
+
+test/test_arm_ik.py: 10 warnings
+  Warning: "polish" is deprecated. Please use "polishing" instead.
+
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+  Warning: The default value of raise_error will change to True in the future.
+
+19 passed, 14 warnings in 0.42s
+```
+
+Headless full-plant smoke:
+
+```text
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
+```
+
+Output:
+
+```text
+headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
+```
+
+The production artifact boundary remains fail-closed. Task7's authoritative
+five-artifact set is still blocked by `Link_Base.STL` CoACD arm/base p95
+`0.036785362 m` versus the fixed `0.003 m` threshold; no wire expansion,
+fallback, or threshold relaxation was added.
+
+## Review round 3 final evidence
+
+The final round used the scoped command below:
+
+```text
+pixi run python -m py_compile src/spd_vr/spd_vr/session_state.py src/spd_vr/spd_vr/viewer_window.py src/spd_vr/spd_vr/viewer.py src/spd_vr/spd_vr/simulator.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/zenoh_transport.py src/spd_vr/spd_vr/arm_ik.py src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py
+```
+
+```text
+(no output; exit 0)
+```
+
+```text
+pixi run python -m pytest src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py src/spd_vr/test/test_arm_ik.py -q
+```
+
+```text
+...................                                                      [100%]
+=============================== warnings summary ===============================
+.pixi/envs/default/lib/python3.11/site-packages/hppfcl/__init__.py:3
+  Warning: Please update your 'hppfcl' imports to 'coal'
+
+test/test_arm_ik.py: 10 warnings
+  Warning: "polish" is deprecated. Please use "polishing" instead.
+
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+test/test_arm_ik.py::test_dual_controller_keeps_side_hold_isolated
+  Warning: The default value of raise_error will change to True in the future.
+
+19 passed, 14 warnings in 0.42s
+```
+
+```text
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
+```
+
+```text
+headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
+```
+
+The authoritative artifact blocker is unchanged: `Link_Base.STL` CoACD
+arm/base p95 is `0.036785362 m`, above `0.003 m`. Production remains
+manifest/hash verified and fail-closed; synthetic mode is explicit and is not
+authoritative artifact evidence.

@@ -54,6 +54,7 @@ def test_control_gate_processes_ordered_commands_once():
     assert not controller.accept_control(pause)
     assert not controller.accept_control(ControlFrame(1, 2_000_000_001, ControlCommand.START))
     held = controller.tick(2_000_000_000)
+    assert held.control_timestamp_ns == pause.monotonic_timestamp_ns
     assert held.left_hold_reason is ArmTargetHoldReason.PAUSED
 def test_reset_does_not_drop_queued_shutdown():
     controller, _, _ = build_synthetic_fixture()

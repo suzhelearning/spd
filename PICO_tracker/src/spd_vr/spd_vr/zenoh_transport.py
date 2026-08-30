@@ -15,9 +15,12 @@ class LatestSample(Generic[T]):
         self._lock = Lock()
         self._value: T | None = None
         self._generation = 0
+        self._dropped = 0
 
     def put(self, value: T) -> None:
         with self._lock:
+            if self._value is not None:
+                self._dropped += 1
             self._value = value
             self._generation += 1
 
@@ -36,6 +39,11 @@ class LatestSample(Generic[T]):
     def storage_size(self) -> int:
         with self._lock:
             return int(self._value is not None)
+
+    @property
+    def dropped_count(self) -> int:
+        with self._lock:
+            return self._dropped
 
 
 def peer_config(*, listen: bool, endpoint: str) -> zenoh.Config:

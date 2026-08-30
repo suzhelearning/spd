@@ -63,12 +63,20 @@ class SessionController:
     def _call(self, name: str, *args: Any) -> None:
         callback = getattr(self.plant, name, None)
         if callback is not None:
-            callback(*args)
+            try:
+                callback(*args)
+            except TypeError:
+                callback()
 
-    def _require_alignment(self) -> None:
+    def _require_alignment(self, control_timestamp_ns: int) -> None:
         self._alignment_generation += 1
         self._requires_fresh_alignment = True
-        self._call("require_fresh_alignment")
+        callback = getattr(self.plant, "require_fresh_alignment", None)
+        if callback is not None:
+            try:
+                callback(int(control_timestamp_ns))
+            except TypeError:
+                callback()
 
     def apply(self, frame: ControlFrame) -> SessionSnapshot:
         """Apply one ordered frame; exact duplicate frames are no-ops."""
@@ -79,7 +87,7 @@ class SessionController:
         if command is ControlCommand.START:
             if self.state is SessionState.IDLE:
                 self.state = SessionState.RUNNING
-                self._require_alignment()
+                self._require_alignment(frame.monotonic_timestamp_ns)
         elif command is ControlCommand.PAUSE:
             if self.state is SessionState.RUNNING:
                 self._call("set_paused", True)
@@ -88,15 +96,15 @@ class SessionController:
             if self.state is SessionState.PAUSED:
                 self._call("set_paused", False)
                 self.state = SessionState.RUNNING
-                self._require_alignment()
+                self._require_alignment(frame.monotonic_timestamp_ns)
         elif command is ControlCommand.REALIGN:
             if self.state in {SessionState.RUNNING, SessionState.PAUSED}:
-                self._require_alignment()
+                self._require_alignment(frame.monotonic_timestamp_ns)
         elif command is ControlCommand.RESET:
             if self.state is not SessionState.SHUTDOWN:
                 if self.state is SessionState.PAUSED:
                     self._call("set_paused", False)
-                self._call("reset_home")
+                self._call("reset_home", frame.monotonic_timestamp_ns)
                 self.state = SessionState.IDLE
                 self._alignment_generation += 1
                 self._requires_fresh_alignment = True
