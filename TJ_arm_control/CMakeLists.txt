@@ -90,8 +90,6 @@ add_library(tianji_qp_ik STATIC
   src/pinocchio_arm_kinematics.cpp
   src/pico_teleop_protocol.cpp
   src/arm_target_protocol.cpp
-  src/control_protocol.cpp
-  src/tracking_protocol.cpp
   src/pico_skeleton_overlay.cpp
   src/pico_teleop_session.cpp
   src/pico_wrist_alignment.cpp
@@ -181,12 +179,7 @@ if(TIANJI_BUILD_ZENOH_TELEOP)
   add_subdirectory("${ZENOH_PICO_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/zenoh-pico" EXCLUDE_FROM_ALL)
   set(BUILD_TESTING "${_tianji_build_testing}" CACHE BOOL "" FORCE)
 
-  add_executable(spd_protocol_fixture_tool apps/spd_protocol_fixture_tool.cpp)
-  target_link_libraries(spd_protocol_fixture_tool PRIVATE tianji_qp_ik)
-  tianji_enable_warnings(spd_protocol_fixture_tool)
-
   add_custom_target(teleop_native)
-  add_dependencies(teleop_native spd_protocol_fixture_tool)
 endif()
 
 if(BUILD_TESTING)
@@ -260,8 +253,6 @@ if(BUILD_TESTING)
   target_link_libraries(test_mujoco_joint_plot PRIVATE mujoco::mujoco)
   tianji_add_test(test_pico_teleop_protocol tests/test_pico_teleop_protocol.cpp)
   tianji_add_test(test_arm_target_protocol tests/test_arm_target_protocol.cpp)
-  tianji_add_test(test_control_protocol tests/test_control_protocol.cpp)
-  tianji_add_test(test_tracking_protocol tests/test_tracking_protocol.cpp)
   tianji_add_test(test_pico_skeleton_overlay tests/test_pico_skeleton_overlay.cpp)
   tianji_add_test(test_spark_upper_qpoases_ik
                   tests/test_spark_upper_qpoases_ik.cpp)

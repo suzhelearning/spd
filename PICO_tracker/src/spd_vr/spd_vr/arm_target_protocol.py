@@ -23,10 +23,6 @@ class ArmTargetHoldReason(IntEnum):
     INPUT_STALE = 1
     SOLVER_FAILURE = 2
     PAUSED = 3
-    INACTIVE = 4
-    UNALIGNED = 5
-    INVALID_INPUT = 6
-    DISCONNECTED = 7
 
 
 class ArmTargetProtocolError(ValueError):

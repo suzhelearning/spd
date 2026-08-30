@@ -69,7 +69,7 @@ bool validReasonAndMask(std::uint8_t valid_mask,
   if ((valid_mask & static_cast<std::uint8_t>(~0x03U)) != 0U) return false;
   const auto valid_reason = [](ArmTargetHoldReason reason) {
     return static_cast<std::uint8_t>(reason) <=
-           static_cast<std::uint8_t>(ArmTargetHoldReason::kDisconnected);
+           static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused);
   };
   if (!valid_reason(left_reason) || !valid_reason(right_reason)) return false;
   const bool left_valid = (valid_mask & kArmTargetLeftValid) != 0U;
@@ -144,8 +144,8 @@ ArmTargetDecodeResult decodeArmTargetPacket(const std::uint8_t* bytes,
   const std::uint8_t valid_mask = bytes[40U];
   const auto left_reason = static_cast<ArmTargetHoldReason>(bytes[41U]);
   const auto right_reason = static_cast<ArmTargetHoldReason>(bytes[42U]);
-  if (bytes[41U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kDisconnected) ||
-      bytes[42U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kDisconnected)) {
+  if (bytes[41U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused) ||
+      bytes[42U] > static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused)) {
     result.error = ArmTargetPacketError::kInvalidHoldReason;
     return result;
   }

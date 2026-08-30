@@ -20,27 +20,14 @@ def fixture_frame() -> ArmTargetFrame:
         tracking_epoch=9,
         source_timestamp_ns=1_000_000_000,
         control_timestamp_ns=1_000_001_000,
-        valid_mask=1,
+        valid_mask=3,
         left_hold_reason=ArmTargetHoldReason.NONE,
-        right_hold_reason=ArmTargetHoldReason.INACTIVE,
+        right_hold_reason=ArmTargetHoldReason.NONE,
         left_q=tuple(0.1 * index for index in range(7)),
         right_q=tuple(-0.2 * index for index in range(7)),
         left_qdot=tuple(0.3 * index for index in range(7)),
         right_qdot=tuple(-0.4 * index for index in range(7)),
     )
-
-
-def test_canonical_hold_reason_values():
-    assert {reason.name: int(reason) for reason in ArmTargetHoldReason} == {
-        "NONE": 0,
-        "INPUT_STALE": 1,
-        "SOLVER_FAILURE": 2,
-        "PAUSED": 3,
-        "INACTIVE": 4,
-        "UNALIGNED": 5,
-        "INVALID_INPUT": 6,
-        "DISCONNECTED": 7,
-    }
 
 
 def test_python_matches_shared_fixture():
@@ -64,7 +51,7 @@ def test_corrupt_crc_nan_and_sequence_are_rejected_or_held():
 
     decoder = ArmTargetStreamDecoder(max_age_ns=10)
     fresh = decoder.decode(encode_packet(fixture_frame()), now_ns=1_000_001_005)
-    assert fresh.valid_mask == 1
+    assert fresh.valid_mask == 3
     stale = decoder.decode(
         encode_packet(
             ArmTargetFrame(
