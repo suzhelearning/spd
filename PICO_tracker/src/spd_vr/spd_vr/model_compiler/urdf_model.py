@@ -51,6 +51,7 @@ class UrdfLink:
     visuals: tuple[MeshGeometry, ...] = ()
     collisions: tuple[MeshGeometry, ...] = ()
     source_index: int = -1
+    has_geometry: bool = False
 
     @property
     def meshes(self) -> tuple[MeshGeometry, ...]:
@@ -168,19 +169,20 @@ def load_urdf(path: str | Path) -> UrdfModel:
         name = _required(element, "name", "link")
         if name in links_by_name:
             raise ValueError(f"duplicate link {name!r}")
-        visuals = _parse_geometry(element, "visual", source.parent)
-        collisions = _parse_geometry(element, "collision", source.parent)
+        visuals, visual_geometry = _parse_geometry(element, "visual", source.parent)
+        collisions, collision_geometry = _parse_geometry(element, "collision", source.parent)
+        has_geometry = visual_geometry or collision_geometry
         inertial_element = element.find("inertial")
         if inertial_element is None:
             if name in {"TCP_Link_L", "TCP_Link_R"}:
                 inertial = Inertial(0.05, (0.0, 0.0, 0.0), _zeros())
-            elif visuals or collisions:
+            elif has_geometry:
                 raise ValueError(f"link {name!r} is missing inertial")
             else:
                 inertial = None
         else:
             inertial = _parse_inertial(inertial_element, name, allow_point_mass=name in {"TCP_Link_L", "TCP_Link_R"})
-        links_by_name[name] = UrdfLink(name, inertial, visuals, collisions, source_index)
+        links_by_name[name] = UrdfLink(name, inertial, visuals, collisions, source_index, has_geometry)
 
     if not links_by_name:
         raise ValueError("URDF has no links")
@@ -318,36 +320,56 @@ def _parse_inertial(element: ET.Element, name: str, *, allow_point_mass: bool) -
     mass = _finite_float(mass_element.attrib["value"], f"link {name!r} mass")
     if mass <= 0:
         raise ValueError(f"link {name!r} mass must be positive")
-    com, _ = _parse_pose(element.find("origin"), f"link {name!r} inertial origin")
+    com, inertial_rpy = _parse_pose(element.find("origin"), f"link {name!r} inertial origin")
+    inertial_rotation = np.asarray(_rpy_matrix(inertial_rpy), dtype=float)
     values = {
         key: _finite_float(inertia_element.attrib.get(key, "nan"), f"link {name!r} inertia {key}")
         for key in ("ixx", "ixy", "ixz", "iyy", "iyz", "izz")
     }
     matrix = np.array([[values["ixx"], values["ixy"], values["ixz"]], [values["ixy"], values["iyy"], values["iyz"]], [values["ixz"], values["iyz"], values["izz"]]], dtype=float)
+    link_matrix = inertial_rotation @ matrix @ inertial_rotation.T
     if allow_point_mass:
         if not math.isclose(mass, 0.05, rel_tol=0.0, abs_tol=1e-12) or not np.allclose(matrix, 0.0, atol=0.0):
             raise ValueError(f"link {name!r} TCP point mass must be 0.05kg with zero inertia")
         return Inertial(mass, com, _zeros())
-    eigenvalues = np.linalg.eigvalsh(matrix)
+    eigenvalues = np.linalg.eigvalsh(link_matrix)
     if np.any(eigenvalues <= 0.0):
         raise ValueError(f"link {name!r} inertia is not positive definite")
     principal = np.sort(eigenvalues)
     if any(principal[i] + principal[j] < principal[k] for i, j, k in ((0, 1, 2), (0, 2, 1), (1, 2, 0))):
         raise ValueError(f"link {name!r} inertia violates triangle inequalities")
-    return Inertial(mass, com, _mat3(matrix))
+    return Inertial(mass, com, _mat3(link_matrix))
 
 
-def _parse_geometry(link: ET.Element, kind: str, base: Path) -> tuple[MeshGeometry, ...]:
+def _parse_geometry(
+    link: ET.Element, kind: str, base: Path
+) -> tuple[tuple[MeshGeometry, ...], bool]:
     geometries: list[MeshGeometry] = []
+    geometry_present = False
     for element in link.findall(kind):
         geometry = element.find("geometry")
         if geometry is None:
             raise ValueError(f"link {link.get('name')!r} {kind} is missing geometry")
         mesh = geometry.find("mesh")
+        origin, rpy = _parse_pose(element.find("origin"), f"{kind} origin")
+        _parse_vector(element.get("scale"), 3, f"{kind} scale", default=(1.0, 1.0, 1.0))
         if mesh is None:
-            # Primitive geometry (box/cylinder/sphere) is valid but not a mesh asset.
-            if not any(geometry.find(tag) is not None for tag in ("box", "cylinder", "sphere")):
-                raise ValueError(f"link {link.get('name')!r} {kind} is missing mesh")
+            primitive = next(
+                (geometry.find(tag) for tag in ("box", "cylinder", "sphere") if geometry.find(tag) is not None),
+                None,
+            )
+            if primitive is None:
+                raise ValueError(f"link {link.get('name')!r} {kind} has unsupported geometry")
+            if primitive.tag == "box":
+                _parse_vector(primitive.get("size"), 3, f"{kind} box size")
+            elif primitive.tag == "cylinder":
+                _finite_float(primitive.get("length", "nan"), f"{kind} cylinder length")
+                _finite_float(primitive.get("radius", "nan"), f"{kind} cylinder radius")
+            else:
+                _finite_float(primitive.get("radius", "nan"), f"{kind} sphere radius")
+            # Primitive geometry is intentionally not flattened into MeshGeometry,
+            # but it still counts as geometry and its pose is fully validated.
+            geometry_present = True
             continue
         filename = mesh.get("filename") or mesh.get("file")
         if not filename:
@@ -361,10 +383,10 @@ def _parse_geometry(link: ET.Element, kind: str, base: Path) -> tuple[MeshGeomet
             raise ValueError(f"mesh path escapes URDF directory: {filename!r}") from exc
         if not resolved.is_file():
             raise ValueError(f"missing mesh {filename!r}")
-        origin, rpy = _parse_pose(element.find("origin"), f"{kind} origin")
         scale = _parse_vector(mesh.get("scale"), 3, f"{kind} mesh scale", default=(1.0, 1.0, 1.0))
         geometries.append(MeshGeometry(filename, resolved, origin, rpy, scale))
-    return tuple(geometries)
+        geometry_present = True
+    return tuple(geometries), geometry_present
 
 
 def _parse_pose(element: ET.Element | None, name: str) -> tuple[Vec3, Vec3]:
