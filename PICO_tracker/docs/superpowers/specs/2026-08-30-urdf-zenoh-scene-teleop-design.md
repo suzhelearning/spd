@@ -109,14 +109,18 @@ Compilation fails before writing final artifacts when any of the following is tr
 - link or joint names are duplicated;
 - a parent/child reference is missing or the graph is disconnected;
 - a mesh file is missing or has a non-finite transform/scale;
-- mass is non-positive or inertia is non-finite/non-physical;
+- mass is non-positive, or an inertia is non-finite/non-physical outside the narrow source-derived fixed-link policy below;
 - a revolute joint has missing, non-finite, or inverted limits;
 - the required `l_wrist` or `r_wrist` chain is absent;
 - the revolute counts are not 54 overall and 14 for the arm projection.
 
+The authoritative file contains 14 geometry-free fixed frames with no `<inertial>`, which remain massless frames, and two fixed TCP links with positive `0.05 kg` mass but an exact zero inertia tensor. The compiler interprets only `TCP_Link_L/R` as source-declared fixed point masses: it transforms each mass through its fixed joint, combines it into the direct parent `Link7_L/R` mass, center of mass, and tensor with the parallel-axis theorem, revalidates the combined inertia, and emits no separate TCP inertial. The manifest records the original mass, transform, destination link, and combined result. A missing inertial is accepted only on a fixed link with no visual/collision geometry. Every other missing or non-physical inertia is a build failure. This preserves the exact URDF mass and transform while avoiding invented epsilon or geometry-derived inertias.
+
 ### Visual geometry
 
 Visual geoms use the manufacturer STL files exactly as referenced by the URDF. They are not decimated or converted to primitives. Generated MJCF mesh paths are relative and portable within the workspace output layout.
+
+The URDF also contains 24 named `*_axis_[0-2]` cylinder visuals used as coordinate debug markers. They are not manufacturer meshes and are omitted from the operator scene to avoid axis clutter; the manifest records every omission. Any other primitive visual and every primitive collision geometry is rejected rather than silently substituted.
 
 ### Collision geometry
 
