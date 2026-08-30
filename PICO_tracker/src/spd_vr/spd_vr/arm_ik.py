@@ -132,6 +132,7 @@ class DualArmController:
         self._sequence = 0
         self._last_control_timestamp_ns: int | None = None
         self.tick_count = 0
+        self._shutdown_published = False
         self.left_q = np.asarray(self.left_solver.home, dtype=float).copy()
         self.right_q = np.asarray(self.right_solver.home, dtype=float).copy()
         self._left_qdot = np.zeros(7, dtype=float)
@@ -147,15 +148,24 @@ class DualArmController:
         return {
             "status": state,
             "ready": state != "shutdown",
-            "running": self._running,
-            "paused": self._paused,
+            "running": state != "shutdown" and self._running,
+            "paused": state != "shutdown" and self._paused,
             "tick_count": self.tick_count,
-            "sequence": self._sequence,
+            "sequence": self._control_gate.last_sequence,
         }
 
     def _publish_status(self, state: str | None = None) -> None:
+        if state == "shutdown" and self._shutdown_published:
+            return
         if self._status_publisher is not None:
             self._status_publisher.put(json.dumps(self._status(state), separators=(",", ":")).encode())
+        if state == "shutdown":
+            self._shutdown_published = True
+
+    def shutdown(self) -> None:
+        self._running = False
+        self._paused = False
+        self._publish_status("shutdown")
 
     def connect(self, node: ZenohNode) -> None:
         """Attach existing Zenoh ownership to tracking/control input and target output."""
@@ -501,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         print("production IK requires --model, --manifest, and --urdf", file=sys.stderr)
         return 2
     node = None
+    controller = None
     try:
         model, verified = _verified_model(args.model, args.manifest, args.urdf)
         controller = _production_controller(model, verified)
@@ -513,6 +524,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"artifact validation failed: {exc}", file=sys.stderr)
         return 2
     finally:
+        if controller is not None:
+            controller.shutdown()
         if node is not None:
             node.close()
     return 0

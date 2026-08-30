@@ -109,7 +109,12 @@ def test_production_ik_uses_connect_only_peer_config(monkeypatch):
     monkeypatch.setattr(arm_ik, "_production_controller", lambda *args: controller)
     monkeypatch.setattr(arm_ik, "peer_config", fake_config)
     monkeypatch.setattr(arm_ik, "ZenohNode", FakeNode)
-    monkeypatch.setattr(controller, "run", lambda: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    def fake_run():
+        assert controller.accept_control(ControlFrame(7, 7, ControlCommand.PAUSE))
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(controller, "run", fake_run)
 
     result = arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"])
     assert result == 0
@@ -117,11 +122,10 @@ def test_production_ik_uses_connect_only_peer_config(monkeypatch):
     assert set(seen["publishers"]) == {ARM_TARGETS_KEY, STATUS_IK_KEY}
     status_payloads = seen["publishers"][STATUS_IK_KEY].payloads
     assert status_payloads
-    status = json.loads(status_payloads[-1])
-    assert status["status"] == "ready"
-    assert status["ready"] is True
-    assert status["running"] is True
-    assert status["paused"] is False
-    assert status["tick_count"] == 0
-    assert status["sequence"] == 0
+    statuses = [json.loads(payload) for payload in status_payloads]
+    assert any(item["status"] == "ready" and item["sequence"] is None for item in statuses)
+    assert any(item["status"] == "paused" and item["sequence"] == 7 for item in statuses)
+    assert statuses[-1]["status"] == "shutdown"
+    assert statuses[-1]["running"] is False
+    assert statuses[-1]["sequence"] == 7
     assert seen["closed"] is True
