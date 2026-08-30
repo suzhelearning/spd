@@ -1,10 +1,15 @@
 import json
 import struct
-
+import time
 import pytest
 
 from spd_vr.pico_frames import FRAME_TYPE_HAND_LEFT, FRAME_TYPE_HAND_RIGHT
-from spd_vr.pxrea_bridge import BridgeCore, main
+from spd_vr.pxrea_bridge import BridgeCore, BridgeWorker, main
+from spd_vr.pxrea_sdk import (
+    BoundedCallbackQueue,
+    CallbackEvent,
+    PXREA_DEVICE_MISSING,
+)
 from spd_vr.wire import decode_tracking
 
 
@@ -40,6 +45,33 @@ def test_reset_increments_epoch_and_invalid_payload_is_counted():
     assert core.epoch == old + 1
 
 
+
+def test_lifecycle_event_clears_pending_pair_and_increments_epoch():
+    core = BridgeCore(selected_device_id="FAKE")
+    core.accept_event(("FAKE", hand_frame(FRAME_TYPE_HAND_LEFT, 10)))
+    epoch = core.epoch
+    core.accept_event(CallbackEvent("", b"", PXREA_DEVICE_MISSING))
+    assert core.epoch == epoch + 1
+    assert core.accept_event(("FAKE", hand_frame(FRAME_TYPE_HAND_RIGHT, 10))) == []
+
+def test_worker_publishes_tracking_and_status():
+    queue = BoundedCallbackQueue()
+    core = BridgeCore(selected_device_id="FAKE")
+    tracking = []
+    statuses = []
+    core.set_ready()
+    worker = BridgeWorker(queue, core, tracking.append, statuses.append)
+    worker.start()
+    queue.put(CallbackEvent("FAKE", hand_frame(FRAME_TYPE_HAND_LEFT, 10)))
+    queue.put(CallbackEvent("FAKE", hand_frame(FRAME_TYPE_HAND_RIGHT, 10)))
+    deadline = time.monotonic() + 1
+    while len(tracking) < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    worker.stop()
+    assert len(tracking) == 1
+    status = json.loads(statuses[-1])
+    assert {"ready", "device_id", "tracking_epoch", "published", "invalid_payloads", "dropped"} <= status.keys()
+    assert status["published"] == 1
 def test_fake_source_jsonl_uses_worker_path_and_rejects_malformed_line(tmp_path, capsys):
     data = tmp_path / "source.jsonl"
     data.write_text(json.dumps({"device_id": "FAKE", "data_hex": "ab", "delay_ms": 0}) + "\n")

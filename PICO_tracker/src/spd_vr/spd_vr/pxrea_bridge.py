@@ -20,8 +20,18 @@ from .pico_frames import (
     PicoFrameError,
     PicoStreamDecoder,
 )
-from .pxrea_sdk import BoundedCallbackQueue, CallbackEvent, PXREAClient
-from .wire import TRACKING_KEY, TrackingFrame, encode_tracking
+from .pxrea_sdk import (
+    BoundedCallbackQueue,
+    CallbackEvent,
+    PXREAClient,
+    PXREA_DEVICE_CUSTOM,
+    PXREA_DEVICE_CONNECT,
+    PXREA_DEVICE_FIND,
+    PXREA_DEVICE_MISSING,
+    PXREA_SERVER_CONNECT,
+    PXREA_SERVER_DISCONNECT,
+)
+from .wire import STATUS_BRIDGE_KEY, TRACKING_KEY, TrackingFrame, encode_tracking
 
 
 @dataclass(frozen=True)
@@ -53,6 +63,7 @@ class BridgeCore:
         self._published = 0
         self._invalid_payloads = 0
         self._ambiguous = False
+        self._ready = False
 
     @property
     def epoch(self) -> int:
@@ -65,20 +76,34 @@ class BridgeCore:
         self._decoder.reset()
         self._pairer.reset()
 
-    def status(self) -> dict[str, Any]:
+    def set_ready(self, ready: bool = True) -> None:
+        self._ready = bool(ready)
+
+    def status(self, dropped: int = 0) -> dict[str, Any]:
         return {
+            "ready": self._ready,
             "device_id": self.selected_device_id,
             "tracking_epoch": self._epoch,
             "published": self._published,
             "invalid_payloads": self._invalid_payloads,
+            "dropped": int(dropped),
             "device_selection_ambiguous": self._ambiguous,
         }
 
-    def status_json(self) -> str:
-        return json.dumps(self.status(), sort_keys=True, separators=(",", ":"))
+    def status_json(self, dropped: int = 0) -> str:
+        return json.dumps(self.status(dropped), sort_keys=True, separators=(",", ":"))
 
     def accept_event(self, event: CallbackEvent | tuple[str, bytes] | Any) -> list[bytes]:
-        device_id, raw = self._event_parts(event)
+        device_id, raw, event_type = self._event_parts(event)
+        if event_type in {
+            PXREA_SERVER_CONNECT,
+            PXREA_SERVER_DISCONNECT,
+            PXREA_DEVICE_FIND,
+            PXREA_DEVICE_MISSING,
+            PXREA_DEVICE_CONNECT,
+        }:
+            self.reset_device()
+            return []
         self._seen_devices.add(device_id)
         if self._auto_select:
             if len(self._seen_devices) == 1:
@@ -127,18 +152,25 @@ class BridgeCore:
         return output
 
     @staticmethod
-    def _event_parts(event: CallbackEvent | tuple[str, bytes] | Any) -> tuple[str, bytes]:
+    def _event_parts(
+        event: CallbackEvent | tuple[str, bytes] | Any,
+    ) -> tuple[str, bytes, int]:
         if isinstance(event, CallbackEvent):
-            device_id, raw = event.device_id, event.data
+            device_id, raw, event_type = event.device_id, event.data, event.event_type
         elif isinstance(event, tuple) and len(event) == 2:
-            device_id, raw = event
+            device_id, raw, event_type = (*event, PXREA_DEVICE_CUSTOM)
+        elif isinstance(event, Mapping):
+            device_id = event.get("device_id", "")
+            raw = event.get("data", b"")
+            event_type = int(event.get("event_type", PXREA_DEVICE_CUSTOM))
         else:
             device_id, raw = event.device_id, event.data
-        if not isinstance(device_id, str) or not device_id:
+            event_type = int(getattr(event, "event_type", PXREA_DEVICE_CUSTOM))
+        if not isinstance(device_id, str):
             raise ValueError("invalid device_id")
         if not isinstance(raw, bytes):
             raw = bytes(raw)
-        return device_id, raw
+        return device_id, raw, int(event_type)
 
 
 def _identity_head() -> tuple[float, ...]:
@@ -153,24 +185,36 @@ class BridgeWorker:
         queue: BoundedCallbackQueue,
         core: BridgeCore,
         publisher: Callable[[bytes], None] | None = None,
+        status_publisher: Callable[[bytes], None] | None = None,
     ) -> None:
         self.queue = queue
         self.core = core
         self.publisher = publisher
+        self.status_publisher = status_publisher
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread is not None:
             return
-        self._thread = threading.Thread(target=self._run, name="pxrea-worker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="pxrea-worker", daemon=True
+        )
         self._thread.start()
+        self._publish_status()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join()
             self._thread = None
+        self._publish_status()
+
+    def _publish_status(self) -> None:
+        if self.status_publisher is not None:
+            self.status_publisher(
+                self.core.status_json(self.queue.dropped_overflow).encode()
+            )
 
     def _run(self) -> None:
         while not self._stop.is_set() or self.queue.qsize():
@@ -180,6 +224,7 @@ class BridgeWorker:
             for payload in self.core.accept_event(event):
                 if self.publisher is not None:
                     self.publisher(payload)
+            self._publish_status()
 
 
 def _read_fake_events(path: Path) -> Iterable[tuple[CallbackEvent, int]]:
@@ -208,22 +253,41 @@ def _read_fake_events(path: Path) -> Iterable[tuple[CallbackEvent, int]]:
             yield CallbackEvent(device_id, raw), int(delay_ms)
 
 
-def _run_fake_source(path: Path) -> int:
+def _run_fake_source(
+    path: Path,
+    publisher: Callable[[bytes], None] | None = None,
+    status_publisher: Callable[[bytes], None] | None = None,
+) -> int:
     queue = BoundedCallbackQueue()
     core = BridgeCore()
-    worker = BridgeWorker(queue, core)
-    worker.start()
+    node = None
+    worker = None
     try:
+        if publisher is None or status_publisher is None:
+            from .zenoh_transport import ZenohNode, peer_config
+
+            node = ZenohNode(peer_config(listen=False, endpoint="tcp/127.0.0.1:7447"))
+            if publisher is None:
+                publisher = node.declare_publisher(TRACKING_KEY).put
+            if status_publisher is None:
+                status_publisher = node.declare_publisher(STATUS_BRIDGE_KEY).put
+        core.set_ready()
+        worker = BridgeWorker(queue, core, publisher, status_publisher)
+        worker.start()
         for event, delay_ms in _read_fake_events(path):
             queue.put(event)
             if delay_ms:
                 time.sleep(delay_ms / 1000.0)
     except (OSError, ValueError) as exc:
-        worker.stop()
         print(str(exc), file=sys.stderr)
         return 2
-    worker.stop()
-    print(core.status_json())
+    finally:
+        core.set_ready(False)
+        if worker is not None:
+            worker.stop()
+        if node is not None:
+            node.close()
+    print(core.status_json(queue.dropped_overflow))
     return 0
 
 
@@ -235,26 +299,31 @@ def _run_sdk(args: argparse.Namespace) -> int:
     core = BridgeCore(selected_device_id=args.device_id)
     stop = threading.Event()
     node = None
-    publisher = None
     client = None
+    worker = None
     old_handlers: dict[int, Any] = {}
     try:
         from .zenoh_transport import ZenohNode, peer_config
 
         node = ZenohNode(peer_config(listen=args.listen, endpoint=args.endpoint))
         publisher = node.declare_publisher(args.key)
-        worker = BridgeWorker(queue, core, publisher.put)
+        status_publisher = node.declare_publisher(STATUS_BRIDGE_KEY)
+        worker = BridgeWorker(queue, core, publisher.put, status_publisher.put)
         client = PXREAClient.load_library(args.sdk_library)
         client.queue = queue
         for sig in (signal.SIGINT, signal.SIGTERM):
             old_handlers[sig] = signal.signal(sig, lambda *_: stop.set())
         worker.start()
         with client:
+            core.set_ready()
+            worker._publish_status()
             while not stop.wait(0.2):
                 pass
-        worker.stop()
         return 0
     finally:
+        core.set_ready(False)
+        if worker is not None:
+            worker.stop()
         if client is not None:
             client.close()
         if node is not None:

@@ -26,11 +26,35 @@ CALLBACK = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p
 )
 
+PXREA_SERVER_CONNECT = 1 << 2
+PXREA_SERVER_DISCONNECT = 1 << 3
+PXREA_DEVICE_FIND = 1 << 4
+PXREA_DEVICE_MISSING = 1 << 5
+PXREA_DEVICE_CONNECT = 1 << 9
+PXREA_DEVICE_STATE_JSON = 1 << 25
+PXREA_DEVICE_CUSTOM = 1 << 26
+PXREA_CALLBACK_MASK = (
+    PXREA_SERVER_CONNECT
+    | PXREA_SERVER_DISCONNECT
+    | PXREA_DEVICE_FIND
+    | PXREA_DEVICE_MISSING
+    | PXREA_DEVICE_CONNECT
+    | PXREA_DEVICE_CUSTOM
+)
+_LIFECYCLE_TYPES = {
+    PXREA_SERVER_CONNECT,
+    PXREA_SERVER_DISCONNECT,
+    PXREA_DEVICE_FIND,
+    PXREA_DEVICE_MISSING,
+    PXREA_DEVICE_CONNECT,
+}
+
 
 @dataclass(frozen=True)
 class CallbackEvent:
     device_id: str
     data: bytes
+    event_type: int = PXREA_DEVICE_CUSTOM
 
 
 class BoundedCallbackQueue:
@@ -88,12 +112,12 @@ class PXREAClient:
         *,
         queue: BoundedCallbackQueue | None = None,
         user_data: int | None = None,
-        flags: int = 0,
+        flags: int | None = None,
     ) -> None:
         self.library = library
         self.queue = queue or BoundedCallbackQueue()
         self.user_data = user_data
-        self.flags = flags
+        self.flags = PXREA_CALLBACK_MASK if flags is None else int(flags)
         self._initialized = False
         self._closed = False
         self._status_lock = threading.Lock()
@@ -143,12 +167,12 @@ class PXREAClient:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         if self._initialized:
             result = int(self._deinit_fn())
-            self._initialized = False
             if result != 0:
                 raise PXREAError(f"PXREADeinit failed: {result}")
+            self._initialized = False
+        self._closed = True
         self._callback = None
 
     def status(self) -> dict[str, int]:
@@ -158,11 +182,15 @@ class PXREAClient:
     def _on_callback(
         self,
         _user: ctypes.c_void_p,
-        _message_type: int,
-        _reserved: int,
+        callback_type: int,
+        _status: int,
         message_ptr: ctypes.c_void_p,
     ) -> None:
-        if not message_ptr:
+        callback_type = int(callback_type)
+        if callback_type in _LIFECYCLE_TYPES:
+            self.queue.put(CallbackEvent("", b"", callback_type))
+            return
+        if callback_type != PXREA_DEVICE_CUSTOM or not message_ptr:
             return
         message = ctypes.cast(
             message_ptr, ctypes.POINTER(PXREADevCustomMessage)
@@ -180,10 +208,9 @@ class PXREAClient:
         device_id = bytes(message.devID).split(b"\0", 1)[0].decode(
             "utf-8", "replace"
         )
-        if not self.queue.put(CallbackEvent(device_id, raw)):
+        if not self.queue.put(CallbackEvent(device_id, raw, callback_type)):
             with self._status_lock:
                 self._status_counts["dropped_queue"] += 1
-
 
 __all__ = [
     "BoundedCallbackQueue",
@@ -192,4 +219,12 @@ __all__ = [
     "PXREAClient",
     "PXREADevCustomMessage",
     "PXREAError",
+    "PXREA_CALLBACK_MASK",
+    "PXREA_DEVICE_CONNECT",
+    "PXREA_DEVICE_CUSTOM",
+    "PXREA_DEVICE_FIND",
+    "PXREA_DEVICE_MISSING",
+    "PXREA_DEVICE_STATE_JSON",
+    "PXREA_SERVER_CONNECT",
+    "PXREA_SERVER_DISCONNECT",
 ]
