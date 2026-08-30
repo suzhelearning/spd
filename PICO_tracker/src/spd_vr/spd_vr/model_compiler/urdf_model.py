@@ -361,12 +361,14 @@ def _parse_geometry(
             if primitive is None:
                 raise ValueError(f"link {link.get('name')!r} {kind} has unsupported geometry")
             if primitive.tag == "box":
-                _parse_vector(primitive.get("size"), 3, f"{kind} box size")
+                size = _parse_vector(primitive.get("size"), 3, f"{kind} box size", required=True)
+                if any(value <= 0.0 for value in size):
+                    raise ValueError(f"{kind} box size must be positive")
             elif primitive.tag == "cylinder":
-                _finite_float(primitive.get("length", "nan"), f"{kind} cylinder length")
-                _finite_float(primitive.get("radius", "nan"), f"{kind} cylinder radius")
+                _positive_float(primitive.get("length"), f"{kind} cylinder length")
+                _positive_float(primitive.get("radius"), f"{kind} cylinder radius")
             else:
-                _finite_float(primitive.get("radius", "nan"), f"{kind} sphere radius")
+                _positive_float(primitive.get("radius"), f"{kind} sphere radius")
             # Primitive geometry is intentionally not flattened into MeshGeometry,
             # but it still counts as geometry and its pose is fully validated.
             geometry_present = True
@@ -398,8 +400,17 @@ def _parse_pose(element: ET.Element | None, name: str) -> tuple[Vec3, Vec3]:
     )
 
 
-def _parse_vector(value: str | None, length: int, name: str, *, default: tuple[float, ...] | None = None) -> tuple[float, ...]:
+def _parse_vector(
+    value: str | None,
+    length: int,
+    name: str,
+    *,
+    default: tuple[float, ...] | None = None,
+    required: bool = False,
+) -> tuple[float, ...]:
     if value is None:
+        if required:
+            raise ValueError(f"{name} is missing")
         if default is None:
             return tuple(0.0 for _ in range(length))
         return default
@@ -412,7 +423,14 @@ def _parse_vector(value: str | None, length: int, name: str, *, default: tuple[f
     return result
 
 
-def _finite_float(value: str, name: str) -> float:
+def _positive_float(value: str | None, name: str) -> float:
+    result = _finite_float(value, name)
+    if result <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
+def _finite_float(value: str | None, name: str) -> float:
     try:
         result = float(value)
     except (TypeError, ValueError) as exc:

@@ -80,8 +80,8 @@ def test_malformed_validation_rejects_each_invalid_variant(tmp_path: Path):
     primitive_without_inertial = """
     <robot name="fixture">
       <link name="base"><inertial><mass value="1"/><inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/></inertial><visual><geometry><mesh filename="base.stl"/></geometry></visual></link>
-      <link name="frame"><visual><origin xyz="0 0 0"/><geometry><box size="1 1 1"/></geometry></visual></link>
-      <joint name="j" type="fixed"><parent link="base"/><child link="frame"/></joint>
+      <link name="marker_wuji2_r"><visual><origin xyz="0 0 0"/><geometry><box size="1 1 1"/></geometry></visual></link>
+      <joint name="j" type="fixed"><parent link="base"/><child link="marker_wuji2_r"/></joint>
     </robot>
     """
     variants = (
@@ -93,6 +93,10 @@ def test_malformed_validation_rejects_each_invalid_variant(tmp_path: Path):
         base.replace('<link name="child">', '<link name="orphan"><inertial><mass value="1"/><inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/></inertial></link>\n<link name="child">', 1),
         base.replace('<visual><geometry><mesh filename="child.stl"/></geometry></visual>', '<visual><origin xyz="nan 0 0"/><geometry><box size="1 1 1"/></geometry></visual>'),
         primitive_without_inertial,
+        base.replace('<visual><geometry><mesh filename="child.stl"/></geometry></visual>', '<visual><geometry><box/></geometry></visual>'),
+        base.replace('<visual><geometry><mesh filename="child.stl"/></geometry></visual>', '<visual><geometry><box size="0 1 1"/></geometry></visual>'),
+        base.replace('<visual><geometry><mesh filename="child.stl"/></geometry></visual>', '<visual><geometry><cylinder length="-1" radius="1"/></geometry></visual>'),
+        base.replace('<visual><geometry><mesh filename="child.stl"/></geometry></visual>', '<visual><geometry><sphere radius="nan"/></geometry></visual>'),
     )
     for index, xml in enumerate(variants):
         path = tmp_path / f"bad-{index}.urdf"
