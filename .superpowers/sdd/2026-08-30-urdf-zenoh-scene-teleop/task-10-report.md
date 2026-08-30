@@ -35,7 +35,7 @@ imports=ok
 Command:
 
 ```text
-pixi run python -m spd_vr.viewer --headless --ticks 480 --auto-start
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
 ```
 
 Output:
@@ -56,3 +56,52 @@ headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
 The production viewer path is fail-closed: when no explicit synthetic fixture is selected, it calls `verify_artifacts` for the generated model manifest, source URDF, output XML and hashes before loading the full plant. The headless smoke above intentionally uses the named in-code `PlantController.synthetic_fixture()` because the authoritative generated artifacts are unavailable; `synthetic=True` is printed and is not authoritative robot/artifact evidence.
 
 Task7 remains externally blocked by the authoritative source quality gate: direct CoACD on `Link_Base.STL` with seed 0, max 16 pieces and max 64 vertices measured arm/base p95 surface error `0.036785362 m`, above the fixed `0.003 m` threshold. No collision threshold or fallback was widened or added.
+
+## Review round 1 verification
+
+Scoped compilation:
+
+```text
+pixi run python -m py_compile src/spd_vr/spd_vr/session_state.py src/spd_vr/spd_vr/viewer_window.py src/spd_vr/spd_vr/viewer.py src/spd_vr/spd_vr/simulator.py src/spd_vr/spd_vr/runtime.py src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py
+```
+
+Output:
+
+```text
+(no output; exit 0)
+```
+
+Scoped tests:
+
+```text
+pixi run python -m pytest src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py -q
+
+Output:
+
+```text
+..........                                                               [100%]
+=============================== warnings summary ===============================
+.pixi/envs/default/lib/python3.11/site-packages/hppfcl/__init__.py:3
+  Warning: Please update your 'hppfcl' imports to 'coal'
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+10 passed, 1 warning in 0.40s
+```
+
+Headless full-plant smoke:
+
+```text
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
+```
+
+Output:
+
+```text
+headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
+```
+
+The production viewer remains fail-closed at the verified artifact boundary. The
+authoritative Task7 five-artifact set is still unavailable because the fixed
+CoACD quality gate for `Link_Base.STL` measured arm/base p95 error
+`0.036785362 m` versus the `0.003 m` threshold; this round adds no fallback or
+threshold relaxation.

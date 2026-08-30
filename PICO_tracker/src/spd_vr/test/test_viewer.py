@@ -48,3 +48,27 @@ def test_headless_runtime_does_not_open_window_and_shutdown_is_once():
     runtime = ViewerRuntime(plant, headless=True, clock_ns=lambda: 0, sleep=lambda _: None)
     runtime.run(ticks=2, auto_start=True)
     assert plant.calls == 2
+
+def test_viewer_window_maps_lifecycle_keys_and_shutdown_once():
+    from spd_vr.viewer_window import ViewerWindow
+
+    commands = []
+    shutdowns = []
+    state = ["IDLE"]
+    window = ViewerWindow(
+        headless=True,
+        control=commands.append,
+        state=lambda: state[0],
+        shutdown=lambda: shutdowns.append("shutdown"),
+    )
+    window.on_key("space")
+    state[0] = "RUNNING"
+    window.on_key("space")
+    state[0] = "PAUSED"
+    window.on_key("space")
+    window.on_key("r")
+    window.on_key("n")
+    window.on_key("q")
+    window.on_key("escape")
+    assert commands == ["START", "PAUSE", "RESUME", "REALIGN", "RESET"]
+    assert shutdowns == ["shutdown"]

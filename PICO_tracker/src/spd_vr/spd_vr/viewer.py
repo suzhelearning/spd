@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
+import queue
 import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -15,9 +16,18 @@ from .arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, LEFT_VALID
 from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_model_addresses
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
 from .session_state import SessionController, SessionState
+from .wire import (
+    ARM_TARGETS_KEY,
+    CONTROL_KEY,
+    TRACKING_KEY,
+    ControlCommand,
+    ControlFrame,
+    decode_arm_target,
+    decode_control,
+    decode_tracking,
+)
 from .viewer_window import ViewerWindow
-from .wire import ARM_TARGETS_KEY, CONTROL_KEY, TRACKING_KEY, ControlCommand, ControlFrame, decode_arm_target, decode_control, decode_tracking
-from .zenoh_transport import LatestSample
+from .zenoh_transport import LatestSample, ZenohNode, peer_config
 
 
 PHYSICS_HZ = 480
@@ -55,6 +65,22 @@ class _TrackingMailbox:
     generation: int
     frame: Any
     arrival_ns: int
+
+
+class _ControlFIFO:
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue[ControlFrame] = queue.SimpleQueue()
+
+    def put(self, frame: ControlFrame) -> None:
+        self._queue.put(frame)
+
+    def drain(self) -> list[ControlFrame]:
+        values: list[ControlFrame] = []
+        while True:
+            try:
+                values.append(self._queue.get_nowait())
+            except queue.Empty:
+                return values
 
 
 def _synthetic_xml() -> str:
@@ -137,19 +163,22 @@ class PlantController:
         except ImportError as exc:  # pragma: no cover - package dependency
             raise ImportError("mujoco is required for PlantController") from exc
         self._mujoco = mujoco
+        production_model = model is None
+        verified = None
+        urdf_path: Path | None = None
         self.synthetic = False
         if strict_artifacts is None:
-            strict_artifacts = model is None
-        if model is None:
+            strict_artifacts = production_model
+        if production_model:
             module_root = Path(__file__).resolve().parents[1]
             generated = module_root / "generated"
-            urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
+            urdf_path = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
             if model_path is None:
                 model_path = generated / "unified_plant.xml"
             if manifest_path is None:
                 manifest_path = generated / "model_manifest.yaml"
             if strict_artifacts:
-                verified = verify_artifacts(manifest_path, urdf)
+                verified = verify_artifacts(manifest_path, urdf_path)
                 if Path(model_path).resolve() != verified.full_model.resolve():
                     raise ArtifactError("viewer must load manifest unified_plant.xml")
             model = mujoco.MjModel.from_xml_path(str(model_path))
@@ -178,6 +207,18 @@ class PlantController:
         self._home = np.asarray(
             [(entry.range[0] + entry.range[1]) * 0.5 for entry in self.joints], dtype=np.float64
         )
+        if hand_retargeter is None and production_model:
+            if verified is None or urdf_path is None:
+                raise ArtifactError("production viewer requires verified model artifacts")
+            from .retarget_pair import WujiRetargetPair
+
+            config_dir = Path(__file__).resolve().parents[1] / "config"
+            hand_retargeter = WujiRetargetPair.from_manifest(
+                config_dir / "wuji2_pico_left.yaml",
+                config_dir / "wuji2_pico_right.yaml",
+                verified.manifest_path,
+                urdf_path,
+            )
         self._hand_retargeter = hand_retargeter
         self._arm_lock = threading.Lock()
         self._tracking_lock = threading.Lock()
@@ -201,7 +242,7 @@ class PlantController:
         self._node: Any | None = None
         self._arm_wire: LatestSample[ArmTargetFrame] | None = None
         self._tracking_wire: LatestSample[Any] | None = None
-        self._control_wire: LatestSample[ControlFrame] | None = None
+        self._control_wire: _ControlFIFO | None = None
         self._wire_arm_generation = 0
         self._wire_tracking_generation = 0
         self._wire_control_generation = 0
@@ -212,7 +253,7 @@ class PlantController:
         self._set_home_state()
 
     @classmethod
-    def synthetic_fixture(cls) -> "PlantController":
+    def synthetic_fixture(cls, *, hand_retargeter: Any | None = None) -> "PlantController":
         try:
             import mujoco
         except ImportError as exc:  # pragma: no cover
@@ -220,18 +261,24 @@ class PlantController:
 
         model = mujoco.MjModel.from_xml_string(_synthetic_xml())
         data = mujoco.MjData(model)
-        plant = cls(model=model, data=data, joints=_synthetic_joints(), strict_artifacts=False)
+        plant = cls(
+            model=model,
+            data=data,
+            joints=_synthetic_joints(),
+            hand_retargeter=hand_retargeter,
+            strict_artifacts=False,
+        )
         plant.synthetic = True
         return plant
     def connect(self, node: Any, control_callback: Callable[[ControlFrame], Any] | None = None) -> None:
-        """Attach canonical Zenoh inputs; callbacks only fill one-slot mailboxes."""
+        """Attach canonical Zenoh inputs; callbacks only fill bounded mailboxes."""
         if self._node is not None:
             raise RuntimeError("plant is already connected")
         self._node = node
         self._control_callback = control_callback
         self._arm_wire = LatestSample()
         self._tracking_wire = LatestSample()
-        self._control_wire = LatestSample()
+        self._control_wire = _ControlFIFO()
         node.declare_latest_subscriber(ARM_TARGETS_KEY, decode_arm_target, self._arm_wire)
         node.declare_latest_subscriber(TRACKING_KEY, decode_tracking, self._tracking_wire)
         node.declare_latest_subscriber(CONTROL_KEY, decode_control, self._control_wire)
@@ -254,9 +301,7 @@ class PlantController:
                 self._wire_tracking_generation, frame = sample
                 self.submit_tracking(frame)
         if self._control_wire is not None:
-            sample = self._control_wire.take_new(self._wire_control_generation)
-            if sample is not None:
-                self._wire_control_generation, frame = sample
+            for frame in self._control_wire.drain():
                 if self._control_callback is not None:
                     self._control_callback(frame)
 
@@ -362,8 +407,12 @@ class PlantController:
     on_arm_target_packet = submit_arm_packet
 
     def submit_tracking(self, frame: Any, *, now_ns: int | None = None) -> int:
-        epoch = int(getattr(frame, "tracking_epoch", frame.get("tracking_epoch", 0) if isinstance(frame, Mapping) else 0))
-        sequence = int(getattr(frame, "sequence_id", frame.get("sequence_id", 0) if isinstance(frame, Mapping) else 0))
+        if isinstance(frame, Mapping):
+            epoch = int(frame.get("tracking_epoch", 0))
+            sequence = int(frame.get("sequence", frame.get("sequence_id", 0)))
+        else:
+            epoch = int(getattr(frame, "tracking_epoch", 0))
+            sequence = int(getattr(frame, "sequence", getattr(frame, "sequence_id", 0)))
         key = (epoch, sequence)
         if self._last_tracking_sequence is not None and key <= self._last_tracking_sequence:
             return self._tracking_generation
@@ -425,8 +474,26 @@ class PlantController:
         return values, valid, reason
 
 
+    @staticmethod
+    def _pico_hand_frame(frame: Any) -> Any:
+        if not hasattr(frame, "left_hand") or not hasattr(frame, "right_hand"):
+            return frame
+        from .pico_hands import PicoHandFrame
+
+        return PicoHandFrame(
+            left_hand=np.asarray(frame.left_hand),
+            right_hand=np.asarray(frame.right_hand),
+            left_active=bool(getattr(frame, "left_active", True)),
+            right_active=bool(getattr(frame, "right_active", True)),
+            tracking_epoch=int(getattr(frame, "tracking_epoch", 0)),
+            sequence_id=int(getattr(frame, "sequence", getattr(frame, "sequence_id", 0))),
+            timestamp_ns=int(getattr(frame, "source_timestamp_ns", getattr(frame, "timestamp_ns", 0))),
+            left_scale=float(getattr(frame, "left_scale", 1.0)),
+            right_scale=float(getattr(frame, "right_scale", 1.0)),
+        )
+
     def _process_tracking(self, mailbox: _TrackingMailbox) -> None:
-        frame = mailbox.frame
+        frame = self._pico_hand_frame(mailbox.frame)
         if hasattr(frame, "left_qpos") and hasattr(frame, "right_qpos"):
             result = frame
         elif self._hand_retargeter is None:
@@ -453,6 +520,7 @@ class PlantController:
             self._hand_reason[side] = "none" if valid else reason
             if valid:
                 self._hand_arrival[side] = mailbox.arrival_ns
+        self.mark_alignment_fresh()
 
     def _refresh_stale(self, now_ns: int) -> None:
         for side in ("left", "right"):
@@ -485,20 +553,22 @@ class PlantController:
             raise RuntimeError("plant is shut down")
         now = int(time.monotonic_ns() if now_ns is None else now_ns)
         self._poll_wire()
+        if self._closed:
+            return self._step_snapshot()
         if self.paused:
             return self._step_snapshot()
-        with self._arm_lock:
-            arm_mailbox = self._arm_mailbox
-        if arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
-            frame = arm_mailbox.frame
-            self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
-            self._arm_side("right", frame.right_q, frame.right_qdot, bool(frame.valid_mask & RIGHT_VALID), frame.right_hold_reason, arm_mailbox.arrival_ns)
-            self._applied_arm_generation = arm_mailbox.generation
         with self._tracking_lock:
             tracking_mailbox = self._tracking_mailbox
         if tracking_mailbox is not None and tracking_mailbox.generation != self._applied_tracking_generation:
             self._process_tracking(tracking_mailbox)
             self._applied_tracking_generation = tracking_mailbox.generation
+        with self._arm_lock:
+            arm_mailbox = self._arm_mailbox
+        if not self._fresh_alignment_required and arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
+            frame = arm_mailbox.frame
+            self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
+            self._arm_side("right", frame.right_q, frame.right_qdot, bool(frame.valid_mask & RIGHT_VALID), frame.right_hold_reason, arm_mailbox.arrival_ns)
+            self._applied_arm_generation = arm_mailbox.generation
         self._refresh_stale(now)
         self._apply_ctrl()
         self._mujoco.mj_step(self.model, self.data)
@@ -550,28 +620,54 @@ class ViewerRuntime:
         self._clock_ns = time.monotonic_ns if clock_ns is None else clock_ns
         self._sleep = time.sleep if sleep is None else sleep
         self.session = session or SessionController(plant)
+        self._publisher: Any | None = None
+        self._node: Any | None = None
         if window is None:
             window = ViewerWindow(
                 getattr(plant, "model", None),
                 getattr(plant, "data", None),
                 headless=self.headless,
                 shutdown=self._shutdown_from_window,
+                control=self.send_control,
+                state=lambda: self.session.state.value,
             )
         self.window = window
-        self._next_sequence = 0
+        self._next_sequence = 1
     def connect(self, node: Any) -> None:
+        if self._node is not None:
+            raise RuntimeError("runtime is already connected")
+        self._node = node
+        self._publisher = node.declare_publisher(CONTROL_KEY)
         connect = getattr(self.plant, "connect", None)
         if connect is None:
             raise TypeError("plant does not support Zenoh connections")
         connect(node, self.session.apply)
 
+    def close(self) -> None:
+        close_window = getattr(self.window, "close", None)
+        if close_window is not None:
+            close_window()
+        if self._node is not None:
+            self.plant.disconnect()
+            self._node = None
+            self._publisher = None
+
     def _shutdown_from_window(self) -> None:
         self.send_control(ControlCommand.SHUTDOWN)
 
-    def send_control(self, command: ControlCommand) -> Any:
-        self._next_sequence += 1
+    def send_control(self, command: ControlCommand | str) -> Any:
+        if isinstance(command, str):
+            command = ControlCommand[command.upper()]
+        else:
+            command = ControlCommand(command)
         timestamp_ns = max(1, int(self._clock_ns()))
-        return self.session.apply(ControlFrame(self._next_sequence, timestamp_ns, command))
+        frame = ControlFrame(self._next_sequence, timestamp_ns, command)
+        self._next_sequence += 1
+        if self._publisher is not None:
+            from .wire import encode_control
+
+            self._publisher.put(encode_control(frame))
+        return self.session.apply(frame)
     def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:
         if ticks is not None and int(ticks) < 0:
             raise ValueError("ticks must be non-negative")
@@ -592,9 +688,19 @@ class ViewerRuntime:
                     now = int(self._clock_ns())
                 if self.session.state is SessionState.SHUTDOWN:
                     break
-                self.plant.physics_tick(now)
+                if not self.headless:
+                    is_running = getattr(self.window, "is_running", None)
+                    if callable(is_running) and not is_running():
+                        self._shutdown_from_window()
+                        break
+                result = self.plant.physics_tick(now)
                 count += 1
+                if hasattr(self.plant, "requires_fresh_alignment") and not self.plant.requires_fresh_alignment:
+                    self.session.mark_aligned()
                 if not self.headless and now >= render_deadline:
+                    update_hud = getattr(self.window, "update_hud", None)
+                    if update_hud is not None:
+                        update_hud({"state": self.session.state.value, "physics_finite": getattr(result, "finite", True)})
                     sync = getattr(self.window, "sync", None)
                     if sync is not None:
                         sync()
@@ -616,22 +722,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--ticks", type=int, default=None)
     parser.add_argument("--auto-start", action="store_true")
+    parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     args = parser.parse_args(argv)
     if args.ticks is None and args.headless:
         args.ticks = PHYSICS_HZ
-    if args.headless and args.model is None and args.manifest is None:
+    if args.synthetic:
+        if not args.headless:
+            raise SystemExit("--synthetic requires --headless")
         plant = PlantController.synthetic_fixture()
         synthetic = True
+        runtime = ViewerRuntime(plant, headless=True)
+        node = None
     else:
         plant = PlantController(args.model, args.manifest, strict_artifacts=True)
         synthetic = False
-    runtime = ViewerRuntime(plant, headless=args.headless)
-    count = runtime.run(ticks=args.ticks, auto_start=args.auto_start)
-    finite = bool(np.all(np.isfinite(plant.data.qpos)) and np.all(np.isfinite(plant.data.qvel)) and np.all(np.isfinite(plant.data.ctrl)))
-    print(f"headless={args.headless} ticks={count} simulated_seconds={plant.sim_time_ns / 1e9:.6f} finite={finite} synthetic={synthetic}")
-    return 0 if finite and (args.ticks is None or count == args.ticks) else 1
+        runtime = ViewerRuntime(plant, headless=args.headless)
+        node = ZenohNode(peer_config(listen=False, endpoint=args.endpoint))
+        try:
+            runtime.connect(node)
+        except Exception:
+            node.close()
+            plant.close()
+            raise
+    try:
+        count = runtime.run(ticks=args.ticks, auto_start=args.auto_start)
+        finite = bool(np.all(np.isfinite(plant.data.qpos)) and np.all(np.isfinite(plant.data.qvel)) and np.all(np.isfinite(plant.data.ctrl)))
+        print(f"headless={args.headless} ticks={count} simulated_seconds={plant.sim_time_ns / 1e9:.6f} finite={finite} synthetic={synthetic}")
+        return 0 if finite and (args.ticks is None or count == args.ticks) else 1
+    finally:
+        runtime.close()
+        plant.close()
 
 
 __all__ = ["PHYSICS_HZ", "PlantController", "PlantStep", "RENDER_HZ", "ViewerRuntime", "main"]

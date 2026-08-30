@@ -113,17 +113,17 @@ def run_runtime(
     duration_s: float,
     seed: int = 0,
     headless: bool = True,
-    mock: bool = True,
+    mock: bool = False,
 ) -> Path:
     """Write one deterministic episode without any live/device input path."""
     del seed, headless
     if not math.isfinite(float(duration_s)) or duration_s <= 0.0:
         raise ValueError("duration_s must be positive")
     if not mock:
-        raise RuntimeError("runtime only supports explicit hardware-free mock episodes")
+        raise RuntimeError("runtime requires explicit --mock for hardware-free episodes")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    plant = PlantController.synthetic_fixture()
+    plant = PlantController.synthetic_fixture(hand_retargeter=_MockRetargeter())
     camera = SyntheticCameraProvider()
     recorder = EpisodeRecorder(output)
     recorder.start_episode(1, {"scene": scene, "task": task, "synthetic": True})
@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--duration", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--mock", action="store_true", default=True)
+    parser.add_argument("--mock", action="store_true")
     args = parser.parse_args(argv)
     episode = run_runtime(
         output=args.output,
@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         duration_s=args.duration,
         seed=args.seed,
         headless=args.headless,
-        mock=True,
+        mock=args.mock,
     )
     print(json.dumps({"episode": str(episode), "synthetic": True}, sort_keys=True))
     return 0

@@ -6,7 +6,7 @@ from spd_vr.viewer import PlantController
 
 def arm_frame(plant, sequence, valid_mask):
     left = tuple(float(value) for value in plant._home[:7])
-    right = tuple(float(value) for value in plant._home[27:34])
+    right = tuple(0.25 for _ in range(7))
     return ArmTargetFrame(
         sequence=sequence,
         tracking_epoch=1,
@@ -27,10 +27,22 @@ def test_plant_keeps_valid_side_and_holds_stale_side_locally():
     plant.submit_arm_target(arm_frame(plant, 1, RIGHT_VALID), now_ns=10_000_000_000)
     step = plant.physics_tick(10_000_000_000)
     assert step.arm_valid_mask == RIGHT_VALID
-    right_ctrl = plant.data.ctrl[7:14].copy()
+    right_ids = [
+        plant._actuator_ids[joint.actuator]
+        for joint in plant.joints
+        if joint.side == "right" and joint.group == "arm"
+    ]
+    left_ids = [
+        plant._actuator_ids[joint.actuator]
+        for joint in plant.joints
+        if joint.side == "left" and joint.group == "arm"
+    ]
+    right_ctrl = plant.data.ctrl[right_ids].copy()
+    np.testing.assert_allclose(right_ctrl, 0.25)
+    np.testing.assert_array_equal(plant.data.ctrl[left_ids], 0.0)
     stale = plant.physics_tick(10_000_000_001 + 50_000_001)
     assert stale.arm_valid_mask == 0
-    np.testing.assert_array_equal(plant.data.ctrl[7:14], right_ctrl)
+    np.testing.assert_array_equal(plant.data.ctrl[right_ids], right_ctrl)
     plant.close()
 
 

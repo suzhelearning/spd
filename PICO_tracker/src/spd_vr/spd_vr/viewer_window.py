@@ -18,6 +18,8 @@ class ViewerWindow:
         headless: bool = False,
         clock_ns: Callable[[], int] | None = None,
         shutdown: Callable[[], None] | None = None,
+        control: Callable[[str], None] | None = None,
+        state: Callable[[], str] | None = None,
         window: Any | None = None,
     ) -> None:
         self.model = model
@@ -25,6 +27,8 @@ class ViewerWindow:
         self.headless = bool(headless)
         self._clock_ns = clock_ns
         self._shutdown = shutdown
+        self._control = control
+        self._state = state
         self._window = window
         self._closed = False
         self._shutdown_sent = False
@@ -37,6 +41,12 @@ class ViewerWindow:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    def is_running(self) -> bool:
+        if self._closed:
+            return False
+        running = getattr(self._window, "is_running", None)
+        return bool(running()) if callable(running) else True
 
     @property
     def shutdown_sent(self) -> bool:
@@ -83,8 +93,23 @@ class ViewerWindow:
             self._shutdown_sent = True
             if self._shutdown is not None:
                 self._shutdown()
+        elif self._control is not None:
+            if name == "space":
+                current = (self._state() if self._state is not None else "IDLE").upper()
+                command = "PAUSE" if current == "RUNNING" else "RESUME" if current == "PAUSED" else "START"
+                self._control(command)
+            elif name == "r":
+                self._control("REALIGN")
+            elif name == "n":
+                self._control("RESET")
     handle_key = on_key
-
+    def update_hud(self, values: Mapping[str, Any]) -> None:
+        self.hud = dict(values)
+        if self._window is None:
+            return
+        update = getattr(self._window, "update_hud", None)
+        if update is not None:
+            update(self.hud)
     def sync(self, now_ns: int | None = None) -> None:
         del now_ns
         if self._closed or self._window is None:
@@ -92,10 +117,6 @@ class ViewerWindow:
         sync = getattr(self._window, "sync", None)
         if sync is not None:
             sync()
-
-    def update_hud(self, values: Mapping[str, Any]) -> None:
-        self.hud = dict(values)
-
     def close(self) -> None:
         if self._closed:
             return
