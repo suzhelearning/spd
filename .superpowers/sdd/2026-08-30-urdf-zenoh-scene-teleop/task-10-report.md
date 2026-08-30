@@ -105,3 +105,52 @@ authoritative Task7 five-artifact set is still unavailable because the fixed
 CoACD quality gate for `Link_Base.STL` measured arm/base p95 error
 `0.036785362 m` versus the `0.003 m` threshold; this round adds no fallback or
 threshold relaxation.
+
+## Review round 2 verification
+
+Scoped compilation:
+
+```text
+pixi run python -m py_compile src/spd_vr/spd_vr/session_state.py src/spd_vr/spd_vr/viewer_window.py src/spd_vr/spd_vr/viewer.py src/spd_vr/spd_vr/simulator.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/zenoh_transport.py src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py
+```
+
+Output:
+
+```text
+(no output; exit 0)
+```
+
+Scoped tests:
+
+```text
+pixi run python -m pytest src/spd_vr/test/test_session_state.py src/spd_vr/test/test_viewer.py src/spd_vr/test/test_simulator.py src/spd_vr/test/test_runtime.py -q
+```
+
+Output:
+
+```text
+.............                                                            [100%]
+=============================== warnings summary ===============================
+.pixi/envs/default/lib/python3.11/site-packages/hppfcl/__init__.py:3
+  Warning: Please update your 'hppfcl' imports to 'coal'
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+13 passed, 1 warning in 0.40s
+```
+
+Headless full-plant smoke:
+
+```text
+pixi run python -m spd_vr.viewer --headless --synthetic --ticks 480 --auto-start
+```
+
+Output:
+
+```text
+headless=True ticks=480 simulated_seconds=1.000000 finite=True synthetic=True
+```
+
+The production artifact blocker is unchanged: `Link_Base.STL` still fails the
+fixed CoACD gate at arm/base p95 `0.036785362 m` versus `0.003 m`; production
+viewer remains fail-closed and this round adds no synthetic fallback to that
+path.

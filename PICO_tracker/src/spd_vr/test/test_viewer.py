@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
-from spd_vr.viewer import ViewerRuntime
-from spd_vr.wire import ControlCommand
+from spd_vr.viewer import PlantController, ViewerRuntime
+from spd_vr.viewer_window import ViewerWindow
+from spd_vr.wire import CONTROL_KEY, ControlCommand, ControlFrame
+from spd_vr.zenoh_transport import CONTROL_CONGESTION_CONTROL
 
 
 class Clock:
@@ -72,3 +74,68 @@ def test_viewer_window_maps_lifecycle_keys_and_shutdown_once():
     window.on_key("escape")
     assert commands == ["START", "PAUSE", "RESUME", "REALIGN", "RESET"]
     assert shutdowns == ["shutdown"]
+
+def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes():
+    class Publisher:
+        def __init__(self):
+            self.payloads = []
+
+        def put(self, payload):
+            self.payloads.append(payload)
+
+    class Node:
+        def __init__(self):
+            self.publisher = Publisher()
+            self.publisher_kwargs = None
+            self.mailboxes = {}
+            self.closed = 0
+
+        def declare_publisher(self, key, **kwargs):
+            assert key == CONTROL_KEY
+            self.publisher_kwargs = kwargs
+            return self.publisher
+
+        def declare_latest_subscriber(self, key, _decoder, mailbox):
+            self.mailboxes[key] = mailbox
+
+        def close(self):
+            self.closed += 1
+
+    plant = PlantController.synthetic_fixture()
+    runtime = ViewerRuntime(plant, headless=True, clock_ns=lambda: 1, sleep=lambda _: None)
+    node = Node()
+    runtime.connect(node)
+    assert node.publisher_kwargs["congestion_control"] is CONTROL_CONGESTION_CONTROL
+    runtime.send_control(ControlCommand.START)
+    assert node.publisher.payloads
+    node.mailboxes[CONTROL_KEY].put(ControlFrame(2, 2, ControlCommand.PAUSE))
+    plant.physics_tick(2)
+    assert runtime.session.snapshot.paused
+    runtime.close()
+    assert node.closed == 1
+    plant.close()
+
+
+def test_viewer_window_uses_real_handle_text_surface_for_hud():
+    class Handle:
+        def __init__(self):
+            self.texts = None
+
+        def set_texts(self, texts):
+            self.texts = texts
+
+    handle = Handle()
+    window = ViewerWindow(headless=False, window=handle)
+    window.update_hud(
+        {
+            "state": "RUNNING",
+            "arm_valid_mask": 3,
+            "input_age_ms": 1.5,
+            "drops": 0,
+            "physics_hz": 480,
+            "artifact": "verified",
+        }
+    )
+    assert handle.texts[2] == "SPD VR"
+    assert "arm_valid_mask: 3" in handle.texts[3]
+    assert "physics_hz: 480" in handle.texts[3]

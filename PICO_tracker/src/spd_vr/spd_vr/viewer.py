@@ -27,7 +27,7 @@ from .wire import (
     decode_tracking,
 )
 from .viewer_window import ViewerWindow
-from .zenoh_transport import LatestSample, ZenohNode, peer_config
+from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
 
 
 PHYSICS_HZ = 480
@@ -238,6 +238,10 @@ class PlantController:
         self._hand_arrival = {"left": None, "right": None}
         self._applied_arm_generation = 0
         self._applied_tracking_generation = 0
+        self._alignment_generation = 0
+        self._alignment_ready = {"left": True, "right": True}
+        self._fresh_arm_valid = {"left": True, "right": True}
+        self._fresh_hand_valid = {"left": True, "right": True}
         self._fresh_alignment_required = False
         self._node: Any | None = None
         self._arm_wire: LatestSample[ArmTargetFrame] | None = None
@@ -290,6 +294,10 @@ class PlantController:
         self._control_callback = None
 
     def _poll_wire(self) -> None:
+        if self._control_wire is not None:
+            for frame in self._control_wire.drain():
+                if self._control_callback is not None:
+                    self._control_callback(frame)
         if self._arm_wire is not None:
             sample = self._arm_wire.take_new(self._wire_arm_generation)
             if sample is not None:
@@ -300,10 +308,6 @@ class PlantController:
             if sample is not None:
                 self._wire_tracking_generation, frame = sample
                 self.submit_tracking(frame)
-        if self._control_wire is not None:
-            for frame in self._control_wire.drain():
-                if self._control_callback is not None:
-                    self._control_callback(frame)
 
     @classmethod
     def synthetic(cls) -> "PlantController":
@@ -329,34 +333,42 @@ class PlantController:
         return self._fresh_alignment_required
 
     def require_fresh_alignment(self) -> None:
+        self._alignment_generation += 1
         self._fresh_alignment_required = True
+        self._alignment_ready = {"left": False, "right": False}
+        self._fresh_arm_valid = {"left": False, "right": False}
+        self._fresh_hand_valid = {"left": False, "right": False}
         self._last_arm_sequence = None
         self._last_tracking_sequence = None
         with self._arm_lock:
             self._arm_mailbox = None
         with self._tracking_lock:
             self._tracking_mailbox = None
+        if self._arm_wire is not None:
+            self._arm_wire.invalidate()
+        if self._tracking_wire is not None:
+            self._tracking_wire.invalidate()
         self._arm_valid = {"left": False, "right": False}
         self._hand_valid = {"left": False, "right": False}
 
+    def _update_alignment_ready(self) -> None:
+        for side in ("left", "right"):
+            self._alignment_ready[side] = self._fresh_arm_valid[side] and self._fresh_hand_valid[side]
+        self._fresh_alignment_required = not all(self._alignment_ready.values())
+
     def mark_alignment_fresh(self) -> None:
-        self._fresh_alignment_required = False
+        self._update_alignment_ready()
 
     def reset_home(self) -> None:
         self._set_home_state()
         self.tick = 0
-        self._fresh_alignment_required = True
-        self._arm_mailbox = None
-        self._tracking_mailbox = None
         self._arm_generation = self._tracking_generation = 0
         self._applied_arm_generation = self._applied_tracking_generation = 0
-        self._last_arm_sequence = self._last_tracking_sequence = None
-        self._arm_valid = {"left": False, "right": False}
-        self._hand_valid = {"left": False, "right": False}
         self._arm_arrival = {"left": None, "right": None}
         self._hand_arrival = {"left": None, "right": None}
         self._arm_values = {"left": self._home[:7].copy(), "right": self._home[27:34].copy()}
         self._hand_values = {"left": self._home[7:27].copy(), "right": self._home[34:54].copy()}
+        self.require_fresh_alignment()
 
     def set_paused(self, paused: bool) -> None:
         self.paused = bool(paused)
@@ -520,19 +532,30 @@ class PlantController:
             self._hand_reason[side] = "none" if valid else reason
             if valid:
                 self._hand_arrival[side] = mailbox.arrival_ns
-        self.mark_alignment_fresh()
+            if self._fresh_alignment_required:
+                self._fresh_hand_valid[side] = bool(valid)
+        if self._fresh_alignment_required:
+            self._update_alignment_ready()
 
     def _refresh_stale(self, now_ns: int) -> None:
         for side in ("left", "right"):
             if self._arm_valid[side] and self._arm_arrival[side] is not None and now_ns - self._arm_arrival[side] > INPUT_STALE_NS:
                 self._arm_valid[side] = False
                 self._arm_reason[side] = ArmTargetHoldReason.INPUT_STALE
+                if self._fresh_alignment_required:
+                    self._fresh_arm_valid[side] = False
             if self._hand_valid[side] and self._hand_arrival[side] is not None and now_ns - self._hand_arrival[side] > INPUT_STALE_NS:
                 self._hand_valid[side] = False
                 self._hand_reason[side] = "input_stale"
+                if self._fresh_alignment_required:
+                    self._fresh_hand_valid[side] = False
+        if self._fresh_alignment_required:
+            self._update_alignment_ready()
 
     def _apply_ctrl(self) -> None:
         for entry in self.joints:
+            if self._fresh_alignment_required and not self._alignment_ready[entry.side]:
+                continue
             side_index = entry.index if entry.side == "left" else entry.index - 27
             if entry.group == "arm":
                 value = self._arm_values[entry.side][side_index]
@@ -564,10 +587,14 @@ class PlantController:
             self._applied_tracking_generation = tracking_mailbox.generation
         with self._arm_lock:
             arm_mailbox = self._arm_mailbox
-        if not self._fresh_alignment_required and arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
+        if arm_mailbox is not None and arm_mailbox.generation != self._applied_arm_generation:
             frame = arm_mailbox.frame
             self._arm_side("left", frame.left_q, frame.left_qdot, bool(frame.valid_mask & LEFT_VALID), frame.left_hold_reason, arm_mailbox.arrival_ns)
             self._arm_side("right", frame.right_q, frame.right_qdot, bool(frame.valid_mask & RIGHT_VALID), frame.right_hold_reason, arm_mailbox.arrival_ns)
+            if self._fresh_alignment_required:
+                self._fresh_arm_valid["left"] = self._arm_valid["left"]
+                self._fresh_arm_valid["right"] = self._arm_valid["right"]
+                self._update_alignment_ready()
             self._applied_arm_generation = arm_mailbox.generation
         self._refresh_stale(now)
         self._apply_ctrl()
@@ -578,8 +605,8 @@ class PlantController:
     step = physics_tick
 
     def _step_snapshot(self) -> PlantStep:
-        arm_mask = (LEFT_VALID if self._arm_valid["left"] else 0) | (RIGHT_VALID if self._arm_valid["right"] else 0)
-        hand_mask = (LEFT_VALID if self._hand_valid["left"] else 0) | (RIGHT_VALID if self._hand_valid["right"] else 0)
+        arm_mask = (LEFT_VALID if self._arm_valid["left"] and self._alignment_ready["left"] else 0) | (RIGHT_VALID if self._arm_valid["right"] and self._alignment_ready["right"] else 0)
+        hand_mask = (LEFT_VALID if self._hand_valid["left"] and self._alignment_ready["left"] else 0) | (RIGHT_VALID if self._hand_valid["right"] and self._alignment_ready["right"] else 0)
         finite = bool(
             np.all(np.isfinite(self.data.qpos))
             and np.all(np.isfinite(self.data.qvel))
@@ -590,11 +617,11 @@ class PlantController:
 
     @property
     def arm_valid_mask(self) -> int:
-        return (LEFT_VALID if self._arm_valid["left"] else 0) | (RIGHT_VALID if self._arm_valid["right"] else 0)
+        return (LEFT_VALID if self._arm_valid["left"] and self._alignment_ready["left"] else 0) | (RIGHT_VALID if self._arm_valid["right"] and self._alignment_ready["right"] else 0)
 
     @property
     def hand_valid_mask(self) -> int:
-        return (LEFT_VALID if self._hand_valid["left"] else 0) | (RIGHT_VALID if self._hand_valid["right"] else 0)
+        return (LEFT_VALID if self._hand_valid["left"] and self._alignment_ready["left"] else 0) | (RIGHT_VALID if self._hand_valid["right"] and self._alignment_ready["right"] else 0)
 
     def shutdown(self) -> None:
         self._closed = True
@@ -637,11 +664,22 @@ class ViewerRuntime:
         if self._node is not None:
             raise RuntimeError("runtime is already connected")
         self._node = node
-        self._publisher = node.declare_publisher(CONTROL_KEY)
-        connect = getattr(self.plant, "connect", None)
-        if connect is None:
-            raise TypeError("plant does not support Zenoh connections")
-        connect(node, self.session.apply)
+        try:
+            self._publisher = node.declare_publisher(
+                CONTROL_KEY,
+                congestion_control=CONTROL_CONGESTION_CONTROL,
+            )
+            connect = getattr(self.plant, "connect", None)
+            if connect is None:
+                raise TypeError("plant does not support Zenoh connections")
+            connect(node, self.session.apply)
+        except Exception:
+            close = getattr(node, "close", None)
+            if close is not None:
+                close()
+            self._node = None
+            self._publisher = None
+            raise
 
     def close(self) -> None:
         close_window = getattr(self.window, "close", None)
@@ -668,6 +706,27 @@ class ViewerRuntime:
 
             self._publisher.put(encode_control(frame))
         return self.session.apply(frame)
+    def _hud_values(self, result: Any, now_ns: int) -> dict[str, Any]:
+        ages = [
+            now_ns - int(arrival)
+            for arrival in (
+                getattr(self.plant, "_arm_arrival", {}).values()
+                if hasattr(self.plant, "_arm_arrival")
+                else ()
+            )
+            if arrival is not None
+        ]
+        return {
+            "state": self.session.state.value,
+            "physics_finite": getattr(result, "finite", True),
+            "physics_hz": PHYSICS_HZ,
+            "render_hz": RENDER_HZ,
+            "arm_valid_mask": getattr(result, "arm_valid_mask", 0),
+            "hand_valid_mask": getattr(result, "hand_valid_mask", 0),
+            "input_age_ms": round(max(ages, default=0) / 1.0e6, 3),
+            "drops": 0,
+            "artifact": "synthetic" if getattr(self.plant, "synthetic", False) else "verified",
+        }
     def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:
         if ticks is not None and int(ticks) < 0:
             raise ValueError("ticks must be non-negative")
@@ -700,7 +759,7 @@ class ViewerRuntime:
                 if not self.headless and now >= render_deadline:
                     update_hud = getattr(self.window, "update_hud", None)
                     if update_hud is not None:
-                        update_hud({"state": self.session.state.value, "physics_finite": getattr(result, "finite", True)})
+                        update_hud(self._hud_values(result, now))
                     sync = getattr(self.window, "sync", None)
                     if sync is not None:
                         sync()

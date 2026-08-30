@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from threading import Lock
-from typing import Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 import zenoh
 
@@ -46,6 +46,8 @@ def peer_config(*, listen: bool, endpoint: str) -> zenoh.Config:
     config.insert_json5("connect/endpoints", "[]" if listen else f'["{endpoint}"]')
     return config
 
+CONTROL_CONGESTION_CONTROL = zenoh.CongestionControl.BLOCK
+
 
 class ZenohNode:
     def __init__(self, config: zenoh.Config) -> None:
@@ -58,11 +60,16 @@ class ZenohNode:
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
-
-    def declare_publisher(self, key: str) -> zenoh.Publisher:
+    def declare_publisher(
+        self,
+        key: str,
+        *,
+        congestion_control: Any | None = None,
+    ) -> zenoh.Publisher:
         if self._session is None:
             raise RuntimeError("ZenohNode is closed")
-        publisher = self._session.declare_publisher(key)
+        kwargs = {} if congestion_control is None else {"congestion_control": congestion_control}
+        publisher = self._session.declare_publisher(key, **kwargs)
         self._publishers.append(publisher)
         return publisher
 

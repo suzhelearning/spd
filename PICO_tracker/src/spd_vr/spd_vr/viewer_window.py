@@ -107,6 +107,22 @@ class ViewerWindow:
         self.hud = dict(values)
         if self._window is None:
             return
+        set_texts = getattr(self._window, "set_texts", None)
+        if set_texts is not None:
+            try:
+                import mujoco
+            except ImportError:  # pragma: no cover - visible mode requires MuJoCo
+                return
+            text = "\n".join(f"{key}: {value}" for key, value in self.hud.items())
+            set_texts(
+                (
+                    mujoco.mjtFontScale.mjFONTSCALE_150,
+                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                    "SPD VR",
+                    text,
+                )
+            )
+            return
         update = getattr(self._window, "update_hud", None)
         if update is not None:
             update(self.hud)
