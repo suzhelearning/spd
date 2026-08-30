@@ -74,10 +74,18 @@ class ZenohNode:
         key: str,
         *,
         congestion_control: Any | None = None,
+        reliability: Any | None = None,
+        express: bool | None = None,
     ) -> zenoh.Publisher:
         if self._session is None:
             raise RuntimeError("ZenohNode is closed")
-        kwargs = {} if congestion_control is None else {"congestion_control": congestion_control}
+        kwargs: dict[str, Any] = {}
+        if congestion_control is not None:
+            kwargs["congestion_control"] = congestion_control
+        if reliability is not None:
+            kwargs["reliability"] = reliability
+        if express is not None:
+            kwargs["express"] = express
         publisher = self._session.declare_publisher(key, **kwargs)
         self._publishers.append(publisher)
         return publisher

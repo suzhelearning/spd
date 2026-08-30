@@ -77,7 +77,7 @@ def test_viewer_window_maps_lifecycle_keys_and_shutdown_once():
     assert commands == ["START", "PAUSE", "RESUME", "REALIGN", "RESET"]
     assert shutdowns == ["shutdown"]
 
-def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes():
+def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes(tmp_path):
     class Publisher:
         def __init__(self):
             self.payloads = []
@@ -106,7 +106,7 @@ def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes():
             self.closed += 1
 
     plant = PlantController.synthetic_fixture()
-    runtime = ViewerRuntime(plant, headless=True, clock_ns=lambda: 1, sleep=lambda _: None)
+    runtime = ViewerRuntime(plant, headless=True, clock_ns=lambda: 1, sleep=lambda _: None, sequence_file=tmp_path / "sequence.json")
     node = Node()
     runtime.connect(node)
     assert node.publisher_kwargs["congestion_control"] is CONTROL_CONGESTION_CONTROL

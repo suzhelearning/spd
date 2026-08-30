@@ -62,16 +62,37 @@ def _endpoint_host_port(endpoint: str) -> tuple[str, int]:
     return host.strip("[]"), int(port)
 
 
-def _check_adb_reverse(run_command: RunCommand) -> CheckResult:
+def _adb_command(run_command: RunCommand, command: Sequence[str]) -> tuple[bool, str]:
     try:
-        result = run_command(["adb", "reverse", "--list"])
+        result = run_command(command)
     except OSError as exc:
-        return CheckResult("adb_reverse", False, f"adb unavailable: {exc}")
+        return False, f"adb unavailable: {exc}"
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "adb reverse --list failed").strip()
-        return CheckResult("adb_reverse", False, detail)
-    detail = (result.stdout or "").strip() or "ADB reverse is available"
-    return CheckResult("adb_reverse", True, detail)
+        return False, (result.stderr or result.stdout or "adb command failed").strip()
+    return True, (result.stdout or "").strip()
+
+
+def _check_adb(
+    run_command: RunCommand,
+    *,
+    selected_serial: str | None = None,
+    expected_reverse: str = "tcp:7447 tcp:7447",
+) -> list[CheckResult]:
+    ok, devices = _adb_command(run_command, ["adb", "devices"])
+    if not ok:
+        return [CheckResult("pico_device", False, devices), CheckResult("adb_reverse", False, devices), CheckResult("robotics_service", False, devices)]
+    online = [line.split()[0] for line in devices.splitlines()[1:] if len(line.split()) >= 2 and line.split()[1] == "device"]
+    serial = selected_serial if selected_serial in online else (online[0] if len(online) == 1 and selected_serial is None else None)
+    device_result = CheckResult("pico_device", bool(serial), f"online PICO: {serial}" if serial else "selected PICO is not online or no uniquely selected online PICO")
+    ok, reverse = _adb_command(run_command, ["adb", "reverse", "--list"])
+    reverse_lines = reverse.splitlines()
+    reverse_ok = ok and bool(serial) and any(line.split()[0] == serial and expected_reverse in line for line in reverse_lines if line.split())
+    reverse_detail = reverse if reverse else f"expected reverse entry missing: {expected_reverse}"
+    reverse_result = CheckResult("adb_reverse", reverse_ok, reverse_detail)
+    service_cmd = ["adb"] + (["-s", serial] if serial else []) + ["shell", "pidof", "RoboticsService"]
+    ok, service = _adb_command(run_command, service_cmd) if serial else (False, "")
+    service_result = CheckResult("robotics_service", ok and bool(service), service or "RoboticsService is not running")
+    return [device_result, reverse_result, service_result]
 
 
 def _check_sdk(path: Path, loader: Callable[[str], Any]) -> CheckResult:
@@ -172,6 +193,8 @@ def run_checks(
     urdf_path: str | Path | None = None,
     endpoint: str = DEFAULT_ENDPOINT,
     session_name: str = SESSION_NAME,
+    selected_serial: str | None = None,
+    expected_reverse: str = "tcp:7447 tcp:7447",
     run_command: RunCommand | None = None,
     sdk_loader: Callable[[str], Any] | None = None,
     dependency_loader: Callable[[str], Any] | None = None,
@@ -180,30 +203,22 @@ def run_checks(
     session_checker: Callable[[str], tuple[bool, str]] | None = None,
     artifact_checker: Callable[[str | Path, str | Path], Any] | None = None,
 ) -> list[CheckResult]:
-    """Run all required checks without starting any physical device."""
     root = Path(repo_root) if repo_root is not None else Path(__file__).resolve().parents[3]
-    sdk = Path(sdk_library) if sdk_library is not None else Path(os.environ.get("PXREA_SDK_LIBRARY", DEFAULT_SDK_LIBRARY))
-    manifest = Path(manifest_path) if manifest_path is not None else root / "generated" / "model_manifest.yaml"
+    sdk_default = os.environ.get("PXREA_SDK_LIBRARY", f"{os.environ.get('PXREA_SDK_ROOT', '/opt/apps/roboticsservice/SDK')}/x64/libPXREARobotSDK.so")
+    sdk = Path(sdk_library) if sdk_library is not None else Path(sdk_default)
+    manifest = Path(manifest_path) if manifest_path is not None else root / "src" / "spd_vr" / "generated" / "model_manifest.yaml"
     urdf = Path(urdf_path) if urdf_path is not None else root.parent / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
     command = _run_command if run_command is None else run_command
     load_sdk = sdk_loader
     if load_sdk is None:
         from .pxrea_sdk import PXREAClient
-
         load_sdk = lambda path: PXREAClient.load_library(path)
     load_dependency = importlib.import_module if dependency_loader is None else dependency_loader
     environment = os.environ if display_env is None else display_env
     check_session = (lambda name: _check_session(name, command)) if session_checker is None else session_checker
     check_artifact = verify_artifacts if artifact_checker is None else artifact_checker
-
-    results = [
-        _check_adb_reverse(command),
-        _check_sdk(sdk, load_sdk),
-        _check_dependencies(load_dependency),
-        _check_display(environment),
-        _check_artifacts(manifest, urdf, check_artifact),
-        _check_port(endpoint, port_checker),
-    ]
+    results = _check_adb(command, selected_serial=selected_serial, expected_reverse=expected_reverse)
+    results.extend((_check_sdk(sdk, load_sdk), _check_dependencies(load_dependency), _check_display(environment), _check_artifacts(manifest, urdf, check_artifact), _check_port(endpoint, port_checker)))
     try:
         session_ok, session_detail = check_session(session_name)
     except Exception as exc:
@@ -219,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
+    parser.add_argument("--serial", default=None)
+    parser.add_argument("--expected-reverse", default="tcp:7447 tcp:7447")
     parser.add_argument("--session", default=SESSION_NAME)
     args = parser.parse_args(argv)
     results = run_checks(
@@ -227,7 +244,9 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path=args.manifest,
         urdf_path=args.urdf,
         endpoint=args.endpoint,
-        session_name=args.session,
+        session_name=getattr(args, "session", SESSION_NAME),
+        selected_serial=args.serial,
+        expected_reverse=args.expected_reverse,
     )
     for result in results:
         print(json.dumps(result.as_dict(), sort_keys=True))

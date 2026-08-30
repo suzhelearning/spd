@@ -93,7 +93,7 @@ clean = "rm -rf build install log"
 odin = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=original'"
 odin-lite = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=lite'"
 
-spd-model = "python -m spd_vr.model_compiler.cli"
+spd-model = "python -m spd_vr.model_compiler.cli --urdf ../assets/tianji_wuji2/tianji_wuji2.urdf --output src/spd_vr/generated --cache src/spd_vr/generated/collision_cache"
 spd-teleop = "bash scripts/start_spd_vr.sh"
 spd-teleop-status = "spd-status"
 spd-teleop-stop = "bash scripts/stop_spd_vr.sh"

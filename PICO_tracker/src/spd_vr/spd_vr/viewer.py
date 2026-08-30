@@ -12,15 +12,19 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
+import zenoh
 
 from .arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, LEFT_VALID, RIGHT_VALID, decode_packet
 from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_model_addresses
+from .viewer_window import ViewerWindow
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
+from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
 from .session_state import SessionController, SessionState
 from .wire import (
     ARM_TARGETS_KEY,
     CONTROL_KEY,
     STATUS_BRIDGE_KEY,
+    ControlProtocolError,
     STATUS_IK_KEY,
     STATUS_VIEWER_KEY,
     TRACKING_KEY,
@@ -30,9 +34,7 @@ from .wire import (
     decode_control,
     decode_tracking,
 )
-from .viewer_window import ViewerWindow
-from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
-
+from .control_sequence import ControlSequenceAllocator
 
 PHYSICS_HZ = 480
 RENDER_HZ = 60
@@ -167,6 +169,7 @@ class PlantController:
         joints: Sequence[ManifestJoint] | None = None,
         hand_retargeter: Any | None = None,
         strict_artifacts: bool | None = None,
+        urdf_path: str | Path | None = None,
     ) -> None:
         try:
             import mujoco
@@ -175,14 +178,13 @@ class PlantController:
         self._mujoco = mujoco
         production_model = model is None
         verified = None
-        urdf_path: Path | None = None
         self.synthetic = False
         if strict_artifacts is None:
             strict_artifacts = production_model
         if production_model:
             module_root = Path(__file__).resolve().parents[1]
             generated = module_root / "generated"
-            urdf_path = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
+            urdf_path = Path(urdf_path) if urdf_path is not None else Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
             if model_path is None:
                 model_path = generated / "unified_plant.xml"
             if manifest_path is None:
@@ -316,7 +318,10 @@ class PlantController:
         if self._control_wire is not None:
             for frame in self._control_wire.drain():
                 if self._control_callback is not None:
-                    self._control_callback(frame)
+                    try:
+                        self._control_callback(frame)
+                    except ControlProtocolError:
+                        continue
         if self._arm_wire is not None:
             sample = self._arm_wire.take_new(self._wire_arm_generation)
             if sample is not None:
@@ -703,6 +708,8 @@ class ViewerRuntime:
         session: SessionController | None = None,
         clock_ns: Callable[[], int] | None = None,
         sleep: Callable[[float], None] | None = None,
+        sequence_file: str | Path | None = None,
+        session_name: str = "spd-teleop",
     ) -> None:
         self.plant = plant
         self.headless = bool(headless)
@@ -728,7 +735,7 @@ class ViewerRuntime:
                 state=lambda: self.session.state.value,
             )
         self.window = window
-        self._next_sequence = 1
+        self._allocator = ControlSequenceAllocator(sequence_file, session=session_name)
         self._physics_timing_ns: list[int] = []
         self._render_timing_ns: list[int] = []
     def connect(self, node: Any) -> None:
@@ -739,6 +746,7 @@ class ViewerRuntime:
             self._publisher = node.declare_publisher(
                 CONTROL_KEY,
                 congestion_control=CONTROL_CONGESTION_CONTROL,
+                reliability=zenoh.Reliability.RELIABLE,
             )
             self._status_publisher = node.declare_publisher(STATUS_VIEWER_KEY)
             node.declare_latest_subscriber(STATUS_BRIDGE_KEY, _decode_status, self._status_mailboxes["bridge"])
@@ -765,7 +773,8 @@ class ViewerRuntime:
             "ready": state_value != "shutdown",
             "running": state_value in {"running", "ready"},
             "paused": state_value == "paused",
-            "tick_count": int(getattr(self, "tick", 0)),
+            "tick_count": int(getattr(self.plant, "tick", 0)),
+            "sequence": self.session.snapshot.last_sequence,
         }
         self._status_publisher.put(json.dumps(payload, separators=(",", ":")).encode())
 
@@ -789,8 +798,8 @@ class ViewerRuntime:
         else:
             command = ControlCommand(command)
         timestamp_ns = max(1, int(self._clock_ns()))
-        frame = ControlFrame(self._next_sequence, timestamp_ns, command)
-        self._next_sequence += 1
+        sequence = self._allocator.allocate()
+        frame = ControlFrame(sequence, timestamp_ns, command)
         if self._publisher is not None:
             from .wire import encode_control
 
@@ -910,6 +919,8 @@ class ViewerRuntime:
                     del self._physics_timing_ns[:-1024]
                 count += 1
                 self._poll_status()
+                if count == 1 or count % 24 == 0:
+                    self._publish_status()
                 if hasattr(self.plant, "requires_fresh_alignment") and not self.plant.requires_fresh_alignment:
                     self.session.mark_aligned()
                 if not self.headless and now >= render_deadline:
@@ -943,7 +954,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--auto-start", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=Path, default=None)
-    parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument("--urdf", type=Path, default=None)
     parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     args = parser.parse_args(argv)
     if args.ticks is None and args.headless:
@@ -956,8 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime = ViewerRuntime(plant, headless=True)
         node = None
     else:
-        plant = PlantController(args.model, args.manifest, strict_artifacts=True)
-        synthetic = False
+        plant = PlantController(args.model, args.manifest, strict_artifacts=True, urdf_path=args.urdf)
         runtime = ViewerRuntime(plant, headless=args.headless)
         node = ZenohNode(peer_config(listen=False, endpoint=args.endpoint))
         try:

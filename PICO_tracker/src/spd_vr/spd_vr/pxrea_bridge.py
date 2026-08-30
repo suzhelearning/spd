@@ -31,7 +31,16 @@ from .pxrea_sdk import (
     PXREA_SERVER_CONNECT,
     PXREA_SERVER_DISCONNECT,
 )
-from .wire import STATUS_BRIDGE_KEY, TRACKING_KEY, TrackingFrame, encode_tracking
+from .wire import (
+    CONTROL_KEY,
+    STATUS_BRIDGE_KEY,
+    TRACKING_KEY,
+    ControlCommand,
+    ControlSequenceGate,
+    TrackingFrame,
+    decode_control,
+    encode_tracking,
+)
 
 _LIFECYCLE_TYPES = {
     PXREA_SERVER_CONNECT,
@@ -66,12 +75,14 @@ class BridgeCore:
         self._decoder = PicoStreamDecoder()
         self._pairer = HandPairer()
         self._clock_ns = clock_ns
+        self._gate = ControlSequenceGate()
+        self._shutdown = False
+        self._ready = False
         self._epoch = 1
         self._sequence = 0
         self._published = 0
         self._invalid_payloads = 0
         self._ambiguous = False
-        self._ready = False
 
     @property
     def epoch(self) -> int:
@@ -89,17 +100,31 @@ class BridgeCore:
 
     def status(self, dropped: int = 0) -> dict[str, Any]:
         return {
-            "ready": self._ready,
+            "status": "shutdown" if self._shutdown else ("ready" if self._ready else "starting"),
+            "ready": self._ready and not self._shutdown,
             "device_id": self.selected_device_id,
             "tracking_epoch": self._epoch,
             "published": self._published,
             "invalid_payloads": self._invalid_payloads,
             "dropped": int(dropped),
             "device_selection_ambiguous": self._ambiguous,
+            "sequence": self._gate.last_sequence,
         }
 
     def status_json(self, dropped: int = 0) -> str:
         return json.dumps(self.status(dropped), sort_keys=True, separators=(",", ":"))
+
+    def accept_control(self, frame: Any) -> bool:
+        accepted = self._gate.accept(frame)
+        if accepted and frame.command is ControlCommand.SHUTDOWN:
+            self._shutdown = True
+            self._ready = False
+        return accepted
+    def shutdown(self) -> None:
+        self._shutdown = True
+        self._ready = False
+
+
     def accept_event(self, event: CallbackEvent | tuple[str, bytes] | Any) -> list[bytes]:
         device_id, raw, event_type = self._event_parts(event)
         if event_type not in _LIFECYCLE_TYPES and not device_id:
@@ -294,21 +319,34 @@ def _run_fake_source(
     node = None
     worker = None
     stop = threading.Event()
-    old_handlers: dict[int, Any] = {}
     try:
         if publisher is None or status_publisher is None:
-            from .zenoh_transport import ZenohNode, peer_config
-
+            from .zenoh_transport import LatestSample, ZenohNode, peer_config
             node = ZenohNode(peer_config(listen=listen, endpoint=endpoint))
             if publisher is None:
                 publisher = node.declare_publisher(key).put
             if status_publisher is None:
                 status_publisher = node.declare_publisher(STATUS_BRIDGE_KEY).put
+        from .zenoh_transport import LatestSample
+        control_mailbox = LatestSample()
+        if node is not None:
+            node.declare_latest_subscriber(CONTROL_KEY, decode_control, control_mailbox)
         old_handlers = _install_signal_handlers(stop)
         core.set_ready()
         worker = BridgeWorker(queue, core, publisher, status_publisher)
         worker.start()
+        generation = 0
         for event, delay_ms in _read_fake_events(path):
+            sample = control_mailbox.take_new(generation)
+            if sample is not None:
+                generation, control = sample
+                try:
+                    core.accept_control(control)
+                except ValueError:
+                    pass
+                worker._publish_status()
+                if core._shutdown:
+                    stop.set()
             if stop.is_set():
                 break
             queue.put(event)
@@ -318,7 +356,7 @@ def _run_fake_source(
         print(str(exc), file=sys.stderr)
         return 2
     finally:
-        core.set_ready(False)
+        core.shutdown()
         if worker is not None:
             worker.stop()
         if node is not None:
@@ -340,11 +378,13 @@ def _run_sdk(args: argparse.Namespace) -> int:
     worker = None
     old_handlers: dict[int, Any] = {}
     try:
-        from .zenoh_transport import ZenohNode, peer_config
+        from .zenoh_transport import LatestSample, ZenohNode, peer_config
 
         node = ZenohNode(peer_config(listen=args.listen, endpoint=args.endpoint))
         publisher = node.declare_publisher(args.key)
         status_publisher = node.declare_publisher(STATUS_BRIDGE_KEY)
+        control_mailbox = LatestSample()
+        node.declare_latest_subscriber(CONTROL_KEY, decode_control, control_mailbox)
         worker = BridgeWorker(queue, core, publisher.put, status_publisher.put)
         client = PXREAClient.load_library(args.sdk_library)
         client.queue = queue
@@ -353,19 +393,29 @@ def _run_sdk(args: argparse.Namespace) -> int:
         with client:
             core.set_ready()
             worker._publish_status()
-            while not stop.wait(0.2):
-                pass
-        return 0
+            generation = 0
+            while not stop.wait(0.05):
+                sample = control_mailbox.take_new(generation)
+                if sample is None:
+                    continue
+                generation, control = sample
+                try:
+                    core.accept_control(control)
+                except ValueError:
+                    continue
+                worker._publish_status()
+                if core._shutdown:
+                    stop.set()
     finally:
-        core.set_ready(False)
-        if worker is not None:
-            worker.stop()
         if client is not None:
             client.close()
+        core.shutdown()
+        if worker is not None:
+            worker.stop()
         if node is not None:
             node.close()
         _restore_signal_handlers(old_handlers)
-
+    return 0
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)

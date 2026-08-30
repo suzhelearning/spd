@@ -4,6 +4,7 @@ set -euo pipefail
 session_name="spd-teleop"
 endpoint="tcp/127.0.0.1:7447"
 dry_run=0
+endpoint_override=0
 metadata_path="${XDG_RUNTIME_DIR:-/tmp}/spd-vr/${session_name}.metadata"
 
 usage() {
@@ -15,7 +16,7 @@ EOF
 while (($#)); do
   case "$1" in
     --dry-run) dry_run=1; shift ;;
-    --endpoint) endpoint="$2"; shift 2 ;;
+    --endpoint) endpoint="$2"; endpoint_override=1; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -40,16 +41,27 @@ if [[ ! -s "$metadata_path" ]]; then
   echo "refusing to stop session without managed metadata: $metadata_path" >&2
   exit 1
 fi
-
-# Control is deliberately sent before any pane is interrupted.
-if command -v pixi >/dev/null; then
-  (cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" && pixi run spd-control shutdown --endpoint "$endpoint") || echo "spd-control shutdown failed" >&2
-else
-  echo "pixi is required to publish spd-control shutdown" >&2
+if (( ! endpoint_override )); then
+  metadata_endpoint=""
+  while IFS='=' read -r key value; do
+    [[ "$key" == "endpoint" ]] && metadata_endpoint="$value"
+  done <"$metadata_path"
+  if [[ -n "$metadata_endpoint" ]]; then
+    endpoint="$metadata_endpoint"
+  fi
 fi
 
-# Read only panes created by the matching session metadata.  A pane PID and
-# its command are checked again immediately before interrupt/escalation.
+control_ok=1
+if command -v pixi >/dev/null; then
+  if ! (cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" && pixi run spd-control shutdown --endpoint "$endpoint"); then
+    echo "spd-control shutdown failed" >&2
+    control_ok=0
+  fi
+else
+  echo "pixi is required to publish spd-control shutdown" >&2
+  control_ok=0
+fi
+# Read metadata only after SHUTDOWN, then interrupt panes in reverse order.
 declare -A pane_for pid_for module_for
 while IFS=$'\t' read -r field window pid module; do
   [[ "$field" == pane=* ]] || continue
@@ -69,13 +81,26 @@ wait_window() {
     verified=0
     return
   fi
-  local current_pid actual
+  local current_pid actual pane_dead
   current_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
   if [[ "$current_pid" != "$recorded_pid" ]]; then
     echo "refusing unverified pane $pane ($window)" >&2
     verified=0
     return
   fi
+  # Let a normally exiting process finish before any interrupt is sent.
+  for _ in {1..50}; do
+    pane_dead="$(tmux display-message -p -t "$pane" '#{pane_dead}' 2>/dev/null || true)"
+    if [[ "$pane_dead" == "1" ]]; then
+      tmux kill-pane -t "$pane" || true
+      return
+    fi
+    if ! kill -0 "$current_pid" 2>/dev/null; then
+      tmux kill-pane -t "$pane" || true
+      return
+    fi
+    sleep 0.1
+  done
   actual="$(ps -p "$current_pid" -o args= 2>/dev/null || true)"
   if [[ "$actual" != *"python -m $expected"* ]]; then
     echo "refusing unexpected command for $window: $actual" >&2
@@ -84,7 +109,9 @@ wait_window() {
   fi
   tmux send-keys -t "$pane" C-c || true
   for _ in {1..50}; do
-    if ! tmux list-panes -t "$pane" >/dev/null 2>&1; then
+    pane_dead="$(tmux display-message -p -t "$pane" '#{pane_dead}' 2>/dev/null || true)"
+    if [[ "$pane_dead" == "1" ]]; then
+      tmux kill-pane -t "$pane" || true
       return
     fi
     current_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
@@ -92,7 +119,8 @@ wait_window() {
       tmux kill-pane -t "$pane" || true
       return
     fi
-done
+    sleep 0.1
+  done
   # Escalate only after rechecking both identity fields.
   current_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
   actual="$(ps -p "$current_pid" -o args= 2>/dev/null || true)"
@@ -107,7 +135,7 @@ done
 for window in viewer arm_ik pxrea_bridge; do
   wait_window "$window"
 done
-if ((verified)); then
+if ((verified && control_ok)); then
   if tmux has-session -t "$session_name" 2>/dev/null; then
     echo "session retained because managed panes did not all close" >&2
     exit 1

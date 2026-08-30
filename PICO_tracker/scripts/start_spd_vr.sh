@@ -7,7 +7,7 @@ mode="detach"
 action="start"
 dry_run=0
 endpoint="tcp/127.0.0.1:7447"
-sdk_library="${PXREA_SDK_LIBRARY:-/opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so}"
+sdk_library="${PXREA_SDK_LIBRARY:-${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so}"
 manifest="$repo_root/src/spd_vr/generated/model_manifest.yaml"
 urdf="$repo_root/../assets/tianji_wuji2/tianji_wuji2.urdf"
 metadata_dir="${XDG_RUNTIME_DIR:-/tmp}/spd-vr"
@@ -17,6 +17,9 @@ usage() {
   cat <<'EOF'
 Usage: start_spd_vr.sh [--dry-run] [--attach|--detach]
   [--endpoint ENDPOINT] [--sdk-library PATH] [--manifest PATH] [--urdf PATH]
+
+SDK resolution: PXREA_SDK_LIBRARY takes precedence; otherwise
+${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so
 EOF
 }
 
@@ -32,6 +35,7 @@ while (($#)); do
     --status) action="status"; shift ;;
     --stop) action="stop"; shift ;;
     --help|-h) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
@@ -47,12 +51,15 @@ fi
 if [[ "$action" == "stop" ]]; then
   exec "$repo_root/scripts/stop_spd_vr.sh" --endpoint "$endpoint"
 fi
-
 windows=(pxrea_bridge arm_ik viewer)
+endpoint_q="$(printf '%q' "$endpoint")"
+sdk_library_q="$(printf '%q' "$sdk_library")"
+manifest_q="$(printf '%q' "$manifest")"
+urdf_q="$(printf '%q' "$urdf")"
 commands=(
-  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library --endpoint $endpoint --listen"
-  "python -m spd_vr.arm_ik --model ${manifest%/*}/arm_ik.xml --manifest $manifest --urdf $urdf --endpoint $endpoint"
-  "python -m spd_vr.viewer --model ${manifest%/*}/unified_plant.xml --manifest $manifest --endpoint $endpoint"
+  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library_q --endpoint $endpoint_q --listen"
+  "python -m spd_vr.arm_ik --model $(printf '%q' "${manifest%/*}/arm_ik.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
+  "python -m spd_vr.viewer --model $(printf '%q' "${manifest%/*}/unified_plant.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
 )
 
 if ((dry_run)); then
@@ -78,8 +85,14 @@ fi
 
 mkdir -p "$metadata_dir"
 tmp_metadata="$(mktemp "$metadata_path.XXXXXX")"
-cleanup_metadata() { rm -f "$tmp_metadata"; }
-trap cleanup_metadata EXIT
+created_session=0
+cleanup_start() {
+  if ((created_session)) && tmux has-session -t "$session_name" 2>/dev/null; then
+    tmux kill-session -t "$session_name" || true
+  fi
+  rm -f "$tmp_metadata"
+}
+trap cleanup_start EXIT
 session_id="$(date +%s%N)-$$"
 printf 'session=%s\nid=%s\nendpoint=%s\n' "$session_name" "$session_id" "$endpoint" >"$tmp_metadata"
 
@@ -88,6 +101,7 @@ for index in "${!windows[@]}"; do
   command_line="${commands[$index]}"
   if ((index == 0)); then
     tmux new-session -d -s "$session_name" -n "$window"
+    created_session=1
   else
     tmux new-window -t "$session_name" -n "$window"
   fi
@@ -95,8 +109,7 @@ for index in "${!windows[@]}"; do
   pane_id="$(tmux display-message -p -t "$session_name:$window" '#{pane_id}')"
   pane_pid="$(tmux display-message -p -t "$session_name:$window" '#{pane_pid}')"
   printf 'pane=%s\twindow=%s\tpid=%s\tmodule=spd_vr.%s\n' "$pane_id" "$window" "$pane_pid" "$window" >>"$tmp_metadata"
-  printf -v quoted '%q' "$command_line"
-  tmux send-keys -t "$session_name:$window" "cd $(printf '%q' "$repo_root") && exec bash -lc $quoted" C-m
+  tmux send-keys -t "$session_name:$window" "cd $(printf '%q' "$repo_root") && exec $command_line" C-m
 done
 mv -f "$tmp_metadata" "$metadata_path"
 trap - EXIT
