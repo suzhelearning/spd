@@ -18,9 +18,9 @@ ArmTargetFrame validFrame() {
   frame.tracking_epoch = 9U;
   frame.source_timestamp_ns = 1'000'000'000U;
   frame.control_timestamp_ns = 1'000'001'000U;
-  frame.valid_mask = kArmTargetLeftValid | kArmTargetRightValid;
+  frame.valid_mask = kArmTargetLeftValid;
   frame.left_hold_reason = ArmTargetHoldReason::kNone;
-  frame.right_hold_reason = ArmTargetHoldReason::kNone;
+  frame.right_hold_reason = ArmTargetHoldReason::kInactive;
   for (std::size_t index = 0U; index < 7U; ++index) {
     frame.left_q[index] = 0.1 * static_cast<double>(index);
     frame.right_q[index] = -0.2 * static_cast<double>(index);
@@ -45,6 +45,17 @@ void writeLe32(std::uint8_t* bytes, std::uint32_t value) {
 }
 
 }  // namespace
+
+TEST(ArmTargetProtocol, ExposesCanonicalHoldReasonValues) {
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kNone), 0U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kInputStale), 1U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kSolverFailure), 2U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kPaused), 3U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kInactive), 4U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kUnaligned), 5U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kInvalidInput), 6U);
+  EXPECT_EQ(static_cast<std::uint8_t>(ArmTargetHoldReason::kDisconnected), 7U);
+}
 
 TEST(ArmTargetProtocol, EncodesAndDecodes272ByteLittleEndianPacket) {
   const ArmTargetFrame expected = validFrame();

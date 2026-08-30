@@ -18,6 +18,10 @@ enum class ArmTargetHoldReason : std::uint8_t {
   kInputStale = 1U,
   kSolverFailure = 2U,
   kPaused = 3U,
+  kInactive = 4U,
+  kUnaligned = 5U,
+  kInvalidInput = 6U,
+  kDisconnected = 7U,
 };
 
 enum class ArmTargetPacketError {
