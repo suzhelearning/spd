@@ -21,7 +21,7 @@ from .pico_frames import (
     PicoStreamDecoder,
 )
 from .pxrea_sdk import BoundedCallbackQueue, CallbackEvent, PXREAClient
-from .wire import TrackingFrame, encode_tracking
+from .wire import TRACKING_KEY, TrackingFrame, encode_tracking
 
 
 @dataclass(frozen=True)
@@ -268,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fake-source-jsonl", type=Path)
     parser.add_argument("--sdk-library")
     parser.add_argument("--device-id")
-    parser.add_argument("--key", default="spd/pico/tracking")
+    parser.add_argument("--key", default=TRACKING_KEY)
     parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     parser.add_argument("--listen", action="store_true")
     args = parser.parse_args(argv)
