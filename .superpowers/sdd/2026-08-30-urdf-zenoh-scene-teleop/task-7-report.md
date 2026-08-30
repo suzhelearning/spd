@@ -53,3 +53,19 @@ OMP_NUM_THREADS=1 pixi run python -m pytest src/spd_vr/test/test_generated_model
 pixi run python -m py_compile .../setup.py .../artifacts.py .../mjcf.py .../runtime.py .../simulator.py
 无输出（通过）
 ```
+
+## Review round 2 修复
+
+- 恢复生成 manifest 顶层 `dof: 54`，并用 `load_manifest` 做回归校验。
+- `run_runtime` 保留任务 reset，确保新 artifact 验证路径不会引用未定义的 `scene_result`；runtime/simulator 默认入口均先验证新 artifacts。
+- Task5 `load_urdf` 新增 `source_bytes` 快照入口；Task7 编译直接解析初始 URDF bytes，并保留发布前 TOCTOU 检查，防止 ABA 替换。
+- `visual_meshes[*].path` 与 `source.urdf` 均写 authoritative URDF root 下的相对路径；验证器从传入 source parent 解析。
+
+Round 2 验证：
+
+```text
+OMP_NUM_THREADS=1 pixi run python -m pytest src/spd_vr/test/test_generated_models.py -q
+2 passed, 1 warning in 9.65s
+pixi run python -m py_compile src/spd_vr/setup.py src/spd_vr/spd_vr/model_compiler/urdf_model.py src/spd_vr/spd_vr/model_compiler/artifacts.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/simulator.py
+无输出（通过）
+```

@@ -148,10 +148,10 @@ class UrdfModel:
         return translation, rotation
 
 
-def load_urdf(path: str | Path) -> UrdfModel:
+def load_urdf(path: str | Path, *, source_bytes: bytes | None = None) -> UrdfModel:
     source = Path(path).resolve()
     try:
-        robot = ET.parse(source).getroot()
+        robot = ET.fromstring(source_bytes) if source_bytes is not None else ET.parse(source).getroot()
     except (OSError, ET.ParseError) as exc:
         raise ValueError(f"unable to parse URDF {source}: {exc}") from exc
     if robot.tag != "robot":

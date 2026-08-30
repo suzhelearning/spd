@@ -371,6 +371,7 @@ def _manifest_document(
     return {
         "version": 1,
         "compiler": "spd-urdf-first-mjcf-1",
+        "dof": 54,
         "source": {"urdf": model.source_path.name, "urdf_sha256": urdf_sha256, "meshes": mesh_hashes},
         "outputs": dict(output_hashes),
         "manifest_sha256": "",
@@ -383,8 +384,13 @@ def _manifest_document(
             "right": [name for name in full_joints if name.startswith("r_")],
         },
         "joints": joints,
-        "links": link_map,
-        "visual_meshes": mesh_records,
+        "visual_meshes": [
+            {
+                **record,
+                "path": os.path.relpath(record["path"], start=model.source_path.parent),
+            }
+            for record in mesh_records
+        ],
         "axis_visuals": axis_visuals,
         "collision": {
             "manifest": "collision_manifest.yaml",
@@ -428,7 +434,7 @@ def compile_models(
     output = Path(output_dir).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = Path(cache_dir).resolve() if cache_dir is not None else output.parent / "collision_cache"
-    model = aggregate_fixed_point_masses(load_urdf(source))
+    model = aggregate_fixed_point_masses(load_urdf(source, source_bytes=source_bytes))
     if source.read_bytes() != source_bytes:
         raise ArtifactError("authoritative URDF changed during compilation")
     axis_visuals = _inspect_primitives(source)

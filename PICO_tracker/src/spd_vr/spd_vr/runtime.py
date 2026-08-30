@@ -239,6 +239,7 @@ def run_runtime(
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     task_spec = get_task(scene, task)
+    scene_result = task_spec.reset(seed)
     generated = Path(__file__).resolve().parents[1] / "generated"
     urdf = Path(__file__).resolve().parents[4] / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
     verified = verify_artifacts(generated / "model_manifest.yaml", urdf)

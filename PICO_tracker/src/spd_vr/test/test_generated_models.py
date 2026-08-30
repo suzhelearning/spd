@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from spd_vr.model_compiler.artifacts import compile_models, verify_artifacts
+from spd_vr.manifest import load_manifest
 from spd_vr.model_compiler.collision import CollisionArtifact, _canonical_mesh_bytes
 
 
@@ -56,9 +57,12 @@ def test_compile_models_writes_five_loadable_artifacts(tmp_path: Path, monkeypat
     assert (arm.nq, arm.nv, arm.nu) == (14, 14, 14)
     assert all(mujoco.mj_name2id(arm, mujoco.mjtObj.mjOBJ_SITE, name) >= 0 for name in ("l_wrist_target", "r_wrist_target"))
     manifest = yaml.safe_load(result.path.read_text(encoding="utf-8"))
+    assert load_manifest(result.path)["dof"] == 54
     assert len(manifest["axis_visuals"]) == 24
     assert len(manifest["collision"]["adjacent_excludes"]) == 79
     assert manifest["source"]["meshes"]
+    assert not Path(manifest["source"]["urdf"]).is_absolute()
+    assert all(not Path(record["path"]).is_absolute() for record in manifest["visual_meshes"])
 
 
 def test_verify_artifacts_rejects_source_or_output_tampering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
