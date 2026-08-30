@@ -3,6 +3,7 @@ import numpy as np
 
 from spd_vr.arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, RIGHT_VALID
 from spd_vr.session_state import SessionController
+from spd_vr.retarget_pair import HandHoldReason
 from spd_vr.viewer import PlantController
 from spd_vr.wire import ControlCommand, ControlFrame, TrackingFrame
 
@@ -94,6 +95,32 @@ def test_fresh_alignment_requires_valid_arm_and_hand_from_new_generation():
     assert step.hand_valid_mask == 3
     plant.close()
 
+def test_inactive_hand_enum_is_explicit_hold_not_invalid():
+    class Retarget:
+        def retarget(self, _frame):
+            return {
+                "left_qpos": np.zeros(20),
+                "right_qpos": np.zeros(20),
+                "left_valid": False,
+                "right_valid": True,
+                "left_hold_reason": HandHoldReason.INACTIVE,
+                "right_hold_reason": HandHoldReason.NONE,
+            }
+
+    hand = np.zeros((26, 7), dtype=np.float32)
+    hand[:, 6] = 1.0
+    tracking = TrackingFrame(
+        1, 1, 1, 1, False, True, True, 1.0, 1.0,
+        np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]), hand, hand,
+    )
+    plant = PlantController.synthetic_fixture(hand_retargeter=Retarget())
+    plant.submit_tracking(tracking, now_ns=1)
+    plant.submit_arm_target(arm_frame(plant, 1, 3), now_ns=1)
+    plant.physics_tick(1)
+    assert plant.invalid_input_count == 0
+    assert not plant.requires_fresh_alignment
+    plant.close()
+
 def test_old_arm_timestamp_cannot_unlock_realign_until_new_control_token():
     class Retarget:
         def retarget(self, _frame):
@@ -102,8 +129,8 @@ def test_old_arm_timestamp_cannot_unlock_realign_until_new_control_token():
                 "right_qpos": np.zeros(20),
                 "left_valid": True,
                 "right_valid": True,
-                "left_hold_reason": "none",
-                "right_hold_reason": "none",
+                "left_hold_reason": HandHoldReason.NONE,
+                "right_hold_reason": HandHoldReason.NONE,
             }
 
     hand = np.zeros((26, 7), dtype=np.float32)
@@ -116,8 +143,11 @@ def test_old_arm_timestamp_cannot_unlock_realign_until_new_control_token():
     session = SessionController(plant)
     session.apply(ControlFrame(1, 10, ControlCommand.START))
     plant.submit_tracking(tracking, now_ns=10)
-    plant.submit_arm_target(arm_frame(plant, 1, 3, control_timestamp_ns=10), now_ns=10)
+    plant.submit_arm_target(arm_frame(plant, 1, 3, control_timestamp_ns=1), now_ns=10)
     plant.physics_tick(10)
+    assert plant.requires_fresh_alignment
+    plant.submit_arm_target(arm_frame(plant, 2, 3, control_timestamp_ns=10), now_ns=11)
+    plant.physics_tick(11)
     assert not plant.requires_fresh_alignment
 
     session.apply(ControlFrame(2, 20, ControlCommand.REALIGN))

@@ -464,7 +464,8 @@ class PlantController:
         arrival_ns: int,
     ) -> None:
         if not valid:
-            self.invalid_input_count += 1
+            if not self._explicit_hold(reason):
+                self.invalid_input_count += 1
             self._arm_valid[side] = False
             self._arm_reason[side] = reason
             return
@@ -499,12 +500,12 @@ class PlantController:
         if isinstance(result, Mapping):
             values = result.get(f"{side}_qpos")
             valid = bool(result.get(f"{side}_valid", False))
-            reason = str(result.get(f"{side}_hold_reason", "inactive"))
+            reason = result.get(f"{side}_hold_reason", "inactive")
         else:
             values = getattr(result, f"{side}_qpos", None)
             valid = bool(getattr(result, f"{side}_valid", False))
-            reason = str(getattr(result, f"{side}_hold_reason", "inactive"))
-        return values, valid, reason
+            reason = getattr(result, f"{side}_hold_reason", "inactive")
+        return values, valid, str(getattr(reason, "value", reason))
 
 
     @staticmethod
@@ -527,7 +528,8 @@ class PlantController:
 
     @staticmethod
     def _explicit_hold(reason: Any) -> bool:
-        return reason in {
+        value = getattr(reason, "value", reason)
+        return value in {
             ArmTargetHoldReason.PAUSED,
             ArmTargetHoldReason.INACTIVE,
             ArmTargetHoldReason.ALIGNING,
@@ -565,6 +567,8 @@ class PlantController:
                         valid, reason = False, "invalid"
                     else:
                         self._hand_values[side] = candidate
+            if valid:
+                self._hand_arrival[side] = mailbox.arrival_ns
             if not valid and not self._explicit_hold(reason):
                 self.invalid_input_count += 1
             self._hand_valid[side] = bool(valid)
@@ -760,6 +764,14 @@ class ViewerRuntime:
         values = np.asarray(samples, dtype=np.float64)
         return round(float(np.percentile(values, 95)) / 1.0e6, 3), round(float(np.max(values)) / 1.0e6, 3)
 
+    def _zenoh_status(self) -> str:
+        if self._publisher is None:
+            return "disabled"
+        try:
+            return "matched" if bool(self._publisher.matching_status.matching) else "connected_unmatched"
+        except Exception:
+            return "unknown"
+
     def _hud_values(self, result: Any, now_ns: int) -> dict[str, Any]:
         arrivals = []
         for name in ("_arm_arrival", "_hand_arrival"):
@@ -777,7 +789,7 @@ class ViewerRuntime:
         )
         return {
             "state": self.session.state.value,
-            "zenoh": "connected" if self._node is not None else "disabled",
+            "zenoh": self._zenoh_status(),
             "physics_finite": getattr(result, "finite", True),
             "physics_p95_ms": physics_p95,
             "physics_max_ms": physics_max,
@@ -792,6 +804,14 @@ class ViewerRuntime:
             "input_age_ms": round(max(ages, default=0) / 1.0e6, 3) if ages else "unknown",
             "drops": drops,
             "invalid": getattr(self.plant, "invalid_input_count", "unknown"),
+            "sdk_status": "unknown",
+            "bridge_status": "unknown",
+            "ik_status": "unknown",
+            "tracking_rate_hz": getattr(self.plant, "tracking_rate_hz", "unknown"),
+            "arm_target_rate_hz": getattr(self.plant, "arm_target_rate_hz", "unknown"),
+            "source_latency_ms": "unknown",
+            "bridge_latency_ms": "unknown",
+            "contact": "unknown",
             "artifact_hash": getattr(self.plant, "artifact_hash", "unknown"),
         }
     def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:

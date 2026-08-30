@@ -59,6 +59,18 @@ def test_latest_sample_overwrites_one_slot_and_invalidates():
     assert next_generation > generation
     assert value == 1000
 
+def test_latest_sample_counts_only_unconsumed_overwrites():
+    box = LatestSample[int]()
+    box.put(1)
+    box.put(2)
+    assert box.dropped_count == 1
+    generation, value = box.take_new(-1)
+    assert (generation, value) == (2, 2)
+    box.put(3)
+    assert box.dropped_count == 1
+    box.put(4)
+    assert box.dropped_count == 2
+
 
 def test_peer_config_uses_only_the_explicit_endpoint_for_each_role():
     endpoint = "tcp/127.0.0.1:7447"

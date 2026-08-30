@@ -15,25 +15,26 @@ class LatestSample(Generic[T]):
         self._lock = Lock()
         self._value: T | None = None
         self._generation = 0
+        self._consumed_generation = 0
         self._dropped = 0
 
     def put(self, value: T) -> None:
         with self._lock:
-            if self._value is not None:
+            if self._value is not None and self._generation > self._consumed_generation:
                 self._dropped += 1
             self._value = value
             self._generation += 1
-
     def take_new(self, last_generation: int) -> tuple[int, T] | None:
         with self._lock:
             if self._value is None or self._generation <= last_generation:
                 return None
+            self._consumed_generation = self._generation
             return self._generation, cast(T, self._value)
-
     def invalidate(self) -> None:
         with self._lock:
             self._value = None
             self._generation += 1
+            self._consumed_generation = self._generation
 
     @property
     def storage_size(self) -> int:

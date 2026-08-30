@@ -270,7 +270,7 @@ class DualArmController:
             sequence=self._sequence,
             tracking_epoch=max(1, epoch),
             source_timestamp_ns=max(1, source_timestamp),
-            control_timestamp_ns=max(1, self._last_control_timestamp_ns if self._last_control_timestamp_ns is not None else now),
+            control_timestamp_ns=max(1, self._last_control_timestamp_ns if self._last_control_timestamp_ns is not None else 1),
             valid_mask=valid_mask,
             left_hold_reason=left.reason,
             right_hold_reason=right.reason,
