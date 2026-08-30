@@ -73,6 +73,7 @@ mujoco = "*"
 nlopt = "*"
 pinocchio = ">=3.6,<4"
 scipy = ">=1.11.0"
+osqp = ">=1,<2"
 trimesh = ">=4.8,<5"
 tmux = ">=3.7b_,<4"
 

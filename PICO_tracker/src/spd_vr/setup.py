@@ -20,7 +20,18 @@ setup(
             "generated/sim_actuator_calibration.yaml",
         ]),
     ],
-    install_requires=["setuptools", "numpy", "PyYAML", "h5py", "mujoco"],
+    install_requires=[
+        "setuptools",
+        "numpy",
+        "PyYAML",
+        "h5py",
+        "mujoco",
+        "scipy",
+        "osqp",
+        "eclipse-zenoh",
+        "trimesh",
+        "coacd",
+    ],
     zip_safe=True,
     entry_points={
         "console_scripts": [

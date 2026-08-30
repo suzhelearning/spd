@@ -270,6 +270,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/lz4-c-1.10.0-h5888daf_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/lzo-2.10-hebe6cf0_1003.conda
       - conda: https://prefix.dev/conda-forge/linux-64/make-4.4.1-hb9d3cd8_2.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/markupsafe-3.0.3-py311h3778330_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/matplotlib-base-3.10.8-py311h0f3be63_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/metis-5.1.0-hd0bcaf9_1007.conda
       - conda: https://prefix.dev/conda-forge/linux-64/mpg123-1.32.9-hc50e24c_0.conda
@@ -300,6 +301,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/openldap-2.6.10-he970967_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/openssl-3.6.2-h35e630c_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/orocos-kdl-1.5.3-hecca717_0.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/osqp-1.1.3-np2py311h912ec1f_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/p11-kit-0.26.4-h3435931_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/pango-1.56.4-hadf4263_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/pcl-1.15.0-hd1363f8_2.conda
@@ -323,6 +325,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/python-3.11.15-hd63d673_0_cpython.conda
       - conda: https://prefix.dev/conda-forge/linux-64/python-orocos-kdl-1.5.3-py311h1ddb823_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/pyyaml-6.0.3-py311h3778330_1.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/qdldl-python-0.1.9.post1-np2py311h912ec1f_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qhull-2020.2-h434a139_5.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qhull-static-2020.2-h434a139_5.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qt-main-5.15.15-h3a7ef08_5.conda
@@ -450,6 +453,8 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/importlib-metadata-8.8.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/importlib_resources-7.1.0-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/iniconfig-2.3.0-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/jinja2-3.1.6-pyhcf101f3_1.conda
+      - conda: https://prefix.dev/conda-forge/noarch/joblib-1.5.3-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/kernel-headers_linux-64-4.18.0-he073ed8_9.conda
       - conda: https://prefix.dev/conda-forge/noarch/lark-parser-0.12.0-pyhd8ed1ab_1.conda
       - conda: https://prefix.dev/conda-forge/noarch/libgcc-devel_linux-64-14.3.0-hf649bbc_118.conda
@@ -1034,6 +1039,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-aarch64/lz4-c-1.10.0-h5ad3122_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/lzo-2.10-h29ee22c_1003.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/make-4.4.1-h2a6d0cb_2.conda
+      - conda: https://prefix.dev/conda-forge/linux-aarch64/markupsafe-3.0.3-py311h2dad8b0_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/matplotlib-base-3.10.9-py311hb9c6b48_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/metis-5.1.0-h670dfbf_1007.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/mpg123-1.32.9-h65af167_0.conda
@@ -1062,6 +1068,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-aarch64/openldap-2.6.10-h30c48ee_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/openssl-3.6.3-h546c87b_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/orocos-kdl-1.5.3-hc398517_1.conda
+      - conda: https://prefix.dev/conda-forge/linux-aarch64/osqp-1.1.3-np2py311h039c3ed_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/p11-kit-0.26.4-h376a255_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/pango-1.56.4-he55ef5b_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/pcl-1.15.0-h462c444_2.conda
@@ -1085,6 +1092,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-aarch64/python-3.11.15-h53314ec_1_cpython.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/python-orocos-kdl-1.5.3-py311h2cb90db_2.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/pyyaml-6.0.3-py311h164a683_1.conda
+      - conda: https://prefix.dev/conda-forge/linux-aarch64/qdldl-python-0.1.9.post1-np2py311h8c4231c_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qhull-2020.2-h70be974_5.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qhull-static-2020.2-h70be974_5.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qt-main-5.15.15-hbe73643_5.conda
@@ -1210,6 +1218,8 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/importlib-metadata-9.0.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/importlib_resources-7.1.0-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/iniconfig-2.3.0-pyhd8ed1ab_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/jinja2-3.1.6-pyhcf101f3_1.conda
+      - conda: https://prefix.dev/conda-forge/noarch/joblib-1.5.3-pyhd8ed1ab_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/kernel-headers_linux-aarch64-4.18.0-h05a177a_9.conda
       - conda: https://prefix.dev/conda-forge/noarch/lark-parser-0.12.0-pyhd8ed1ab_1.conda
       - conda: https://prefix.dev/conda-forge/noarch/libgcc-devel_linux-aarch64-14.3.0-h25ba3ff_119.conda
@@ -5174,6 +5184,23 @@ packages:
   purls: []
   size: 513088
   timestamp: 1727801714848
+- conda: https://prefix.dev/conda-forge/linux-64/markupsafe-3.0.3-py311h3778330_1.conda
+  sha256: 710e207b2e91308a34bcfe547c60ad86c1fa294827266ba18548c1fe1a9d8333
+  md5: f9efdf9b0f3d0cc309d56af6edf2a6b0
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - python >=3.11,<3.12.0a0
+  - python_abi 3.11.* *_cp311
+  constrains:
+  - jinja2 >=3.0.0
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/markupsafe?source=hash-mapping
+  run_exports: {}
+  size: 26756
+  timestamp: 1772445078834
 - conda: https://prefix.dev/conda-forge/linux-64/matplotlib-base-3.10.8-py311h0f3be63_0.conda
   sha256: 300bbdb9c90cc1332cb72bc79baf25fa58fd78e0c16f4698ad719b206e42ee1b
   md5: 21a0139015232dc0edbf6c2179b5ec24
@@ -5633,6 +5660,28 @@ packages:
   purls: []
   size: 387599
   timestamp: 1760695564119
+- conda: https://prefix.dev/conda-forge/linux-64/osqp-1.1.3-np2py311h912ec1f_1.conda
+  sha256: 333740cd7497d76dd202fac632294fd5059bd88fab4ff0bb8663858f6e5e79d4
+  md5: 70008b1b10bae07fd4d30a7d311940b9
+  depends:
+  - python
+  - qdldl-python
+  - jinja2
+  - joblib
+  - scipy
+  - __glibc >=2.17,<3.0.a0
+  - libstdcxx >=14
+  - libgcc >=14
+  - libosqp >=1.0.0,<1.0.1.0a0
+  - numpy >=1.23,<3
+  - python_abi 3.11.* *_cp311
+  license: Apache-2.0
+  license_family: APACHE
+  purls:
+  - pkg:pypi/osqp?source=hash-mapping
+  run_exports: {}
+  size: 251076
+  timestamp: 1786529067630
 - conda: https://prefix.dev/conda-forge/linux-64/p11-kit-0.26.4-h3435931_0.conda
   sha256: ce1c79a0ae1301aa1f94f3afe1075e4cbb86656767011fde8995b9b1efc46516
   md5: 9980feddc5ad41bac53f7396376e6a2f
@@ -6042,6 +6091,25 @@ packages:
   - pkg:pypi/pyyaml?source=hash-mapping
   size: 206190
   timestamp: 1770223702917
+- conda: https://prefix.dev/conda-forge/linux-64/qdldl-python-0.1.9.post1-np2py311h912ec1f_1.conda
+  sha256: 3803e9c404884f37fe906937e932e92d7c6eeb3e2e662b7d2cf407bad3a83ea2
+  md5: ec11f6b80b95e9f9c24ea5078fcc62e4
+  depends:
+  - python
+  - scipy
+  - libgcc >=14
+  - __glibc >=2.17,<3.0.a0
+  - libstdcxx >=14
+  - libqdldl >=0.1.8,<0.1.9.0a0
+  - python_abi 3.11.* *_cp311
+  - numpy >=1.23,<3
+  license: Apache-2.0
+  license_family: APACHE
+  purls:
+  - pkg:pypi/qdldl?source=hash-mapping
+  run_exports: {}
+  size: 154158
+  timestamp: 1784925575611
 - conda: https://prefix.dev/conda-forge/linux-64/qhull-2020.2-h434a139_5.conda
   sha256: 776363493bad83308ba30bcb88c2552632581b143e8ee25b1982c8c743e73abc
   md5: 353823361b1d27eb3960efb076dfcaf6
@@ -10542,6 +10610,22 @@ packages:
   purls: []
   size: 528318
   timestamp: 1727801707353
+- conda: https://prefix.dev/conda-forge/linux-aarch64/markupsafe-3.0.3-py311h2dad8b0_1.conda
+  sha256: 6e831e7d699fbb5a11f086e40cd9ce5c2cd37c7e92b44835b773a22bec273f51
+  md5: eab18e6c4b54950bc224d9dd300611ed
+  depends:
+  - libgcc >=14
+  - python >=3.11,<3.12.0a0
+  - python_abi 3.11.* *_cp311
+  constrains:
+  - jinja2 >=3.0.0
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/markupsafe?source=hash-mapping
+  run_exports: {}
+  size: 27101
+  timestamp: 1772446335262
 - conda: https://prefix.dev/conda-forge/linux-aarch64/matplotlib-base-3.10.9-py311hb9c6b48_0.conda
   sha256: 30577965e4e1e9e71dd406446913deeedcd07cfaeff843417f5812b03f8eb0cf
   md5: a89049617b540aa442cdc8db9a2ae704
@@ -10958,6 +11042,28 @@ packages:
   purls: []
   size: 376844
   timestamp: 1778003961570
+- conda: https://prefix.dev/conda-forge/linux-aarch64/osqp-1.1.3-np2py311h039c3ed_1.conda
+  sha256: 1fce7e00bdc17e36222edce7b21b7eca209134687ec0e75e026ac11f0ec30451
+  md5: bc15421ab7c4ae227fb79b1894776e49
+  depends:
+  - python
+  - qdldl-python
+  - jinja2
+  - joblib
+  - scipy
+  - libgcc >=14
+  - python 3.11.* *_cpython
+  - libstdcxx >=14
+  - libosqp >=1.0.0,<1.0.1.0a0
+  - numpy >=1.23,<3
+  - python_abi 3.11.* *_cp311
+  license: Apache-2.0
+  license_family: APACHE
+  purls:
+  - pkg:pypi/osqp?source=hash-mapping
+  run_exports: {}
+  size: 249471
+  timestamp: 1786529083726
 - conda: https://prefix.dev/conda-forge/linux-aarch64/p11-kit-0.26.4-h376a255_0.conda
   sha256: 66cc8975ad069a792216c34a597a9c968cbaa3a4b71caa28eed07e8bc494aba2
   md5: 3fae8a6424688918aec84fa8b4016eaf
@@ -11356,6 +11462,24 @@ packages:
   - pkg:pypi/pyyaml?source=hash-mapping
   size: 201473
   timestamp: 1770223445971
+- conda: https://prefix.dev/conda-forge/linux-aarch64/qdldl-python-0.1.9.post1-np2py311h8c4231c_1.conda
+  sha256: 56d32d34feb6f9dcd06009b270130c2ebc70701379041064d46fcb0b46d06e11
+  md5: d2e546b4648f2f93f7f11bea7d172105
+  depends:
+  - python
+  - scipy
+  - libstdcxx >=14
+  - libgcc >=14
+  - numpy >=1.23,<3
+  - libqdldl >=0.1.8,<0.1.9.0a0
+  - python_abi 3.11.* *_cp311
+  license: Apache-2.0
+  license_family: APACHE
+  purls:
+  - pkg:pypi/qdldl?source=hash-mapping
+  run_exports: {}
+  size: 151818
+  timestamp: 1784925554522
 - conda: https://prefix.dev/conda-forge/linux-aarch64/qhull-2020.2-h70be974_5.conda
   sha256: 49f777bdf3c5e030a8c7b24c58cdfe9486b51d6ae0001841079a3228bdf9fb51
   md5: bb138086d938e2b64f5f364945793ebf
@@ -13192,6 +13316,33 @@ packages:
   - pkg:pypi/iniconfig?source=hash-mapping
   size: 13387
   timestamp: 1760831448842
+- conda: https://prefix.dev/conda-forge/noarch/jinja2-3.1.6-pyhcf101f3_1.conda
+  sha256: fc9ca7348a4f25fed2079f2153ecdcf5f9cf2a0bc36c4172420ca09e1849df7b
+  md5: 04558c96691bed63104678757beb4f8d
+  depends:
+  - markupsafe >=2.0
+  - python >=3.10
+  - python
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/jinja2?source=hash-mapping
+  run_exports: {}
+  size: 120685
+  timestamp: 1764517220861
+- conda: https://prefix.dev/conda-forge/noarch/joblib-1.5.3-pyhd8ed1ab_0.conda
+  sha256: 301539229d7be6420c084490b8145583291123f0ce6b92f56be5948a2c83a379
+  md5: 615de2a4d97af50c350e5cf160149e77
+  depends:
+  - python >=3.10
+  - setuptools
+  license: BSD-3-Clause
+  license_family: BSD
+  purls:
+  - pkg:pypi/joblib?source=hash-mapping
+  run_exports: {}
+  size: 226448
+  timestamp: 1765794135253
 - conda: https://prefix.dev/conda-forge/noarch/kernel-headers_linux-64-4.18.0-he073ed8_9.conda
   sha256: 41557eeadf641de6aeae49486cef30d02a6912d8da98585d687894afd65b356a
   md5: 86d9cba083cd041bfbf242a01a7a1999
@@ -26095,6 +26246,11 @@ packages:
   - pyyaml
   - h5py
   - mujoco
+  - scipy
+  - osqp
+  - eclipse-zenoh
+  - trimesh
+  - coacd
 - pypi: https://files.pythonhosted.org/packages/45/0b/ea24a4d213827bf5d6dd77aa91dbeb54509492494493e9cb91a33f0b4f12/eclipse_zenoh-1.10.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
   name: eclipse-zenoh
   version: 1.10.0
