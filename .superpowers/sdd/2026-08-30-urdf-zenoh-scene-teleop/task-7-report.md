@@ -69,3 +69,18 @@ OMP_NUM_THREADS=1 pixi run python -m pytest src/spd_vr/test/test_generated_model
 pixi run python -m py_compile src/spd_vr/setup.py src/spd_vr/spd_vr/model_compiler/urdf_model.py src/spd_vr/spd_vr/model_compiler/artifacts.py src/spd_vr/spd_vr/runtime.py src/spd_vr/spd_vr/simulator.py
 无输出（通过）
 ```
+
+## Review round 3 修复
+
+- verifier 现在消费每条 `visual_meshes[*].path`，要求其为 authoritative URDF root 下的相对安全路径，拒绝绝对路径和 `..` 越界，并以该源文件字节 hash 对照 manifest 声明。
+- 保留 artifact output 根目录安全解析与 copied visual STL 字节 hash 校验。
+- 回归测试篡改 visual source path 为 `../escape.stl`，并重算 manifest self-hash，验证路径安全校验而非仅依赖 manifest hash。
+
+Round 3 验证：
+
+```text
+OMP_NUM_THREADS=1 pixi run python -m pytest src/spd_vr/test/test_generated_models.py -q
+2 passed, 1 warning in 9.82s
+pixi run python -m py_compile src/spd_vr/spd_vr/model_compiler/artifacts.py src/spd_vr/test/test_generated_models.py
+无输出（通过）
+```

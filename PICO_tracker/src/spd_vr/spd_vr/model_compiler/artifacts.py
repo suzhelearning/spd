@@ -527,16 +527,26 @@ def verify_artifacts(manifest_path: str | Path, urdf_path: str | Path) -> Verifi
     visual_meshes = document.get("visual_meshes")
     if not isinstance(visual_meshes, list):
         raise ArtifactError("published visual mesh records are missing")
+    source_root = source.parent.resolve()
     for record in visual_meshes:
         if not isinstance(record, dict):
             raise ArtifactError("invalid visual mesh record")
         output_file = record.get("output_file")
         filename = record.get("filename")
-        if not isinstance(output_file, str) or not isinstance(filename, str):
+        declared_path = record.get("path")
+        if not isinstance(output_file, str) or not isinstance(filename, str) or not isinstance(declared_path, str):
             raise ArtifactError("visual mesh record paths are missing")
+        source_relative = Path(declared_path)
+        if source_relative.is_absolute():
+            raise ArtifactError(f"visual mesh source path must be relative: {declared_path}")
+        source_mesh = (source_root / source_relative).resolve()
+        try:
+            source_mesh.relative_to(source_root)
+        except ValueError as exc:
+            raise ArtifactError(f"visual mesh source path escapes URDF root: {declared_path}") from exc
         expected = source_meshes.get(filename)
-        if expected is None:
-            raise ArtifactError(f"visual mesh source is not declared: {filename}")
+        if expected is None or not source_mesh.is_file() or _sha256(source_mesh) != expected:
+            raise ArtifactError(f"visual mesh source hash mismatch: {declared_path}")
         published = _resolve_child_path(output, output_file)
         if not published.is_file() or _sha256(published) != expected:
             raise ArtifactError(f"published visual mesh hash mismatch: {output_file}")

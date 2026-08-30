@@ -82,6 +82,16 @@ def test_verify_artifacts_rejects_source_or_output_tampering(tmp_path: Path, mon
     with pytest.raises(ValueError):
         verify_artifacts(manifest_path, URDF)
     visual.write_bytes(visual_bytes)
+    manifest_bytes = manifest_path.read_bytes()
+    manifest["visual_meshes"][0]["path"] = "../escape.stl"
+    manifest["manifest_sha256"] = ""
+    manifest["manifest_sha256"] = __import__("hashlib").sha256(
+        yaml.safe_dump(manifest, sort_keys=True, allow_unicode=True).encode("utf-8")
+    ).hexdigest()
+    manifest_path.write_bytes(yaml.safe_dump(manifest, sort_keys=True, allow_unicode=True).encode("utf-8"))
+    with pytest.raises(ValueError):
+        verify_artifacts(manifest_path, URDF)
+    manifest_path.write_bytes(manifest_bytes)
     xml = result.full_model
     original = xml.read_bytes()
     xml.write_bytes(original + b"\n")
