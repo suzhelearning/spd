@@ -108,9 +108,11 @@ def _check_adb(
     device_result = CheckResult("pico_device", bool(serial), f"online PICO: {serial}" if serial else "selected PICO is not online or no uniquely selected online PICO")
     service_port, service_detail = _detect_robotics_service_port(run_command)
     reverse_target = expected_reverse or (f"tcp:{service_port} tcp:{service_port}" if service_port else "")
-    ok, reverse = _adb_command(run_command, ["adb", "reverse", "--list"])
+    reverse_command = ["adb", "-s", serial, "reverse", "--list"] if serial else ["adb", "reverse", "--list"]
+    ok, reverse = _adb_command(run_command, reverse_command)
     reverse_lines = reverse.splitlines()
-    reverse_ok = ok and bool(serial) and bool(reverse_target) and any(line.split()[0] == serial and reverse_target in line for line in reverse_lines if line.split())
+    reverse_fields = reverse_target.split()
+    reverse_ok = ok and bool(serial) and len(reverse_fields) == 2 and any(line.split()[:3] == [serial, *reverse_fields] for line in reverse_lines if len(line.split()) >= 3)
     reverse_detail = reverse if reverse else f"expected reverse entry missing: {reverse_target or 'dynamic RoboticsService port'}"
     reverse_result = CheckResult("adb_reverse", reverse_ok, reverse_detail)
     service_result = CheckResult("robotics_service", service_port is not None, f"non-loopback RoboticsService listener: {service_port}" if service_port else service_detail)

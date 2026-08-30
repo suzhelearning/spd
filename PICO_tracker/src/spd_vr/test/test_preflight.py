@@ -36,7 +36,7 @@ def test_preflight_matches_selected_reverse_to_dynamic_robotics_listener():
         if command[:2] == ["ss", "-H"]:
             output = 'LISTEN 0 128 0.0.0.0:15555 0.0.0.0:* users:(("RoboticsService",pid=42,fd=3))'
             return type("Completed", (), {"returncode": 0, "stdout": output, "stderr": ""})()
-        if command[:3] == ["adb", "reverse", "--list"]:
+        if len(command) >= 3 and command[-2:] == ["reverse", "--list"]:
             return type("Completed", (), {"returncode": 0, "stdout": "PICO-1 tcp:15555 tcp:15555\n", "stderr": ""})()
         return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 

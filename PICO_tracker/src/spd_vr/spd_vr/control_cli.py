@@ -140,9 +140,13 @@ def publish_control(
         def payload(sequence_value: int) -> bytes:
             frame_holder.append(ControlFrame(sequence_value, timestamp, command_value))
             return encode_control(frame_holder[-1])
-        allocator.publish(publisher, payload, sequence)
+        allocator.publish(
+            publisher,
+            payload,
+            sequence,
+            wait=lambda sequence_value: _wait_ack(mailboxes, generations, sequence_value, timeout_s),
+        )
         frame = frame_holder[-1]
-        _wait_ack(mailboxes, generations, frame.sequence, timeout_s)
     finally:
         node.close()
     return frame

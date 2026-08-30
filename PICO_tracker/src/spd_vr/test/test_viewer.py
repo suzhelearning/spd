@@ -1,11 +1,52 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
+import spd_vr.viewer as viewer_module
 from spd_vr.viewer import PlantController, ViewerRuntime
 from spd_vr.zenoh_transport import CONTROL_CONGESTION_CONTROL
 from spd_vr.viewer_window import ViewerWindow
 from spd_vr.wire import CONTROL_KEY, STATUS_VIEWER_KEY, ControlCommand, ControlFrame, TrackingFrame
+
+def test_main_production_parser_passes_manifest_and_urdf(monkeypatch):
+    captured = {}
+
+    class Plant:
+        data = SimpleNamespace(qpos=np.zeros(1), qvel=np.zeros(1), ctrl=np.zeros(1))
+        sim_time_ns = 0
+
+        def close(self):
+            pass
+
+    class Runtime:
+        def __init__(self, plant, **_kwargs):
+            self.plant = plant
+
+        def connect(self, _node):
+            pass
+
+        def run(self, **_kwargs):
+            return 0
+
+        def close(self):
+            pass
+
+    class Node:
+        def close(self):
+            pass
+
+    def make_plant(model, manifest, **kwargs):
+        captured.update(model=model, manifest=manifest, **kwargs)
+        return Plant()
+
+    monkeypatch.setattr(viewer_module, "PlantController", make_plant)
+    monkeypatch.setattr(viewer_module, "ViewerRuntime", Runtime)
+    monkeypatch.setattr(viewer_module, "ZenohNode", lambda _config: Node())
+    assert viewer_module.main(["--headless", "--ticks", "0", "--model", "model.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"]) == 0
+    assert captured["manifest"] == Path("manifest.yaml")
+    assert captured["urdf_path"] == Path("robot.urdf")
+
 
 
 class Clock:

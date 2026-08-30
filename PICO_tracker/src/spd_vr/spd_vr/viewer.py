@@ -958,9 +958,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--auto-start", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
     parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     args = parser.parse_args(argv)
+    synthetic = False
     if args.ticks is None and args.headless:
         args.ticks = PHYSICS_HZ
     if args.synthetic:

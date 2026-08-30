@@ -141,3 +141,47 @@ preflight-exit=1
 {"detail": "tcp/127.0.0.1:7447 is unavailable: [Errno 98] Address already in use", "name": "port_7447", "ok": false}
 {"detail": "session is absent: spd-teleop", "name": "session", "ok": true}
 ```
+
+## Review round 3 修复与验证
+
+- viewer parser 同时保留 `--model`、`--manifest`、`--urdf`，production 默认 `synthetic=False`；新增真实 `main()` parser smoke，确认 manifest/URDF 到达 production constructor。
+- allocator 的 session lock 现在覆盖 sequence allocation、publish 和全部 status ACK 等待；异常时 context manager 释放锁，状态文件保持临时文件 `fsync` + `os.replace`。
+- start 解析 `--serial`（默认 `PICO_ADB_SERIAL`），一致传给 preflight 与 bridge；preflight 用 `adb -s SERIAL reverse --list`，对 serial/device/host 三字段精确比较动态 RoboticsService 端口。
+
+```text
+$ python3 -m py_compile src/spd_vr/spd_vr/preflight.py src/spd_vr/spd_vr/control_sequence.py src/spd_vr/spd_vr/control_cli.py src/spd_vr/spd_vr/pxrea_bridge.py src/spd_vr/spd_vr/viewer.py
+$ bash -n scripts/start_spd_vr.sh scripts/stop_spd_vr.sh
+$ pixi run python -m pytest src/spd_vr/test/test_control_cli.py src/spd_vr/test/test_preflight.py src/spd_vr/test/test_lifecycle_scripts.py src/spd_vr/test/test_pxrea_bridge.py src/spd_vr/test/test_viewer.py -q
+....................                                                     [100%]
+20 passed, 1 warning in 0.52s
+```
+
+warning 为既有环境 `hppfcl` import warning。
+
+```text
+$ pixi run python -m pytest src/spd_vr/test/test_viewer.py::test_main_production_parser_passes_manifest_and_urdf -q
+1 passed, 1 warning
+```
+
+```text
+$ PICO_ADB_SERIAL=PICO-1 bash scripts/start_spd_vr.sh --dry-run --endpoint 'tcp/host name:7447'
+session=spd-teleop
+pxrea_bridge: python -m spd_vr.pxrea_bridge --sdk-library /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so --endpoint tcp/host\ name:7447 --device-id PICO-1 --listen
+arm_ik: python -m spd_vr.arm_ik --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/arm_ik.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/host\ name:7447
+viewer: python -m spd_vr.viewer --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/unified_plant.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/host\ name:7447
+```
+
+真实 preflight 仍按 Task7 artifact blocker fail-closed：
+
+```text
+preflight-exit=1
+{"detail": "online PICO: PA921DMGK8270070G", "name": "pico_device", "ok": true}
+{"detail": "expected reverse entry missing: tcp:63901 tcp:63901", "name": "adb_reverse", "ok": false}
+{"detail": "non-loopback RoboticsService listener: 63901", "name": "robotics_service", "ok": true}
+{"detail": "loaded /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so", "name": "sdk", "ok": true}
+{"detail": "mujoco, osqp, coacd, zenoh", "name": "python_dependencies", "ok": true}
+{"detail": ":0", "name": "display", "ok": true}
+{"detail": "missing generated artifacts: unified_plant.xml, arm_ik.xml, model_manifest.yaml, collision_manifest.yaml, actuator_calibration.yaml", "name": "artifacts", "ok": false}
+{"detail": "tcp/127.0.0.1:7447 is unavailable: [Errno 98] Address already in use", "name": "port_7447", "ok": false}
+{"detail": "session is absent: spd-teleop", "name": "session", "ok": true}
+```

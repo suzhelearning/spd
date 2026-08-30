@@ -6,8 +6,9 @@ import fcntl
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 DEFAULT_PATH = Path("~/.cache/spd-vr/control-sequence").expanduser()
 DEFAULT_SESSION = "spd-teleop"
@@ -60,30 +61,34 @@ class ControlSequenceAllocator:
             except FileNotFoundError:
                 pass
 
-    def _locked(self, requested: int | None, publish: Callable[[int], Any] | None = None) -> Any:
+    @contextmanager
+    def transaction(self, requested: int | None = None) -> Iterator[int]:
+        """Hold the session lock from sequence allocation through publish/ack."""
         if requested is not None and (isinstance(requested, bool) or int(requested) <= 0):
             raise ValueError("sequence must be positive")
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock_path.open("a+", encoding="utf-8") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             values = self._read()
-            current = values.get(self.session, 0)
-            sequence = max(current + 1, int(requested or 0), 1)
+            sequence = max(values.get(self.session, 0) + 1, int(requested or 0), 1)
             values[self.session] = sequence
             self._write(values)
-            if publish is not None:
-                return sequence, publish(sequence)
-            return sequence
+            try:
+                yield sequence
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def allocate(self, requested: int | None = None) -> int:
-        return int(self._locked(requested))
+        with self.transaction(requested) as sequence:
+            return sequence
 
-    def publish(self, publisher: Any, payload_factory: Callable[[int], Any], requested: int | None = None) -> tuple[int, Any]:
-        """Allocate, persist, and invoke ``publisher.put`` while holding the session lock."""
-        def send(sequence: int) -> Any:
-            payload = payload_factory(sequence)
-            return publisher.put(payload)
-        return self._locked(requested, send)
+    def publish(self, publisher: Any, payload_factory: Callable[[int], Any], requested: int | None = None, wait: Callable[[int], Any] | None = None) -> tuple[int, Any]:
+        """Publish, and optionally wait for acknowledgement, under one session lock."""
+        with self.transaction(requested) as sequence:
+            result = publisher.put(payload_factory(sequence))
+            if wait is not None:
+                result = wait(sequence)
+            return sequence, result
 
 
 def default_path() -> Path:
