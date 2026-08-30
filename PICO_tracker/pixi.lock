@@ -325,6 +325,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/pyyaml-6.0.3-py311h3778330_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qhull-2020.2-h434a139_5.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qhull-static-2020.2-h434a139_5.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/qpoases-3.2.2-h5888daf_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qt-main-5.15.15-h3a7ef08_5.conda
       - conda: https://prefix.dev/conda-forge/linux-64/qt6-main-6.9.2-h5bd77bc_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/rav1e-0.7.1-h8fae777_3.conda
@@ -488,6 +489,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/sysroot_linux-64-2.28-h4ee821c_9.conda
       - conda: https://prefix.dev/conda-forge/noarch/toml-0.10.2-pyhcf101f3_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/trimesh-4.12.2-pyh7b2049a_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.15.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://prefix.dev/conda-forge/noarch/wayland-protocols-1.47-hd8ed1ab_0.conda
@@ -784,6 +786,9 @@ environments:
       - conda: https://prefix.dev/robostack-staging/linux-64/ros-humble-zstd-vendor-0.15.14-np126py311hbc2a38a_13.conda
       - conda: https://prefix.dev/robostack-staging/linux-64/ros2-distro-mutex-0.7.0-humble_13.conda
       - pypi: ../wuji-retargeting
+      - pypi: ./src/spd_vr
+      - pypi: https://files.pythonhosted.org/packages/45/0b/ea24a4d213827bf5d6dd77aa91dbeb54509492494493e9cb91a33f0b4f12/eclipse_zenoh-1.10.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+      - pypi: https://files.pythonhosted.org/packages/88/7c/ec7edfc77c48fe97434ae813eca7614103289105bb546952ed9a0a266ce8/coacd-1.0.14-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       linux-aarch64:
       - conda: https://prefix.dev/conda-forge/linux-aarch64/_openmp_mutex-4.5-20_gnu.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/aiohttp-3.14.1-py311hf076524_0.conda
@@ -1083,6 +1088,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-aarch64/pyyaml-6.0.3-py311h164a683_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qhull-2020.2-h70be974_5.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qhull-static-2020.2-h70be974_5.conda
+      - conda: https://prefix.dev/conda-forge/linux-aarch64/qpoases-3.2.2-h5ad3122_0.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qt-main-5.15.15-hbe73643_5.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/qt6-main-6.9.2-h6c90349_1.conda
       - conda: https://prefix.dev/conda-forge/linux-aarch64/rav1e-0.7.1-ha3529ed_3.conda
@@ -1244,6 +1250,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/noarch/sysroot_linux-aarch64-2.28-h585391f_9.conda
       - conda: https://prefix.dev/conda-forge/noarch/toml-0.10.2-pyhcf101f3_3.conda
       - conda: https://prefix.dev/conda-forge/noarch/tomli-2.4.1-pyhcf101f3_0.conda
+      - conda: https://prefix.dev/conda-forge/noarch/trimesh-4.12.2-pyh7b2049a_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.16.0-pyhcf101f3_0.conda
       - conda: https://prefix.dev/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       - conda: https://prefix.dev/conda-forge/noarch/wslink-2.5.7-pyhd8ed1ab_0.conda
@@ -1539,6 +1546,9 @@ environments:
       - conda: https://prefix.dev/robostack-staging/linux-aarch64/ros-humble-zstd-vendor-0.15.14-np126py311hbdd918e_13.conda
       - conda: https://prefix.dev/robostack-staging/linux-aarch64/ros2-distro-mutex-0.7.0-humble_13.conda
       - pypi: ../wuji-retargeting
+      - pypi: ./src/spd_vr
+      - pypi: https://files.pythonhosted.org/packages/bc/e5/36f3914156f08de895f7eebf104e217433f9db8957597918f9703039c17a/eclipse_zenoh-1.10.0-cp39-abi3-manylinux_2_28_aarch64.whl
+      - pypi: https://files.pythonhosted.org/packages/d6/3e/e930a366ec69a966f1a55307b52d036d266314e2f6c58e72e212fdc09182/coacd-1.0.14-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
 packages:
 - conda: https://prefix.dev/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
   build_number: 20
@@ -6058,6 +6068,20 @@ packages:
   run_exports: {}
   size: 444184
   timestamp: 1720814041633
+- conda: https://prefix.dev/conda-forge/linux-64/qpoases-3.2.2-h5888daf_0.conda
+  sha256: 32851c0d1fd321ba6b0c3b7f15f9d8e33cd230825d2276eb5a7b3d866e4abd1b
+  md5: 56f2a22923b162a0c9da441600e148b1
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=13
+  - libstdcxx >=13
+  license: LGPL-2.1-or-later
+  purls: []
+  run_exports:
+    weak:
+    - qpoases >=3.2.2,<3.2.3.0a0
+  size: 679363
+  timestamp: 1742462127423
 - conda: https://prefix.dev/conda-forge/linux-64/qt-main-5.15.15-h3a7ef08_5.conda
   sha256: f1fee8d35bfeb4806bdf2cb13dc06e91f19cb40104e628dd721989885d1747ad
   md5: 9279a2436ad1ba296f49f0ad44826b78
@@ -11370,6 +11394,19 @@ packages:
   run_exports: {}
   size: 456306
   timestamp: 1720813980184
+- conda: https://prefix.dev/conda-forge/linux-aarch64/qpoases-3.2.2-h5ad3122_0.conda
+  sha256: df14c2ca53f041b419d25575ccaf456ea2e68c290188717a7581d709aaed100b
+  md5: 8dfeb3903e750cf1a7fd970c7bddd4f6
+  depends:
+  - libgcc >=13
+  - libstdcxx >=13
+  license: LGPL-2.1-or-later
+  purls: []
+  run_exports:
+    weak:
+    - qpoases >=3.2.2,<3.2.3.0a0
+  size: 641378
+  timestamp: 1742464090451
 - conda: https://prefix.dev/conda-forge/linux-aarch64/qt-main-5.15.15-hbe73643_5.conda
   sha256: 88fa7acea70be2846842a3d8fc48a81b3d4ce2d90d7f2b1112227416a0135924
   md5: 04bd1a8591a1e75d294ef39ee9b8d146
@@ -13763,6 +13800,41 @@ packages:
   - pkg:pypi/tomli?source=hash-mapping
   size: 21561
   timestamp: 1774492402955
+- conda: https://prefix.dev/conda-forge/noarch/trimesh-4.12.2-pyh7b2049a_0.conda
+  sha256: ec8151a7211e7225f7d378f36a50b7f8336f114bd79935527e49bbd36e013c08
+  md5: 1cc13d0d9f4f21cbcbf99b68f2f2a130
+  depends:
+  - numpy
+  - python >=3.10
+  constrains:
+  - jsonschema
+  - shapely
+  - sympy
+  - meshio
+  - colorlog
+  - xxhash
+  - lxml
+  - chardet
+  - scikit-image
+  - rtree
+  - networkx
+  - requests
+  - setuptools
+  - pillow
+  - scipy
+  - mapbox_earcut
+  - psutil
+  - svg.path
+  - pycollada
+  - msgpack-python
+  - pyglet
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/trimesh?source=hash-mapping
+  run_exports: {}
+  size: 602889
+  timestamp: 1777615044983
 - conda: https://prefix.dev/conda-forge/noarch/typing_extensions-4.15.0-pyhcf101f3_0.conda
   sha256: 032271135bca55aeb156cee361c81350c6f3fb203f57d024d7e5a1fc9ef18731
   md5: 0caa1af407ecff61170c9437a808404d
@@ -26044,3 +26116,35 @@ packages:
   - pyzed ; extra == 'zed'
   - mujoco>=3.6 ; extra == 'tuning'
   requires_python: '>=3.10'
+- pypi: ./src/spd_vr
+  name: spd-vr
+  requires_dist:
+  - setuptools
+  - numpy
+  - pyyaml
+  - h5py
+  - mujoco
+- pypi: https://files.pythonhosted.org/packages/45/0b/ea24a4d213827bf5d6dd77aa91dbeb54509492494493e9cb91a33f0b4f12/eclipse_zenoh-1.10.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+  name: eclipse-zenoh
+  version: 1.10.0
+  sha256: 8a824188a2fb2033133175c8d8f8b49dd4c80ee4286121ae10c1c3ca71812339
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/88/7c/ec7edfc77c48fe97434ae813eca7614103289105bb546952ed9a0a266ce8/coacd-1.0.14-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+  name: coacd
+  version: 1.0.14
+  sha256: 6c135b717af096523bbebf1fd8d326e8950c024237fe9806ad46dedd8b4c31f0
+  requires_dist:
+  - numpy
+  requires_python: '>=3.9'
+- pypi: https://files.pythonhosted.org/packages/bc/e5/36f3914156f08de895f7eebf104e217433f9db8957597918f9703039c17a/eclipse_zenoh-1.10.0-cp39-abi3-manylinux_2_28_aarch64.whl
+  name: eclipse-zenoh
+  version: 1.10.0
+  sha256: 5a07b44f43e3a1428544d0223f11afb7a41b39365358dcef0a7798ab1f24e3c1
+  requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/d6/3e/e930a366ec69a966f1a55307b52d036d266314e2f6c58e72e212fdc09182/coacd-1.0.14-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+  name: coacd
+  version: 1.0.14
+  sha256: 1242941fc9d49ebcb0368c68f31c86e278b9a6f1a255d11da2f1668797e2626e
+  requires_dist:
+  - numpy
+  requires_python: '>=3.9'
