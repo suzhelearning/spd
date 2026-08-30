@@ -241,7 +241,7 @@ git commit -m "feat: add Python Zenoh transport"
 
 **Interfaces:**
 - Consumes: Task 2 `PicoStreamDecoder`/`HandPairer`/`encode_tracking`，Task 3 `ZenohNode`。
-- Produces: `PXREADevCustomMessage(ctypes.Structure)`；`PXREAClient` context manager；`BoundedCallbackQueue(max_items=64,max_bytes=2048)`；`BridgeCore.accept_event(event) -> list[bytes]`；CLI `main(argv=None) -> int`。
+- Produces: `PXREADevCustomMessage(ctypes.Structure)`；`PXREAClient` context manager；`BoundedCallbackQueue(max_items=64,max_bytes=2048)`；`BridgeCore.accept_event(event) -> list[bytes]`；CLI `main(argv=None) -> int`；仅用于验收的 `--fake-source-jsonl PATH`，逐行读取 `{"device_id":"FAKE","data_hex":"...","delay_ms":5}` 并走同一个 bounded queue/worker。
 
 - [ ] **Step 1: 写 ABI/lifecycle 失败测试**
 
@@ -249,7 +249,7 @@ git commit -m "feat: add Python Zenoh transport"
 
 - [ ] **Step 2: 写 bridge core 失败测试**
 
-直接构造 fake SDK custom callbacks，覆盖 64-slot overflow 丢最旧、左右配对 publication、device reconnect/reset epoch、device selection ambiguity、invalid payload counter 和 status JSON。断言 bridge 从不访问任何 SDK send symbol。
+直接构造 fake SDK custom callbacks，覆盖 64-slot overflow 丢最旧、左右配对 publication、device reconnect/reset epoch、device selection ambiguity、invalid payload counter 和 status JSON。断言 bridge 从不访问任何 SDK send symbol；JSONL fake source 按 `delay_ms` 注入 `data_hex`，malformed line 非零退出。
 
 - [ ] **Step 3: 运行失败测试**
 
@@ -268,7 +268,7 @@ class PXREADevCustomMessage(ctypes.Structure):
 CALLBACK = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p)
 ```
 
-固定 `PXREAInit.argtypes=[c_void_p,CALLBACK,c_uint]`、`restype=c_int`，`PXREADeinit.argtypes=[]`、`restype=c_int`。callback 用 `ctypes.string_at(message.dataPtr,size)` 完成唯一复制。Worker thread 完成解码、pair、tracking publication/status；SIGINT/SIGTERM 设置 event 后有序 close。
+固定 `PXREAInit.argtypes=[c_void_p,CALLBACK,c_uint]`、`restype=c_int`，`PXREADeinit.argtypes=[]`、`restype=c_int`。callback 用 `ctypes.string_at(message.dataPtr,size)` 完成唯一复制。Worker thread 完成解码、pair、tracking publication/status；SIGINT/SIGTERM 设置 event 后有序 close。`--fake-source-jsonl` 不加载 SDK，只把每行解码后的 raw callback bytes 投递给同一 `BoundedCallbackQueue`，生产代码的解析与发布路径不分叉。
 
 - [ ] **Step 5: 运行测试、真实库装载 smoke 并提交**
 
@@ -651,7 +651,7 @@ git commit -m "feat: cut over Python teleoperation lifecycle"
 
 - [ ] **Step 1: 写真实进程 E2E harness**
 
-Harness 创建临时 endpoint/metadata，启动 `python -m spd_vr.pxrea_bridge --fake-source`、`python -m spd_vr.arm_ik`、`python -m spd_vr.viewer --headless`，等待三个 status ready，发布 START 和至少 12 组稳定 paired hand frame。随后分别施加 left wrist translation、right wrist rotation、left finger flex、right finger flex，比较前后 target/plant snapshot，最后 SHUTDOWN 并等待三个 exit。
+Harness 创建含 START 后 12 组稳定 paired hand、left wrist translation、right wrist rotation、left finger flex、right finger flex 的 JSONL raw callback script，启动 `python -m spd_vr.pxrea_bridge --fake-source-jsonl <path>`、`python -m spd_vr.arm_ik`、`python -m spd_vr.viewer --headless`，等待三个 status ready，比较各阶段 target/plant snapshot，最后发布 SHUTDOWN 并等待三个 exit。
 
 - [ ] **Step 2: 添加 E2E assertions**
 
