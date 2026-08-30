@@ -27,6 +27,7 @@ class ManifestJoint:
 
 
 def load_manifest(path: str | Path) -> dict[str, Any]:
+    """Load and structurally validate a Task7 ``model_manifest.yaml``."""
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -55,6 +56,20 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
             raise ManifestError(f"invalid range at {expected}")
         if not float(entry["range"][1]) > float(entry["range"][0]):
             raise ManifestError(f"invalid range at {expected}")
+    arm_order = document.get("arm_joint_order")
+    if not isinstance(arm_order, list) or len(arm_order) != 14 or any(name not in joint_order for name in arm_order):
+        raise ManifestError("manifest must contain exactly 14 arm joints")
+    wrist = document.get("wrist_targets")
+    if wrist != {
+        "left_body": "l_wrist",
+        "left_site": "l_wrist_target",
+        "right_body": "r_wrist",
+        "right_site": "r_wrist_target",
+    }:
+        raise ManifestError("manifest wrist targets are incomplete")
+    outputs = document.get("outputs")
+    if not isinstance(outputs, dict) or not {"unified_plant.xml", "arm_ik.xml", "collision_manifest.yaml", "actuator_calibration.yaml"} <= set(outputs):
+        raise ManifestError("manifest output hashes are incomplete")
     return document
 
 

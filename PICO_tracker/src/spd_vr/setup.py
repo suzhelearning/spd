@@ -15,9 +15,11 @@ setup(
             "config/wuji2_pico_right.yaml",
         ]),
         ("share/" + package_name + "/generated", [
-            "generated/tianji_wuji2_spd.xml",
-            "generated/joint_manifest.yaml",
-            "generated/sim_actuator_calibration.yaml",
+            "generated/unified_plant.xml",
+            "generated/arm_ik.xml",
+            "generated/model_manifest.yaml",
+            "generated/collision_manifest.yaml",
+            "generated/actuator_calibration.yaml",
         ]),
     ],
     install_requires=[
@@ -35,8 +37,7 @@ setup(
     zip_safe=True,
     entry_points={
         "console_scripts": [
-            "validate_pico_sample = spd_vr.sample_schema:main",
-            "build_model = spd_vr.model_builder:main",
+            "spd-model = spd_vr.model_compiler.cli:main",
             "validate_scenes = spd_vr.scenes.validate:main",
             "benchmark_sim = spd_vr.simulator:benchmark_main",
             "validate_episode = spd_vr.episode:validate_main",
