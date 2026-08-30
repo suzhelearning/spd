@@ -389,6 +389,8 @@ def _artifact_from_cache(
         if hashes != sorted(hashes):
             return None
         metrics = manifest["metrics"]
+        if not isinstance(metrics, dict):
+            return None
         if (
             metrics.get("piece_count") != len(records)
             or not np.isfinite(float(manifest["surface_p95"]))
