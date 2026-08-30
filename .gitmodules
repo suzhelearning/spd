@@ -4,6 +4,3 @@
 [submodule "wuji-retargeting/example/utils/mujoco-sim"]
 	path = wuji-retargeting/example/utils/mujoco-sim
 	url = https://github.com/wuji-technology/mujoco-sim.git
-[submodule "third_party/zenoh-pico"]
-	path = third_party/zenoh-pico
-	url = https://github.com/eclipse-zenoh/zenoh-pico.git
