@@ -118,3 +118,16 @@ def test_paused_both_sides_roundtrip():
         }
     )
     assert decode_packet(encode_packet(frame)) == frame
+
+
+def test_hold_reason_values_cover_all_runtime_states():
+    assert {reason.name: reason.value for reason in ArmTargetHoldReason} == {
+        "NONE": 0,
+        "INPUT_STALE": 1,
+        "SOLVER_FAILURE": 2,
+        "PAUSED": 3,
+        "INACTIVE": 4,
+        "ALIGNING": 5,
+        "DISCONNECTED": 6,
+        "EPOCH_CHANGE": 7,
+    }
