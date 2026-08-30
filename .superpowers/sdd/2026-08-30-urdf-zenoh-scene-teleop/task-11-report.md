@@ -202,3 +202,17 @@ pxrea_bridge: python -m spd_vr.pxrea_bridge --sdk-library /opt/apps/roboticsserv
 arm_ik: python -m spd_vr.arm_ik --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/arm_ik.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/127.0.0.1:7447
 viewer: python -m spd_vr.viewer --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/unified_plant.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/127.0.0.1:7447
 ```
+
+## Review round 5 修复与验证
+
+- `--serial` 参数现在拒绝空值及以 `--` 开头的下一个选项，返回 2，不进入 dry-run 或 preflight。
+
+```text
+$ bash -n scripts/start_spd_vr.sh scripts/stop_spd_vr.sh
+$ pixi run python -m pytest src/spd_vr/test/test_lifecycle_scripts.py -q
+....                                                                     [100%]
+4 passed, 1 warning in 0.35s
+$ bash scripts/start_spd_vr.sh --serial --dry-run
+invalid-serial-exit=2
+--serial requires a value
+```

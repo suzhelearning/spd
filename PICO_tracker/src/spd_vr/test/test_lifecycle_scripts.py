@@ -22,6 +22,11 @@ def test_start_script_consumes_serial_and_passes_it_to_bridge():
     assert result.returncode == 0, result.stderr
     assert "--device-id TEST" in result.stdout
 
+def test_start_script_rejects_option_as_missing_serial_value():
+    result = subprocess.run([str(START), "--serial", "--dry-run"], text=True, capture_output=True, check=False)
+    assert result.returncode == 2
+    assert "session=" not in result.stdout
+
 def test_scripts_use_fixed_session_windows_and_ordered_shutdown():
     start = START.read_text(encoding="utf-8")
     stop = STOP.read_text(encoding="utf-8")

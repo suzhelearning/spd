@@ -31,7 +31,7 @@ while (($#)); do
     --detach) mode="detach"; shift ;;
     --endpoint) endpoint="$2"; shift 2 ;;
     --serial)
-      [[ $# -ge 2 && -n "$2" ]] || { echo "--serial requires a value" >&2; exit 2; }
+      [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { echo "--serial requires a value" >&2; exit 2; }
       serial="$2"
       shift 2
       ;;
