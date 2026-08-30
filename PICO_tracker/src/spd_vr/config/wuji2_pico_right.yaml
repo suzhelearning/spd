@@ -4,8 +4,28 @@
 # user sample has passed validation.
 optimizer:
   type: "AdaptiveOptimizerAnalytical"
-  urdf_path: "../../../../wuji-retargeting/wuji_retargeting/wuji-description/hand2/hand2_beta1/body/urdf/right.urdf"
-  mjcf_path: "../../../../wuji-retargeting/wuji_retargeting/wuji-description/hand2/hand2_beta1/body/mjcf/right.xml"
+  urdf_path: "../../../../assets/tianji_wuji2/tianji_wuji2.urdf"
+  active_joint_names:
+    - r_thumb_cmc_flex
+    - r_thumb_cmc_abd
+    - r_thumb_mcp
+    - r_thumb_ip
+    - r_index_finger_mcp_flex
+    - r_index_finger_mcp_abd
+    - r_index_finger_pip
+    - r_index_finger_dip
+    - r_middle_finger_mcp_flex
+    - r_middle_finger_mcp_abd
+    - r_middle_finger_pip
+    - r_middle_finger_dip
+    - r_ring_finger_mcp_flex
+    - r_ring_finger_mcp_abd
+    - r_ring_finger_pip
+    - r_ring_finger_dip
+    - r_pinky_mcp_flex
+    - r_pinky_mcp_abd
+    - r_pinky_pip
+    - r_pinky_dip
   link_naming:
     prefix: "r_"
     palm: "wrist"

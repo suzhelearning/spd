@@ -1,24 +1,82 @@
-from typing import List
+from typing import Iterable, List
 import time
 
 import numpy as np
 import numpy.typing as npt
 import pinocchio as pin
 
-
 class RobotWrapper:
-    """Pinocchio robot wrapper for forward kinematics."""
+    """Pinocchio robot wrapper for a full or side-specific reduced URDF model."""
 
-    def __init__(self, urdf_path: str, hand_side: str = None):
-        # Create robot model and data
-        self.model: pin.Model = pin.buildModelFromUrdf(urdf_path)
-        self.data: pin.Data = self.model.createData()
-
-        if self.model.nv != self.model.nq:
+    def __init__(
+        self,
+        urdf_path: str,
+        hand_side: str | None = None,
+        active_joint_names: Iterable[str] | None = None,
+    ):
+        full_model: pin.Model = pin.buildModelFromUrdf(urdf_path)
+        if full_model.nv != full_model.nq:
             raise NotImplementedError("Cannot handle robot with special joint.")
-
-        # Store hand side for frame name resolution
         self.hand_side = hand_side.lower() if hand_side else None
+        if self.hand_side not in {None, "left", "right"}:
+            raise ValueError(f"hand_side must be 'left' or 'right', got {hand_side!r}")
+
+        all_dof_names = [
+            name for index, name in enumerate(full_model.names) if full_model.nqs[index] > 0
+        ]
+        if active_joint_names is None:
+            active = all_dof_names
+        else:
+            active = list(active_joint_names)
+            if len(active) != len(set(active)):
+                raise ValueError("active_joint_names must be unique")
+            missing = [name for name in active if name not in all_dof_names]
+            if missing:
+                raise ValueError(f"active joints are absent or fixed in URDF: {missing}")
+            if self.hand_side is not None:
+                prefix = f"{self.hand_side[0]}_"
+                wrong_side = [
+                    name for name in active
+                    if name.startswith(("l_", "r_")) and not name.startswith(prefix)
+                ]
+                if wrong_side:
+                    raise ValueError(
+                        f"active joints contain the other hand for {self.hand_side}: {wrong_side}"
+                    )
+                if any(name.startswith("Joint") for name in active):
+                    raise ValueError("arm joints cannot be active in a reduced hand model")
+            if len(active) != 20:
+                raise ValueError(
+                    f"reduced hand model requires exactly 20 active joints, got {len(active)}"
+                )
+
+        active_set = set(active)
+        inactive_ids = [
+            joint_id
+            for joint_id, name in enumerate(full_model.names)
+            if full_model.nqs[joint_id] > 0 and name not in active_set
+        ]
+        # The authoritative URDF contains duplicate fixed/body marker frames;
+        # Pinocchio's reducer requires unique names although hand frames remain unchanged.
+        seen_frames: set[str] = set()
+        for frame_id, frame in enumerate(full_model.frames):
+            if frame.name in seen_frames:
+                frame.name = f"{frame.name}__duplicate_{frame_id}"
+            seen_frames.add(frame.name)
+        reference = pin.neutral(full_model)
+        if active_joint_names is not None:
+            try:
+                self.model = pin.buildReducedModel(full_model, [0, *inactive_ids], reference)
+            except ValueError as exc:
+                if "parent joint is not valid" not in str(exc):
+                    raise
+                # Some Pinocchio versions reject universe in this malformed
+                # fixed-frame tree; it has no DoF, so omitting it is equivalent.
+                self.model = pin.buildReducedModel(full_model, inactive_ids, reference)
+        else:
+            self.model = full_model
+        self.data: pin.Data = self.model.createData()
+        self.active_joint_names = tuple(active)
 
         # Timing statistics for FK and Jacobian
         self._timing_enabled = False
@@ -73,12 +131,15 @@ class RobotWrapper:
         return np.stack([lower, upper], axis=1)
 
     def get_link_index(self, name: str) -> int:
-        """Get frame index by name, trying both unprefixed and prefixed variants.
-
-        Args:
-            name: Frame name without prefix (e.g., "palm_link", "finger1_tip_link")
-        """
-        for candidate in [name, f"{self.hand_side}_{name}"]:
+        """Return a frame ID while preventing cross-hand frame resolution."""
+        if self.hand_side and name.startswith(("l_", "r_")):
+            expected = f"{self.hand_side[0]}_"
+            if not name.startswith(expected):
+                raise RuntimeError(f"frame '{name}' belongs to the other hand")
+        candidates = [name]
+        if self.hand_side:
+            candidates.append(f"{self.hand_side}_{name}")
+        for candidate in candidates:
             idx = self.model.getFrameId(candidate, pin.BODY)
             if idx < self.model.nframes:
                 return idx

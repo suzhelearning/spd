@@ -79,3 +79,52 @@ def test_failed_or_inactive_left_side_does_not_block_right_side():
     inactive = pair.retarget(_frame(left_active=False, right_active=True, sequence_id=2))
     assert inactive.left_hold_reason is HandHoldReason.INACTIVE
     assert inactive.right_valid is True
+
+
+class BoundedFakeRetargeter(FakeRetargeter):
+    def __init__(self):
+        super().__init__()
+        self.reset_count = 0
+        self.optimizer.robot.joint_limits = np.column_stack(
+            (-np.ones(20), np.ones(20))
+        )
+
+    def reset_filter(self, *_args):
+        self.reset_count += 1
+
+    def retarget(self, points):
+        return np.linspace(-2.0, 2.0, 20)
+
+
+def test_manifest_order_clamps_finite_outputs_and_resets_each_epoch():
+    left = BoundedFakeRetargeter()
+    right = BoundedFakeRetargeter()
+    source_names = [f"joint_{index}" for index in range(20)]
+    actuator_names = list(reversed(source_names))
+    pair = WujiRetargetPair(
+        left,
+        right,
+        left_actuator_joint_names=actuator_names,
+        right_actuator_joint_names=actuator_names,
+    )
+
+    first = pair.retarget(_frame(sequence_id=1))
+    assert np.isfinite(first.left_qpos).all()
+    assert np.all(np.abs(first.left_qpos) <= 1.0)
+    assert first.left_qpos[0] == 1.0
+    assert first.left_qpos[-1] == -1.0
+    assert left.reset_count == right.reset_count == 1
+
+    second = pair.retarget(_frame(sequence_id=2))
+    assert second.left_valid and second.right_valid
+    assert left.reset_count == right.reset_count == 1
+    epoch_reset = pair.retarget(
+        PicoHandFrame(
+            _frame(sequence_id=3).left_hand,
+            _frame(sequence_id=3).right_hand,
+            tracking_epoch=2,
+            sequence_id=3,
+        )
+    )
+    assert epoch_reset.left_valid and epoch_reset.right_valid
+    assert left.reset_count == right.reset_count == 2

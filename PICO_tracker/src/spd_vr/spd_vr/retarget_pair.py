@@ -1,13 +1,15 @@
 """Simulation-only atomic Wuji Hand 2 retargeting for both sides."""
 
 from __future__ import annotations
-
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
 import numpy as np
+import yaml
 
 from .pico_hands import PicoHandFrame, PicoHandsInput
 
@@ -99,11 +101,95 @@ def mjcf_actuator_joint_names(path: str | Path) -> list[str]:
 def _retargeter_from(value: Any, side: str, factory: Callable[..., Any]) -> Any:
     if hasattr(value, "retarget") and hasattr(value, "reset_filter"):
         return value
-    return factory(str(value), hand_side=side)
+    return factory(value, hand_side=side)
+
+
+def _config_from(value: str | Path | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(value, dict):
+        config = deepcopy(value)
+    else:
+        path = Path(value).resolve()
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError(f"retarget config must be a mapping: {path}")
+        config["__yaml_dir"] = str(path.parent)
+    return config
+
+
+def _manifest_hand_contract(
+    manifest_path: str | Path, urdf_path: str | Path
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    from .manifest import load_manifest
+
+    manifest_file = Path(manifest_path).resolve()
+    document = load_manifest(manifest_file)
+    source = document.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("manifest source metadata is missing")
+    urdf = Path(urdf_path).resolve()
+    if not urdf.is_file():
+        raise FileNotFoundError(urdf)
+    declared = source.get("urdf")
+    if declared and Path(str(declared)).name != urdf.name:
+        raise ValueError(f"manifest URDF path mismatch: declared={declared!r}, actual={urdf}")
+    expected_hash = source.get("urdf_sha256")
+    actual_hash = hashlib.sha256(urdf.read_bytes()).hexdigest()
+    if not isinstance(expected_hash, str) or actual_hash != expected_hash:
+        raise ValueError("authoritative URDF hash mismatch")
+    hand_order = document.get("hand_joint_order")
+    if not isinstance(hand_order, dict):
+        raise ValueError("manifest hand_joint_order is missing")
+    actuator_order = document.get("actuator_order")
+    by_actuator = {entry["actuator"]: entry for entry in entries}
+
+    def side_order(side: str) -> list[str]:
+        names = hand_order.get(side)
+        if not isinstance(names, list) or len(names) != 20 or len(set(names)) != 20:
+            raise ValueError(f"manifest {side} hand_joint_order must contain 20 unique joints")
+        actuators = [
+            by_actuator[actuator]["joint"]
+            for actuator in actuator_order
+            if by_actuator[actuator].get("group") == "hand"
+            and by_actuator[actuator].get("side") == side
+        ]
+        if set(actuators) != set(names):
+            raise ValueError(f"manifest {side} actuator order disagrees with hand order")
+        return actuators
+
+    return document, side_order("left"), side_order("right")
 
 
 class WujiRetargetPair:
     """Own two Retargeters and process one atomic PICO frame at a time."""
+
+    @classmethod
+    def from_manifest(
+        cls,
+        left_config: str | Path | dict[str, Any],
+        right_config: str | Path | dict[str, Any],
+        manifest_path: str | Path,
+        urdf_path: str | Path,
+    ) -> "WujiRetargetPair":
+        _, left_names, right_names = _manifest_hand_contract(manifest_path, urdf_path)
+        left = _config_from(left_config)
+        right = _config_from(right_config)
+        for config, side, names in (
+            (left, "left", left_names),
+            (right, "right", right_names),
+        ):
+            optimizer = config.setdefault("optimizer", {})
+            optimizer["hand_side"] = side
+            optimizer["urdf_path"] = str(Path(urdf_path).resolve())
+            optimizer["active_joint_names"] = names
+            optimizer.pop("mjcf_path", None)
+        factory = lambda config, *, hand_side: Retargeter.from_config(config, hand_side=hand_side)
+        return cls(
+            left,
+            right,
+            left_actuator_joint_names=left_names,
+            right_actuator_joint_names=right_names,
+            retargeter_factory=factory,
+        )
 
     def __init__(
         self,
@@ -122,6 +208,8 @@ class WujiRetargetPair:
         self._right_perm = self._build_perm(
             self.right_retargeter, right_actuator_joint_names, "right"
         )
+        self._left_limits = self._source_limits(self.left_retargeter)
+        self._right_limits = self._source_limits(self.right_retargeter)
         self._left_target = self._initial_target(self.left_retargeter)
         self._right_target = self._initial_target(self.right_retargeter)
         if self._left_target.shape != self._right_target.shape:
@@ -153,6 +241,19 @@ class WujiRetargetPair:
             raise ValueError(f"{side} retargeter must expose 20 URDF joints, got {len(names)}")
         return names
 
+    @staticmethod
+    def _source_limits(retargeter: Any) -> np.ndarray:
+        robot = getattr(getattr(retargeter, "optimizer", None), "robot", None)
+        limits = getattr(robot, "joint_limits", None)
+        if limits is None:
+            return np.full((20, 2), [-np.inf, np.inf], dtype=np.float64)
+        limits = np.asarray(limits, dtype=np.float64)
+        if limits.shape != (20, 2) or not np.all(np.isfinite(limits)):
+            raise ValueError(f"retargeter joint limits must be finite with shape (20,2), got {limits.shape}")
+        if np.any(limits[:, 0] > limits[:, 1]):
+            raise ValueError("retargeter joint limits are inverted")
+        return limits
+
     def _build_perm(
         self,
         retargeter: Any,
@@ -176,20 +277,34 @@ class WujiRetargetPair:
         self._last_sequence = None
 
     @staticmethod
-    def _mapped_target(retargeter: Any, points: np.ndarray, perm: np.ndarray) -> np.ndarray:
+    def _mapped_target(
+        retargeter: Any, points: np.ndarray, perm: np.ndarray, limits: np.ndarray
+    ) -> np.ndarray:
         value = np.asarray(retargeter.retarget(points), dtype=np.float64)
-        if value.shape != (20,):
-            raise ValueError(f"retargeter returned {value.shape}, expected (20,)")
-        if not np.all(np.isfinite(value)):
-            raise ValueError("retargeter returned non-finite joint target")
+        if value.shape != (20,) or not np.all(np.isfinite(value)):
+            raise ValueError("retargeter returned a non-finite target with shape other than (20,)")
+        value = np.clip(value, limits[:, 0], limits[:, 1])
         mapped = value[perm]
         if not np.all(np.isfinite(mapped)):
             raise ValueError("mapped joint target is non-finite")
         return mapped
 
+    @staticmethod
+    def _resilient_input(frame: PicoHandFrame | dict[str, Any] | Any) -> PicoHandsInput:
+        try:
+            return PicoHandsInput(frame)
+        except Exception:
+            if not isinstance(frame, PicoHandFrame):
+                raise
+            # Keep side isolation when one raw hand is malformed; each side's
+            # transformation is still validated by get_side_fingers_data().
+            input_frame = PicoHandsInput()
+            input_frame._frame = frame
+            return input_frame
+
     def retarget(self, frame: PicoHandFrame | dict[str, Any] | Any) -> RetargetedHands:
         """Retarget both active sides while holding only failed/inactive sides."""
-        input_frame = PicoHandsInput(frame)
+        input_frame = self._resilient_input(frame)
         source = input_frame.frame
         epoch = int(source.tracking_epoch)
         sequence = int(source.sequence_id)
@@ -211,6 +326,7 @@ class WujiRetargetPair:
                     self.left_retargeter,
                     input_frame.get_side_fingers_data("left"),
                     self._left_perm,
+                    self._left_limits,
                 )
                 left_valid = True
                 left_reason = HandHoldReason.NONE
@@ -222,6 +338,7 @@ class WujiRetargetPair:
                     self.right_retargeter,
                     input_frame.get_side_fingers_data("right"),
                     self._right_perm,
+                    self._right_limits,
                 )
                 right_valid = True
                 right_reason = HandHoldReason.NONE

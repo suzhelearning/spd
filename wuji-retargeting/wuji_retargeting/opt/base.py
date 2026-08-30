@@ -191,11 +191,8 @@ class BaseOptimizer(ABC):
         self.huber_delta = retarget_config.get('huber_delta', 2.0)
         self.norm_delta = retarget_config.get('norm_delta', 0.04)
 
-        # Load URDF. Honor optimizer.urdf_path (e.g. a Wuji Hand 2 model) up front so the
-        # link-name resolution and FK index building below run against the actual
-        # hand; otherwise use the bundled default URDF for this side. Loading the
-        # override here (rather than swapping it in after indices are built) is what
-        # lets a differently-named URDF + optimizer.link_naming resolve correctly.
+        # Load the authoritative URDF and, when supplied, reduce it to the
+        # manifest's active 20-joint side list.
         urdf_override = opt_config.get('urdf_path')
         if urdf_override:
             urdf_path = Path(urdf_override)
@@ -211,8 +208,23 @@ class BaseOptimizer(ABC):
                 raise FileNotFoundError(f"optimizer.urdf_path not found: {urdf_path}")
             urdf_path = str(urdf_path)
         else:
-            urdf_path = str((_PACKAGE_ROOT / f"wuji-description/hand/body/urdf/{self.hand_side}.urdf").resolve())
-        self.robot = RobotWrapper(urdf_path, hand_side=self.hand_side)
+            urdf_path = str(
+                (_PACKAGE_ROOT / f"wuji-description/hand/body/urdf/{self.hand_side}.urdf").resolve()
+            )
+        active_joint_names = opt_config.get("active_joint_names")
+        if active_joint_names is not None:
+            if not isinstance(active_joint_names, (list, tuple)):
+                raise ValueError("optimizer.active_joint_names must be a list")
+            self.active_joint_names = list(active_joint_names)
+        else:
+            self.active_joint_names = None
+        self.robot = RobotWrapper(
+            urdf_path,
+            hand_side=self.hand_side,
+            active_joint_names=self.active_joint_names,
+        )
+        if self.active_joint_names is None:
+            self.active_joint_names = list(self.robot.dof_joint_names)
         self.num_joints = self.robot.model.nq
 
         # Setup NLopt optimizer
