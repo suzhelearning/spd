@@ -4,20 +4,25 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import io
 import json
 import os
 from pathlib import Path
 import shutil
 import struct
 import tempfile
+import threading
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any, Iterable
-
 import coacd
+import fcntl
 import numpy as np
 import trimesh
 
 from .urdf_model import MeshGeometry
+
+
 
 
 class CollisionError(RuntimeError):
@@ -52,6 +57,9 @@ class CollisionSettings:
     def __post_init__(self) -> None:
         if self.seed != 0 or self.max_pieces != 16 or self.max_vertices != 64:
             raise ValueError("Task6 requires seed=0, max_pieces=16, max_vertices=64")
+        overridden = {"seed", "max_convex_hull", "max_ch_vertex"} & dict(self._extra_coacd_params).keys()
+        if overridden:
+            raise ValueError(f"cannot override fixed CoACD parameters: {sorted(overridden)}")
         if self.surface_samples <= 0 or not np.isfinite(self.surface_p95_threshold_m):
             raise ValueError("surface quality settings must be finite and positive")
         if self.surface_p95_threshold_m <= 0:
@@ -108,6 +116,39 @@ class CollisionArtifact:
     def source_mesh_sha256(self) -> str:
         return self.source_sha256
 
+_KEY_LOCKS: dict[str, threading.Lock] = {}
+_KEY_LOCKS_GUARD = threading.Lock()
+
+
+def _cache_lock(root: Path, key: str):
+    with _KEY_LOCKS_GUARD:
+        thread_lock = _KEY_LOCKS.setdefault(key, threading.Lock())
+    return _CacheLock(root / f".{key}.lock", thread_lock)
+
+
+class _CacheLock:
+    def __init__(self, path: Path, thread_lock: threading.Lock) -> None:
+        self.path = path
+        self.thread_lock = thread_lock
+        self.handle = None
+
+    def __enter__(self):
+        self.thread_lock.acquire()
+        try:
+            self.handle = self.path.open("a+")
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            self.thread_lock.release()
+            raise
+        return self
+
+    def __exit__(self, *_exc):
+        try:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+        finally:
+            self.thread_lock.release()
+
 
 _MESH_MAGIC = b"SPD_COLLISION_MESH_V1\n"
 _MANIFEST = "manifest.json"
@@ -118,6 +159,22 @@ def _coacd_version() -> str:
         return importlib.metadata.version("coacd")
     except importlib.metadata.PackageNotFoundError:
         return str(getattr(coacd, "__version__", "unknown"))
+
+
+def _locked_decompose(func):
+    @wraps(func)
+    def wrapped(mesh, settings, cache_root):
+        source, source_hash, scale = _source_and_mesh(mesh)
+        key = _cache_key(source_hash, scale, settings)
+        root = Path(cache_root).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        with _cache_lock(root, key):
+            cached = _artifact_from_cache(final_dir=root / key, key=key, source=source,
+                                          source_hash=source_hash, scale=scale, settings=settings)
+            if cached is not None:
+                return cached
+            return func(mesh, settings, root, _prepared=(source, source_hash, scale))
+    return wrapped
 
 
 def _canonical_json(value: Any) -> str:
@@ -133,18 +190,24 @@ def _source_and_mesh(mesh: MeshGeometry | trimesh.Trimesh) -> tuple[trimesh.Trim
         path = mesh.resolved_path.resolve()
         try:
             source_bytes = path.read_bytes()
-            loaded = trimesh.load_mesh(path, force="mesh", process=False)
+            source_hash = _hash_bytes(source_bytes)
+            file_type = path.suffix.lstrip(".") or None
+            loaded = trimesh.load_mesh(
+                io.BytesIO(source_bytes), file_type=file_type, force="mesh", process=False
+            )
+            if _hash_bytes(path.read_bytes()) != source_hash:
+                raise CollisionError("source mesh changed while loading")
+        except CollisionError:
+            raise
         except Exception as exc:
             raise CollisionError(f"cannot load source mesh {path}: {exc}") from exc
         scale = tuple(float(item) for item in mesh.scale)
-        source_hash = _hash_bytes(source_bytes)
     elif isinstance(mesh, trimesh.Trimesh):
         loaded = mesh.copy()
         scale = (1.0, 1.0, 1.0)
         source_hash = _hash_bytes(_canonical_mesh_bytes(loaded))
     else:
         raise TypeError("mesh must be MeshGeometry or trimesh.Trimesh")
-
     vertices = np.asarray(loaded.vertices, dtype=np.float64) * np.asarray(scale, dtype=np.float64)
     faces = np.asarray(loaded.faces, dtype=np.int64)
     if vertices.ndim != 2 or vertices.shape[1] != 3 or faces.ndim != 2 or faces.shape[1] != 3:
@@ -157,7 +220,6 @@ def _source_and_mesh(mesh: MeshGeometry | trimesh.Trimesh) -> tuple[trimesh.Trim
     if not np.isfinite(source.volume) or abs(float(source.volume)) <= 0:
         raise CollisionError("source mesh has non-positive volume")
     return source, source_hash, scale
-
 
 def _canonical_mesh_arrays(vertices: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     vertices = np.asarray(vertices, dtype="<f8")
@@ -172,9 +234,11 @@ def _canonical_mesh_arrays(vertices: np.ndarray, faces: np.ndarray) -> tuple[np.
     remap = np.empty(len(order), dtype=np.int64)
     remap[order] = np.arange(len(order))
     canonical_vertices = np.ascontiguousarray(vertices[order], dtype="<f8")
-    # Preserve winding: sorting each triangle would make a closed mesh
-    # self-cancel and report zero signed volume.
-    canonical_faces = remap[faces]
+    # Preserve winding while normalizing cyclic triangle start indices.
+    remapped_faces = remap[faces]
+    starts = np.argmin(remapped_faces, axis=1)
+    offsets = (starts[:, None] + np.arange(3)[None, :]) % 3
+    canonical_faces = np.take_along_axis(remapped_faces, offsets, axis=1)
     face_order = np.lexsort((canonical_faces[:, 2], canonical_faces[:, 1], canonical_faces[:, 0]))
     return canonical_vertices, np.ascontiguousarray(canonical_faces[face_order], dtype="<i4")
 def _canonical_mesh_bytes(mesh: trimesh.Trimesh | tuple[np.ndarray, np.ndarray]) -> bytes:
@@ -277,49 +341,96 @@ def _cache_key(source_hash: str, scale: tuple[float, float, float], settings: Co
     return _hash_bytes(_canonical_json(payload).encode("utf-8"))
 
 
-def _artifact_from_cache(final_dir: Path, key: str) -> CollisionArtifact | None:
+def _artifact_from_cache(
+    final_dir: Path,
+    key: str,
+    source: trimesh.Trimesh,
+    source_hash: str,
+    scale: tuple[float, float, float],
+    settings: CollisionSettings,
+) -> CollisionArtifact | None:
     manifest_path = final_dir / _MANIFEST
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if manifest.get("cache_key") != key:
+        if (
+            manifest.get("cache_key") != key
+            or manifest.get("source_mesh_sha256") != source_hash
+            or tuple(manifest.get("scale", ())) != scale
+            or manifest.get("coacd_version") != _coacd_version()
+            or manifest.get("settings") != settings.coacd_kwargs()
+            or int(manifest.get("surface_samples", settings.surface_samples)) != settings.surface_samples
+        ):
+            return None
+        records = manifest["pieces"]
+        if not isinstance(records, list) or not 1 <= len(records) <= settings.max_pieces:
             return None
         paths: list[Path] = []
         hashes: list[str] = []
-        for item in manifest["pieces"]:
-            path = final_dir / item["file"]
-            data = path.read_bytes()
-            digest = _hash_bytes(data)
-            if digest != item["sha256"]:
+        proxy_parts: list[trimesh.Trimesh] = []
+        for index, item in enumerate(records):
+            filename = item["file"]
+            digest = item["sha256"]
+            path = (final_dir / filename).resolve()
+            if path.parent != final_dir.resolve() or filename != f"piece_{index:02d}_{digest[:16]}.mesh":
                 return None
-            _read_mesh_bytes(data)
+            data = path.read_bytes()
+            if _hash_bytes(data) != digest:
+                return None
+            vertices, faces = _read_mesh_bytes(data)
+            if len(vertices) > settings.max_vertices or not np.isfinite(vertices).all():
+                return None
+            piece = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+            volume = abs(float(piece.volume))
+            if not np.isfinite(volume) or volume <= 0 or not np.isclose(volume, float(item["volume"])):
+                return None
+            proxy_parts.append(piece)
             paths.append(path)
             hashes.append(digest)
+        if hashes != sorted(hashes):
+            return None
+        metrics = manifest["metrics"]
+        if (
+            metrics.get("piece_count") != len(records)
+            or not np.isfinite(float(manifest["surface_p95"]))
+            or float(manifest["surface_p95"]) > settings.surface_p95_threshold_m
+            or not np.isclose(float(metrics["surface_p95_m"]), float(manifest["surface_p95"]))
+        ):
+            return None
+        measured = bidirectional_surface_p95(source, proxy_parts, settings.surface_samples)
+        if not np.isclose(measured, float(manifest["surface_p95"]), rtol=1e-9, atol=1e-12):
+            return None
         return CollisionArtifact(
             cache_key=key,
             pieces=tuple(paths),
             piece_sha256=tuple(hashes),
-            surface_p95=float(manifest["surface_p95"]),
-            source_sha256=str(manifest["source_mesh_sha256"]),
-            scale=tuple(float(v) for v in manifest["scale"]),
+            surface_p95=measured,
+            source_sha256=source_hash,
+            scale=scale,
             cache_hit=True,
-            metrics=dict(manifest.get("metrics", {})),
+            metrics=dict(metrics),
         )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, CollisionError):
         return None
 
 
+@_locked_decompose
 def decompose_mesh(
     mesh: MeshGeometry | trimesh.Trimesh,
     settings: CollisionSettings,
     cache_root: str | Path,
+    *,
+    _prepared=None,
 ) -> CollisionArtifact:
     """Compile one validated source mesh, or raise without any fallback proxy."""
-    source, source_hash, scale = _source_and_mesh(mesh)
+    if _prepared is None:
+        source, source_hash, scale = _source_and_mesh(mesh)
+    else:
+        source, source_hash, scale = _prepared
     key = _cache_key(source_hash, scale, settings)
     root = Path(cache_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     final_dir = root / key
-    cached = _artifact_from_cache(final_dir, key)
+    cached = _artifact_from_cache(final_dir, key, source, source_hash, scale, settings)
     if cached is not None:
         return cached
     if final_dir.exists():

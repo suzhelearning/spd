@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -10,6 +14,8 @@ import trimesh
 from spd_vr.model_compiler import collision
 from spd_vr.model_compiler.collision import (
     CollisionSettings,
+    _canonical_mesh_arrays,
+    _canonical_mesh_bytes,
     bidirectional_surface_p95,
     decompose_mesh,
 )
@@ -45,11 +51,55 @@ def test_decompose_is_deterministic_and_rebuilds_corrupt_cache(tmp_path, monkeyp
     assert second.cache_hit is True
     assert hashlib.sha256(first.pieces[0].read_bytes()).hexdigest() == first.piece_sha256[0]
 
-    first.pieces[0].write_bytes(b"corrupt")
+
+    manifest_path = first.pieces[0].parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["pieces"] = []
+    manifest_path.write_text(json.dumps(manifest))
+    rebuilt_empty = decompose_mesh(geometry, settings, tmp_path / "cache")
+    assert rebuilt_empty.cache_hit is False
+
+    rebuilt_empty.pieces[0].write_bytes(b"corrupt")
     rebuilt = decompose_mesh(geometry, settings, tmp_path / "cache")
     assert rebuilt.cache_hit is False
     assert rebuilt.piece_sha256 == first.piece_sha256
     assert rebuilt.pieces[0].read_bytes() != b"corrupt"
+
+
+def test_canonical_piece_hash_normalizes_cyclic_face_starts():
+    mesh = trimesh.creation.box()
+    rotated = np.roll(mesh.faces, 1, axis=1)
+    assert np.array_equal(_canonical_mesh_arrays(mesh.vertices, mesh.faces)[1],
+                          _canonical_mesh_arrays(mesh.vertices, rotated)[1])
+    assert _canonical_mesh_bytes((mesh.vertices, mesh.faces)) == _canonical_mesh_bytes(
+        (mesh.vertices, rotated)
+    )
+
+
+def test_fixed_coacd_parameters_cannot_be_overridden():
+    with pytest.raises(ValueError, match="fixed"):
+        CollisionSettings(_extra_coacd_params=(("seed", 7),))
+
+
+def test_same_key_concurrent_misses_build_once(tmp_path, monkeypatch):
+    geometry, _ = _mesh_geometry(tmp_path)
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def slow_decompose(_mesh, **kwargs):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+        time.sleep(0.05)
+        return _fake_decompose(_mesh, **kwargs)
+
+    monkeypatch.setattr(collision.coacd, "run_coacd", slow_decompose)
+    settings = CollisionSettings(surface_samples=16)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: decompose_mesh(geometry, settings, tmp_path / "cache"), range(2)))
+    assert calls == 1
+    assert {result.cache_hit for result in results} == {False, True}
+    assert all(path.exists() for path in results[0].pieces)
 
 
 def test_decompose_fails_closed_for_bad_output_and_exception(tmp_path, monkeypatch):
