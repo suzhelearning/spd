@@ -7,6 +7,7 @@ mode="detach"
 action="start"
 dry_run=0
 endpoint="tcp/127.0.0.1:7447"
+serial="${PICO_ADB_SERIAL:-}"
 sdk_library="${PXREA_SDK_LIBRARY:-${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so}"
 manifest="$repo_root/src/spd_vr/generated/model_manifest.yaml"
 urdf="$repo_root/../assets/tianji_wuji2/tianji_wuji2.urdf"
@@ -16,7 +17,7 @@ metadata_path="$metadata_dir/${session_name}.metadata"
 usage() {
   cat <<'EOF'
 Usage: start_spd_vr.sh [--dry-run] [--attach|--detach]
-  [--endpoint ENDPOINT] [--sdk-library PATH] [--manifest PATH] [--urdf PATH]
+  [--endpoint ENDPOINT] [--serial SERIAL] [--sdk-library PATH] [--manifest PATH] [--urdf PATH]
 
 SDK resolution: PXREA_SDK_LIBRARY takes precedence; otherwise
 ${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so
@@ -53,11 +54,16 @@ if [[ "$action" == "stop" ]]; then
 fi
 windows=(pxrea_bridge arm_ik viewer)
 endpoint_q="$(printf '%q' "$endpoint")"
+urdf_q="$(printf '%q' "$urdf")"
+serial_q="$(printf '%q' "$serial")"
 sdk_library_q="$(printf '%q' "$sdk_library")"
 manifest_q="$(printf '%q' "$manifest")"
-urdf_q="$(printf '%q' "$urdf")"
+device_arg=""
+if [[ -n "$serial" ]]; then
+  device_arg="--device-id $serial_q"
+fi
 commands=(
-  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library_q --endpoint $endpoint_q --listen"
+  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library_q --endpoint $endpoint_q $device_arg --listen"
   "python -m spd_vr.arm_ik --model $(printf '%q' "${manifest%/*}/arm_ik.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
   "python -m spd_vr.viewer --model $(printf '%q' "${manifest%/*}/unified_plant.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
 )
@@ -78,6 +84,9 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 fi
 
 preflight_args=(--repo-root "$repo_root" --endpoint "$endpoint" --sdk-library "$sdk_library" --manifest "$manifest" --urdf "$urdf" --session "$session_name")
+if [[ -n "$serial" ]]; then
+  preflight_args+=(--serial "$serial")
+fi
 if ! (cd "$repo_root" && pixi run spd-preflight "${preflight_args[@]}"); then
   echo "preflight failed; no session was created" >&2
   exit 1

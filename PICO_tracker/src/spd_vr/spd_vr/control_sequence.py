@@ -1,53 +1,89 @@
-"""Process-safe, session-scoped control sequence allocation."""
+"""Process-safe, session-scoped control sequence allocation and publishing."""
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import tempfile
 from pathlib import Path
-from typing import Any
-
-import fcntl
-
+from typing import Any, Callable
 
 DEFAULT_PATH = Path("~/.cache/spd-vr/control-sequence").expanduser()
 DEFAULT_SESSION = "spd-teleop"
 
 
 class ControlSequenceAllocator:
-    """Allocate strictly increasing sequences shared by every control publisher."""
+    """Allocate and publish strictly ordered sequences under one session lock."""
 
     def __init__(self, path: str | Path | None = None, *, session: str = DEFAULT_SESSION) -> None:
         self.path = Path(path).expanduser() if path is not None else default_path()
         self.session = str(session)
+        self.lock_path = self.path.with_name(self.path.name + ".lock")
 
-    def allocate(self, requested: int | None = None) -> int:
-        if requested is not None and int(requested) <= 0:
-            raise ValueError("sequence must be positive")
+    def _read(self) -> dict[str, int]:
+        if not self.path.exists():
+            return {}
+        raw = self.path.read_text(encoding="utf-8").strip()
+        if not raw:
+            raise ValueError(f"invalid empty control sequence state: {self.path}")
+        try:
+            parsed: Any = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid control sequence state: {self.path}") from exc
+        if isinstance(parsed, int) and not isinstance(parsed, bool):
+            if parsed < 0:
+                raise ValueError(f"invalid control sequence state: {self.path}")
+            return {self.session: parsed}
+        if not isinstance(parsed, dict):
+            raise ValueError(f"invalid control sequence state: {self.path}")
+        values: dict[str, int] = {}
+        for session, value in parsed.items():
+            if not isinstance(session, str) or isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"invalid control sequence state: {self.path}")
+            values[session] = value
+        return values
+
+    def _write(self, values: dict[str, int]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a+", encoding="utf-8") as stream:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-            try:
-                stream.seek(0)
-                raw = stream.read().strip()
-                values: dict[str, int]
-                try:
-                    parsed: Any = json.loads(raw) if raw else {}
-                    values = parsed if isinstance(parsed, dict) else {self.session: int(parsed)}
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    values = {}
-                current = int(values.get(self.session, 0))
-                sequence = max(current + 1, int(requested or 0), 1)
-                values[self.session] = sequence
-                stream.seek(0)
-                stream.truncate()
+        fd, temporary = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump(values, stream, sort_keys=True, separators=(",", ":"))
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-                return sequence
-            finally:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            os.replace(temporary, self.path)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def _locked(self, requested: int | None, publish: Callable[[int], Any] | None = None) -> Any:
+        if requested is not None and (isinstance(requested, bool) or int(requested) <= 0):
+            raise ValueError("sequence must be positive")
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            values = self._read()
+            current = values.get(self.session, 0)
+            sequence = max(current + 1, int(requested or 0), 1)
+            values[self.session] = sequence
+            self._write(values)
+            if publish is not None:
+                return sequence, publish(sequence)
+            return sequence
+
+    def allocate(self, requested: int | None = None) -> int:
+        return int(self._locked(requested))
+
+    def publish(self, publisher: Any, payload_factory: Callable[[int], Any], requested: int | None = None) -> tuple[int, Any]:
+        """Allocate, persist, and invoke ``publisher.put`` while holding the session lock."""
+        def send(sequence: int) -> Any:
+            payload = payload_factory(sequence)
+            return publisher.put(payload)
+        return self._locked(requested, send)
 
 
 def default_path() -> Path:

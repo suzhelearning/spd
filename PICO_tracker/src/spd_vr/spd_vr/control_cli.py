@@ -23,10 +23,17 @@ from .wire import (
     encode_control,
 )
 from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
-
-
 DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
 DEFAULT_SEQUENCE_FILE = default_path()
+
+
+def _decode_status(payload: bytes) -> dict[str, Any]:
+    value = json.loads(bytes(payload).decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("status payload must be a JSON object")
+    return value
+
+
 STATUS_KEYS = {"bridge": STATUS_BRIDGE_KEY, "ik": STATUS_IK_KEY, "viewer": STATUS_VIEWER_KEY}
 
 
@@ -111,13 +118,16 @@ def publish_control(
     timeout_s: float = 2.0,
 ) -> ControlFrame:
     """Publish through a connecting-only reliable peer and require all acks."""
-    frame = build_frame(command, sequence=sequence, clock_ns=clock_ns, sequence_file=sequence_file, session=session)
+    command_value = _command(command)
+    timestamp = max(1, int(clock_ns()))
+    allocator = ControlSequenceAllocator(sequence_file, session=session)
     if dry_run:
-        return frame
+        return ControlFrame(allocator.allocate(sequence), timestamp, command_value)
     factory = ZenohNode if node_factory is None else node_factory
     node = factory(peer_config(listen=False, endpoint=endpoint))
     mailboxes = {name: LatestSample[dict[str, Any]]() for name in STATUS_KEYS}
     generations = {name: 0 for name in STATUS_KEYS}
+    frame_holder: list[ControlFrame] = []
     try:
         for name, key in STATUS_KEYS.items():
             node.declare_latest_subscriber(key, _decode_status, mailboxes[name])
@@ -127,7 +137,11 @@ def publish_control(
             reliability=zenoh.Reliability.RELIABLE,
         )
         _wait_matching(publisher, timeout_s)
-        publisher.put(encode_control(frame))
+        def payload(sequence_value: int) -> bytes:
+            frame_holder.append(ControlFrame(sequence_value, timestamp, command_value))
+            return encode_control(frame_holder[-1])
+        allocator.publish(publisher, payload, sequence)
+        frame = frame_holder[-1]
         _wait_ack(mailboxes, generations, frame.sequence, timeout_s)
     finally:
         node.close()

@@ -29,6 +29,24 @@ def test_preflight_reports_structured_required_failure_without_starting_device(t
     assert not any(len(command) > 2 and command[1:2] == ["reverse"] and command[2] != "--list" for command in calls)
 
 
+def test_preflight_matches_selected_reverse_to_dynamic_robotics_listener():
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["adb", "devices"]:
+            return type("Completed", (), {"returncode": 0, "stdout": "List of devices attached\nPICO-1\tdevice\n", "stderr": ""})()
+        if command[:2] == ["ss", "-H"]:
+            output = 'LISTEN 0 128 0.0.0.0:15555 0.0.0.0:* users:(("RoboticsService",pid=42,fd=3))'
+            return type("Completed", (), {"returncode": 0, "stdout": output, "stderr": ""})()
+        if command[:3] == ["adb", "reverse", "--list"]:
+            return type("Completed", (), {"returncode": 0, "stdout": "PICO-1 tcp:15555 tcp:15555\n", "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    results = preflight._check_adb(fake_run, selected_serial="PICO-1")
+    assert {item.name: item.ok for item in results} == {
+        "pico_device": True,
+        "adb_reverse": True,
+        "robotics_service": True,
+    }
+
 def test_preflight_cli_returns_nonzero_and_json_lines(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         preflight,

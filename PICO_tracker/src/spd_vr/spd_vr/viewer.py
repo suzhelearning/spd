@@ -798,12 +798,16 @@ class ViewerRuntime:
         else:
             command = ControlCommand(command)
         timestamp_ns = max(1, int(self._clock_ns()))
-        sequence = self._allocator.allocate()
-        frame = ControlFrame(sequence, timestamp_ns, command)
-        if self._publisher is not None:
+        if self._publisher is None:
+            frame = ControlFrame(self._allocator.allocate(), timestamp_ns, command)
+        else:
             from .wire import encode_control
-
-            self._publisher.put(encode_control(frame))
+            frame_holder: list[ControlFrame] = []
+            def payload(sequence: int) -> bytes:
+                frame_holder.append(ControlFrame(sequence, timestamp_ns, command))
+                return encode_control(frame_holder[-1])
+            self._allocator.publish(self._publisher, payload)
+            frame = frame_holder[-1]
         snapshot = self.session.apply(frame)
         self._publish_status()
         return snapshot

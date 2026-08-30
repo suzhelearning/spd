@@ -72,11 +72,33 @@ def _adb_command(run_command: RunCommand, command: Sequence[str]) -> tuple[bool,
     return True, (result.stdout or "").strip()
 
 
+def _detect_robotics_service_port(run_command: RunCommand) -> tuple[int | None, str]:
+    ok, output = _adb_command(run_command, [os.environ.get("SS_BIN", "ss"), "-H", "-ltnp"])
+    if not ok:
+        return None, output or "cannot inspect host TCP listeners"
+    ports: set[int] = set()
+    for line in output.splitlines():
+        if 'users:(("RoboticsService"' not in line:
+            continue
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        address = fields[3]
+        if address.startswith(("127.", "[::1]", "[::ffff:127.")):
+            continue
+        port = address.rsplit(":", 1)[-1].rstrip("]")
+        if port.isdigit():
+            ports.add(int(port))
+    if len(ports) != 1:
+        return None, "expected exactly one non-loopback RoboticsService listener"
+    return ports.pop(), ""
+
+
 def _check_adb(
     run_command: RunCommand,
     *,
     selected_serial: str | None = None,
-    expected_reverse: str = "tcp:7447 tcp:7447",
+    expected_reverse: str | None = None,
 ) -> list[CheckResult]:
     ok, devices = _adb_command(run_command, ["adb", "devices"])
     if not ok:
@@ -84,14 +106,14 @@ def _check_adb(
     online = [line.split()[0] for line in devices.splitlines()[1:] if len(line.split()) >= 2 and line.split()[1] == "device"]
     serial = selected_serial if selected_serial in online else (online[0] if len(online) == 1 and selected_serial is None else None)
     device_result = CheckResult("pico_device", bool(serial), f"online PICO: {serial}" if serial else "selected PICO is not online or no uniquely selected online PICO")
+    service_port, service_detail = _detect_robotics_service_port(run_command)
+    reverse_target = expected_reverse or (f"tcp:{service_port} tcp:{service_port}" if service_port else "")
     ok, reverse = _adb_command(run_command, ["adb", "reverse", "--list"])
     reverse_lines = reverse.splitlines()
-    reverse_ok = ok and bool(serial) and any(line.split()[0] == serial and expected_reverse in line for line in reverse_lines if line.split())
-    reverse_detail = reverse if reverse else f"expected reverse entry missing: {expected_reverse}"
+    reverse_ok = ok and bool(serial) and bool(reverse_target) and any(line.split()[0] == serial and reverse_target in line for line in reverse_lines if line.split())
+    reverse_detail = reverse if reverse else f"expected reverse entry missing: {reverse_target or 'dynamic RoboticsService port'}"
     reverse_result = CheckResult("adb_reverse", reverse_ok, reverse_detail)
-    service_cmd = ["adb"] + (["-s", serial] if serial else []) + ["shell", "pidof", "RoboticsService"]
-    ok, service = _adb_command(run_command, service_cmd) if serial else (False, "")
-    service_result = CheckResult("robotics_service", ok and bool(service), service or "RoboticsService is not running")
+    service_result = CheckResult("robotics_service", service_port is not None, f"non-loopback RoboticsService listener: {service_port}" if service_port else service_detail)
     return [device_result, reverse_result, service_result]
 
 
@@ -194,7 +216,7 @@ def run_checks(
     endpoint: str = DEFAULT_ENDPOINT,
     session_name: str = SESSION_NAME,
     selected_serial: str | None = None,
-    expected_reverse: str = "tcp:7447 tcp:7447",
+    expected_reverse: str | None = None,
     run_command: RunCommand | None = None,
     sdk_loader: Callable[[str], Any] | None = None,
     dependency_loader: Callable[[str], Any] | None = None,
@@ -214,8 +236,8 @@ def run_checks(
         from .pxrea_sdk import PXREAClient
         load_sdk = lambda path: PXREAClient.load_library(path)
     load_dependency = importlib.import_module if dependency_loader is None else dependency_loader
-    environment = os.environ if display_env is None else display_env
     check_session = (lambda name: _check_session(name, command)) if session_checker is None else session_checker
+    environment = os.environ if display_env is None else display_env
     check_artifact = verify_artifacts if artifact_checker is None else artifact_checker
     results = _check_adb(command, selected_serial=selected_serial, expected_reverse=expected_reverse)
     results.extend((_check_sdk(sdk, load_sdk), _check_dependencies(load_dependency), _check_display(environment), _check_artifacts(manifest, urdf, check_artifact), _check_port(endpoint, port_checker)))
@@ -235,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--urdf", type=Path, default=None)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     parser.add_argument("--serial", default=None)
-    parser.add_argument("--expected-reverse", default="tcp:7447 tcp:7447")
+    parser.add_argument("--expected-reverse", default=None)
     parser.add_argument("--session", default=SESSION_NAME)
     args = parser.parse_args(argv)
     results = run_checks(

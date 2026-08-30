@@ -105,3 +105,39 @@ preflight-exit=1
 {"detail": "tcp/127.0.0.1:7447 is unavailable: [Errno 98] Address already in use", "name": "port_7447", "ok": false}
 {"detail": "session is absent: spd-teleop", "name": "session", "ok": true}
 ```
+
+## Review round 2 修复与验证
+
+- `control_cli` 补齐 JSON status decoder；控制序列 allocator 对损坏/空状态 fail-closed，使用独立 session lock 和临时文件 `fsync` + `os.replace`，并把取号与 publish 放进同一锁。
+- package.xml 恢复 `ament_python` 构建元数据，仅不恢复 live ROS exec 依赖；bridge 初始化/清理路径保留首个异常并保证 SDK、worker、Zenoh、signal 清理。
+- preflight 依据 `ss` 中唯一非 loopback `RoboticsService` listener 动态端口校验所选 serial 的 reverse；Zenoh 7447 仍只用于 peer。start 支持 `--serial`/`PICO_ADB_SERIAL` 并传入 preflight 与 bridge；collision cache 移到 output 外。
+- SHUTDOWN 状态先发布并保留 Zenoh peer 0.5 秒 bounded grace，viewer production/synthetic 分支均显式设置状态。
+
+```text
+$ python3 -m py_compile src/spd_vr/spd_vr/preflight.py src/spd_vr/spd_vr/control_sequence.py src/spd_vr/spd_vr/control_cli.py src/spd_vr/spd_vr/pxrea_bridge.py src/spd_vr/spd_vr/viewer.py
+$ bash -n scripts/start_spd_vr.sh scripts/stop_spd_vr.sh
+$ pixi run python -m pytest src/spd_vr/test/test_control_cli.py src/spd_vr/test/test_preflight.py src/spd_vr/test/test_lifecycle_scripts.py src/spd_vr/test/test_pxrea_bridge.py src/spd_vr/test/test_viewer.py -q
+...................                                                      [100%]
+19 passed, 1 warning in 0.51s
+```
+
+warning 为既有环境 `hppfcl` import warning。
+
+```text
+$ PICO_ADB_SERIAL=PICO-1 bash scripts/start_spd_vr.sh --dry-run --endpoint 'tcp/host name:7447'
+session=spd-teleop
+pxrea_bridge: python -m spd_vr.pxrea_bridge --sdk-library /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so --endpoint tcp/host\ name:7447 --device-id PICO-1 --listen
+arm_ik: python -m spd_vr.arm_ik --model .../arm_ik.xml --manifest .../model_manifest.yaml --urdf .../tianji_wuji2.urdf --endpoint tcp/host\ name:7447
+viewer: python -m spd_vr.viewer --model .../unified_plant.xml --manifest .../model_manifest.yaml --urdf .../tianji_wuji2.urdf --endpoint tcp/host\ name:7447
+$ pixi run spd-preflight --repo-root "$PWD" --manifest "$PWD/src/spd_vr/generated/model_manifest.yaml" --urdf "$PWD/../assets/tianji_wuji2/tianji_wuji2.urdf" --sdk-library /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so --endpoint tcp/127.0.0.1:7447
+preflight-exit=1
+{"detail": "online PICO: PA921DMGK8270070G", "name": "pico_device", "ok": true}
+{"detail": "expected reverse entry missing: tcp:63901 tcp:63901", "name": "adb_reverse", "ok": false}
+{"detail": "non-loopback RoboticsService listener: 63901", "name": "robotics_service", "ok": true}
+{"detail": "loaded /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so", "name": "sdk", "ok": true}
+{"detail": "mujoco, osqp, coacd, zenoh", "name": "python_dependencies", "ok": true}
+{"detail": ":0", "name": "display", "ok": true}
+{"detail": "missing generated artifacts: unified_plant.xml, arm_ik.xml, model_manifest.yaml, collision_manifest.yaml, actuator_calibration.yaml", "name": "artifacts", "ok": false}
+{"detail": "tcp/127.0.0.1:7447 is unavailable: [Errno 98] Address already in use", "name": "port_7447", "ok": false}
+{"detail": "session is absent: spd-teleop", "name": "session", "ok": true}
+```

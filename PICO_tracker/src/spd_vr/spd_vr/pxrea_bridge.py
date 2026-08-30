@@ -319,6 +319,7 @@ def _run_fake_source(
     node = None
     worker = None
     stop = threading.Event()
+    old_handlers: dict[int, Any] = {}
     try:
         if publisher is None or status_publisher is None:
             from .zenoh_transport import LatestSample, ZenohNode, peer_config
@@ -394,7 +395,17 @@ def _run_sdk(args: argparse.Namespace) -> int:
             core.set_ready()
             worker._publish_status()
             generation = 0
-            while not stop.wait(0.05):
+            shutdown_deadline: float | None = None
+            while True:
+                if core._shutdown:
+                    if shutdown_deadline is None:
+                        shutdown_deadline = time.monotonic() + 0.5
+                    if time.monotonic() >= shutdown_deadline:
+                        break
+                    time.sleep(0.05)
+                    continue
+                if stop.wait(0.05):
+                    break
                 sample = control_mailbox.take_new(generation)
                 if sample is None:
                     continue
@@ -404,17 +415,34 @@ def _run_sdk(args: argparse.Namespace) -> int:
                 except ValueError:
                     continue
                 worker._publish_status()
-                if core._shutdown:
-                    stop.set()
     finally:
-        if client is not None:
-            client.close()
-        core.shutdown()
-        if worker is not None:
-            worker.stop()
-        if node is not None:
-            node.close()
-        _restore_signal_handlers(old_handlers)
+        primary_error = sys.exc_info()[1]
+        cleanup_error: BaseException | None = None
+        try:
+            if client is not None:
+                client.close()
+        except BaseException as exc:
+            cleanup_error = exc
+        try:
+            core.shutdown()
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+        try:
+            if worker is not None:
+                worker.stop()
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+        try:
+            if node is not None:
+                node.close()
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+        try:
+            _restore_signal_handlers(old_handlers)
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
+        if primary_error is None and cleanup_error is not None:
+            raise cleanup_error
     return 0
 
 def main(argv: list[str] | None = None) -> int:
