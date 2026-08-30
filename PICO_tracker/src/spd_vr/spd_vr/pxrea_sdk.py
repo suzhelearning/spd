@@ -31,11 +31,6 @@ CALLBACK = ctypes.CFUNCTYPE(
 class CallbackEvent:
     device_id: str
     data: bytes
-    reconnect: bool = False
-
-    @property
-    def raw(self) -> bytes:
-        return self.data
 
 
 class BoundedCallbackQueue:
