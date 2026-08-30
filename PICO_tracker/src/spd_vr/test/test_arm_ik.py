@@ -1,4 +1,5 @@
 import json
+import pytest
 
 import numpy as np
 
@@ -112,8 +113,8 @@ def test_production_ik_uses_connect_only_peer_config(monkeypatch):
 
     def fake_run():
         assert controller.accept_control(ControlFrame(7, 7, ControlCommand.PAUSE))
+        assert controller.accept_control(ControlFrame(8, 8, ControlCommand.SHUTDOWN))
         raise KeyboardInterrupt
-
     monkeypatch.setattr(controller, "run", fake_run)
 
     result = arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"])
@@ -125,7 +126,59 @@ def test_production_ik_uses_connect_only_peer_config(monkeypatch):
     statuses = [json.loads(payload) for payload in status_payloads]
     assert any(item["status"] == "ready" and item["sequence"] is None for item in statuses)
     assert any(item["status"] == "paused" and item["sequence"] == 7 for item in statuses)
+    assert sum(item["status"] == "shutdown" for item in statuses) == 1
     assert statuses[-1]["status"] == "shutdown"
+    assert statuses[-1]["sequence"] == 8
     assert statuses[-1]["running"] is False
-    assert statuses[-1]["sequence"] == 7
+    assert seen["closed"] is True
+
+
+def test_shutdown_status_publish_failure_is_idempotent():
+    controller, _, _ = build_synthetic_fixture()
+
+    class FailingPublisher:
+        def __init__(self):
+            self.calls = 0
+
+        def put(self, _payload):
+            self.calls += 1
+            raise RuntimeError("status transport failed")
+
+    publisher = FailingPublisher()
+    controller._status_publisher = publisher
+    with pytest.raises(RuntimeError, match="status transport failed"):
+        controller.shutdown()
+    controller.shutdown()
+    assert publisher.calls == 1
+
+
+def test_main_closes_node_when_final_shutdown_fails(monkeypatch):
+    controller, _, _ = build_synthetic_fixture()
+    seen: dict[str, bool] = {"closed": False}
+
+    class Publisher:
+        def put(self, _payload):
+            return None
+
+    class FakeNode:
+        def __init__(self, _config):
+            pass
+
+        def declare_latest_subscriber(self, *args):
+            return object()
+
+        def declare_publisher(self, _key, *args, **kwargs):
+            return Publisher()
+
+        def close(self):
+            seen["closed"] = True
+
+    monkeypatch.setattr(arm_ik, "_verified_model", lambda *args: (object(), object()))
+    monkeypatch.setattr(arm_ik, "_production_controller", lambda *args: controller)
+    monkeypatch.setattr(arm_ik, "peer_config", lambda **kwargs: object())
+    monkeypatch.setattr(arm_ik, "ZenohNode", FakeNode)
+    monkeypatch.setattr(controller, "run", lambda: (_ for _ in ()).throw(KeyboardInterrupt))
+    monkeypatch.setattr(controller, "shutdown", lambda: (_ for _ in ()).throw(RuntimeError("cleanup failed")))
+
+    assert arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"]) == 0
     assert seen["closed"] is True

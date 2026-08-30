@@ -155,12 +155,15 @@ class DualArmController:
         }
 
     def _publish_status(self, state: str | None = None) -> None:
-        if state == "shutdown" and self._shutdown_published:
+        normalized = state
+        if normalized is None:
+            normalized = "shutdown" if not self._running else ("paused" if self._paused else "running")
+        if normalized == "shutdown" and self._shutdown_published:
             return
-        if self._status_publisher is not None:
-            self._status_publisher.put(json.dumps(self._status(state), separators=(",", ":")).encode())
-        if state == "shutdown":
+        if normalized == "shutdown":
             self._shutdown_published = True
+        if self._status_publisher is not None:
+            self._status_publisher.put(json.dumps(self._status(normalized), separators=(",", ":")).encode())
 
     def shutdown(self) -> None:
         self._running = False
@@ -512,6 +515,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     node = None
     controller = None
+    exit_code = 0
+    handled_exception = False
     try:
         model, verified = _verified_model(args.model, args.manifest, args.urdf)
         controller = _production_controller(model, verified)
@@ -519,16 +524,28 @@ def main(argv: list[str] | None = None) -> int:
         controller.connect(node)
         controller.run()
     except KeyboardInterrupt:
-        return 0
+        handled_exception = True
     except (ArtifactError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         print(f"artifact validation failed: {exc}", file=sys.stderr)
-        return 2
+        exit_code = 2
+        handled_exception = True
     finally:
-        if controller is not None:
-            controller.shutdown()
-        if node is not None:
-            node.close()
-    return 0
+        cleanup_error: BaseException | None = None
+        try:
+            if controller is not None:
+                controller.shutdown()
+        except BaseException as exc:
+            cleanup_error = exc
+        finally:
+            try:
+                if node is not None:
+                    node.close()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        if cleanup_error is not None and not handled_exception and sys.exc_info()[1] is None:
+            raise cleanup_error
+    return exit_code
 
 
 
