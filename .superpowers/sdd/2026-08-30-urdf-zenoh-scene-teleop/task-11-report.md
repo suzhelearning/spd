@@ -185,3 +185,20 @@ preflight-exit=1
 {"detail": "tcp/127.0.0.1:7447 is unavailable: [Errno 98] Address already in use", "name": "port_7447", "ok": false}
 {"detail": "session is absent: spd-teleop", "name": "session", "ok": true}
 ```
+
+## Review round 4 修复与验证
+
+- start 脚本现在真正消费 `--serial <id>` 两个参数，缺失值立即返回 2；未传参时继续使用 `PICO_ADB_SERIAL`，并把选择传到 preflight 与 bridge。
+- 增加实际 `--dry-run --serial TEST` 回归，确认三窗口输出包含 `--device-id TEST`。
+
+```text
+$ bash -n scripts/start_spd_vr.sh scripts/stop_spd_vr.sh
+$ pixi run python -m pytest src/spd_vr/test/test_lifecycle_scripts.py -q
+...                                                                      [100%]
+3 passed, 1 warning in 0.35s
+$ bash scripts/start_spd_vr.sh --dry-run --serial TEST
+session=spd-teleop
+pxrea_bridge: python -m spd_vr.pxrea_bridge --sdk-library /opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so --endpoint tcp/127.0.0.1:7447 --device-id TEST --listen
+arm_ik: python -m spd_vr.arm_ik --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/arm_ik.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/127.0.0.1:7447
+viewer: python -m spd_vr.viewer --model /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/unified_plant.xml --manifest /home/current/syz/spd/PICO_tracker/src/spd_vr/generated/model_manifest.yaml --urdf /home/current/syz/spd/PICO_tracker/../assets/tianji_wuji2/tianji_wuji2.urdf --endpoint tcp/127.0.0.1:7447
+```

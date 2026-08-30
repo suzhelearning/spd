@@ -30,6 +30,11 @@ while (($#)); do
     --attach) mode="attach"; shift ;;
     --detach) mode="detach"; shift ;;
     --endpoint) endpoint="$2"; shift 2 ;;
+    --serial)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "--serial requires a value" >&2; exit 2; }
+      serial="$2"
+      shift 2
+      ;;
     --sdk-library) sdk_library="$2"; shift 2 ;;
     --manifest) manifest="$2"; shift 2 ;;
     --urdf) urdf="$2"; shift 2 ;;
