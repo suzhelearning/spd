@@ -1,5 +1,6 @@
 import numpy as np
 
+import spd_vr.arm_ik as arm_ik
 from spd_vr.arm_ik import DualArmController, build_synthetic_fixture
 from spd_vr.wire import ArmTargetHoldReason, ControlCommand, ControlFrame, TrackingFrame
 
@@ -54,3 +55,43 @@ def test_control_gate_processes_ordered_commands_once():
     assert not controller.accept_control(ControlFrame(1, 2_000_000_001, ControlCommand.START))
     held = controller.tick(2_000_000_000)
     assert held.left_hold_reason is ArmTargetHoldReason.PAUSED
+def test_reset_does_not_drop_queued_shutdown():
+    controller, _, _ = build_synthetic_fixture()
+    controller.control_mailbox.put(ControlFrame(1, 3_000_000_000, ControlCommand.RESET))
+    controller.control_mailbox.put(ControlFrame(2, 3_000_000_001, ControlCommand.SHUTDOWN))
+    controller.tick(3_000_000_000)
+    assert not controller.running
+
+
+def test_production_ik_uses_connect_only_peer_config(monkeypatch):
+    controller, _, _ = build_synthetic_fixture()
+    seen: dict[str, object] = {}
+
+    class FakeNode:
+        def __init__(self, config):
+            seen["config"] = config
+        def declare_latest_subscriber(self, *args):
+            return object()
+
+        def declare_publisher(self, *args):
+            return object()
+
+
+        def close(self):
+            seen["closed"] = True
+
+    def fake_config(*, listen, endpoint):
+        seen["listen"] = listen
+        seen["endpoint"] = endpoint
+        return object()
+
+    monkeypatch.setattr(arm_ik, "_verified_model", lambda *args: (object(), object()))
+    monkeypatch.setattr(arm_ik, "_production_controller", lambda *args: controller)
+    monkeypatch.setattr(arm_ik, "peer_config", fake_config)
+    monkeypatch.setattr(arm_ik, "ZenohNode", FakeNode)
+    monkeypatch.setattr(controller, "run", lambda: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    result = arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"])
+    assert result == 0
+    assert seen["listen"] is False
+    assert seen["closed"] is True

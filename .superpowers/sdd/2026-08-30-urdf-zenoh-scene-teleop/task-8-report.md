@@ -47,3 +47,19 @@ self-test: ticks=400 finite=400 solver_failures=0 elapsed_s=1.998 rate_hz=200.24
 ```
 
 `synthetic=true` 明确表示该 CLI 仅验证 loop/solver smoke，不是 authoritative model 验收；真实 artifact blocker 状态保持不变。
+## Review round 2 修复验证
+
+修复 IK peer 拓扑为 `listen=False`（bridge 负责监听 7447，IK 仅 connect）；duplicate timestamp 现在先判 stale，未过期时返回当前 ALIGNED/ALIGNING 且不推进稳定计数，过期则清 alignment 并要求 fresh frame 重新稳定；RESET 不再清空已 drain 的 control FIFO，已接收更高 sequence 命令仍经 `ControlSequenceGate` 处理。
+
+```text
+$ cd PICO_tracker
+$ pixi run python -m pytest src/spd_vr/test/test_alignment.py src/spd_vr/test/test_qp_arm.py src/spd_vr/test/test_arm_ik.py -q
+..............                                                           [100%]
+14 passed, 21 warnings in 0.37s
+
+$ pixi run python -m py_compile src/spd_vr/spd_vr/alignment.py src/spd_vr/spd_vr/qp_arm.py src/spd_vr/spd_vr/arm_ik.py
+# no output; exit 0
+
+$ pixi run python -m spd_vr.arm_ik --self-test --ticks 400
+self-test: ticks=400 finite=400 solver_failures=0 elapsed_s=1.997 rate_hz=200.30 synthetic=true
+```

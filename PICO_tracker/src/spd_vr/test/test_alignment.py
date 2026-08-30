@@ -47,8 +47,19 @@ def test_jump_resets_window_but_holds_last_target_and_sides_are_independent():
 def test_duplicate_timestamp_does_not_advance_stability():
     alignment = SideAlignment()
     assert alignment.accept(pose(), True, 1, 1).stable_count == 1
-    assert alignment.accept(pose(), True, 1, 1).hold_reason == "duplicate"
+    assert alignment.accept(pose(), True, 1, 1).hold_reason == "aligning"
     assert alignment.stable_count == 1
+def test_duplicate_stale_timestamp_resets_and_fresh_frame_realigns():
+    alignment = SideAlignment(stale_after_ns=50)
+    for timestamp in range(1, 11):
+        alignment.accept(pose(), True, 1, timestamp)
+    duplicate = alignment.accept(pose(), True, 1, 10, now_ns=20)
+    assert duplicate.aligned
+    stale = alignment.accept(pose(), True, 1, 10, now_ns=61)
+    assert stale.hold_reason == "stale"
+    assert not alignment.aligned
+    assert alignment.accept(pose(), True, 1, 11, now_ns=11).hold_reason == "aligning"
+
 
 
 def test_epoch_timestamp_stale_realign_and_reset_hold_last_target():

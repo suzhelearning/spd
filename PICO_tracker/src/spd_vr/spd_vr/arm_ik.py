@@ -186,7 +186,6 @@ class DualArmController:
             self.right_solver.reset()
             self._tracking = None
             self._tracking_gate.reset()
-            self.control_mailbox.clear()
             self.left_q = np.asarray(self.left_solver.home, dtype=float).copy()
             self.right_q = np.asarray(self.right_solver.home, dtype=float).copy()
             self._left_qdot.fill(0.0)
@@ -483,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         model, verified = _verified_model(args.model, args.manifest, args.urdf)
         controller = _production_controller(model, verified)
-        node = ZenohNode(peer_config(listen=True, endpoint=args.endpoint))
+        node = ZenohNode(peer_config(listen=False, endpoint=args.endpoint))
         controller.connect(node)
         controller.run()
     except KeyboardInterrupt:

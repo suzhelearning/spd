@@ -166,20 +166,27 @@ class SideAlignment:
             self._last_timestamp_ns = timestamp
             self._clear_alignment()
             return self._held("epoch_change")
-        if self._last_timestamp_ns is not None:
-            if timestamp < self._last_timestamp_ns:
-                self._last_timestamp_ns = timestamp
-                self._clear_alignment()
-                return self._held("timestamp_rollback")
-            if timestamp == self._last_timestamp_ns:
-                return self._held("duplicate")
-        self._last_timestamp_ns = timestamp
+        duplicate = self._last_timestamp_ns is not None and timestamp == self._last_timestamp_ns
+        if self._last_timestamp_ns is not None and timestamp < self._last_timestamp_ns:
+            self._last_timestamp_ns = timestamp
+            self._clear_alignment()
+            return self._held("timestamp_rollback")
         if now_ns is not None and int(now_ns) - timestamp > self.stale_after_ns:
+            self._last_timestamp_ns = timestamp
             self._clear_alignment()
             return self._held("stale")
         if not active:
+            self._last_timestamp_ns = timestamp
             self._clear_alignment()
             return self._held("inactive")
+        if duplicate:
+            return AlignedPose(
+                self._target_or_neutral(),
+                self._aligned,
+                None if self._aligned else "aligning",
+                self._stable_count,
+            )
+        self._last_timestamp_ns = timestamp
         try:
             current = _pose_matrix(wrist_pose)
         except (TypeError, ValueError):
