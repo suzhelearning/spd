@@ -28,3 +28,10 @@
 
 - 锁定的 eclipse-zenoh 1.10.0 `Config` 没有简报示例中的 `to_json5()`，只有 `get_json()` 与 `str(config)`；测试用这两个实际 API 验证 endpoint 只出现一次。
 - 唯一 warning 来自环境 `hppfcl` 提示改用 `coal`，与本任务无关；无其他 concern。
+
+## Review fix round 1
+
+- 修复：真实 peer 测试在首个 publish 前通过 eclipse-zenoh 1.10 `Publisher.matching_status` 属性和 matching listener 的 `threading.Event` 有界等待 subscriber match；不再用固定 sleep 猜测声明传播时序，listener 在成功和超时路径均 undeclare。
+- 覆盖：新增 matching 等待超时与 listener 触发测试；原真实双 peer 测试覆盖 match 后批量发送路径。
+- RED：`pixi run python -m pytest src/spd_vr/test/test_zenoh_transport.py -q` → `3 failed, 4 passed, 1 warning in 0.14s`，三个失败均为等待函数尚未实现的 `NotImplementedError`。
+- GREEN：同命令 → `7 passed, 1 warning in 0.22s`。

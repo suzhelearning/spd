@@ -1,5 +1,6 @@
 import json
 import socket
+import threading
 import time
 
 import pytest
@@ -22,6 +23,22 @@ def wait_for_value(mailbox: LatestSample[str], expected: str) -> tuple[int, str]
             return latest
         time.sleep(0.01)
     pytest.fail(f"timed out waiting for {expected!r}")
+
+
+def wait_for_publisher_match(publisher, timeout: float = 5.0) -> None:
+    if publisher.matching_status.matching:
+        return
+    matched = threading.Event()
+    listener = publisher.declare_matching_listener(
+        lambda status: matched.set() if status.matching else None
+    )
+    try:
+        if not publisher.matching_status.matching and not matched.wait(timeout):
+            raise TimeoutError("timed out waiting for subscriber match")
+    finally:
+        listener.undeclare()
+
+
 
 
 def test_latest_sample_overwrites_one_slot_and_invalidates():
@@ -71,6 +88,7 @@ def test_two_real_peers_decode_into_latest_slot_and_stop_after_close():
     try:
         receiver.declare_latest_subscriber("spd/test/latest", decode, mailbox)
         publisher = sender.declare_publisher("spd/test/latest")
+        wait_for_publisher_match(publisher)
         for value in range(1000):
             publisher.put(str(value).encode())
 
@@ -86,6 +104,51 @@ def test_two_real_peers_decode_into_latest_slot_and_stop_after_close():
     finally:
         receiver.close()
         sender.close()
+
+
+class FakeMatchingStatus:
+    def __init__(self, matching: bool):
+        self.matching = matching
+
+
+class FakeMatchingListener:
+    def __init__(self):
+        self.undeclared = False
+
+    def undeclare(self) -> None:
+        self.undeclared = True
+
+
+class FakePublisher:
+    def __init__(self, *, match_on_listen: bool = False):
+        self.matching_status = FakeMatchingStatus(False)
+        self.match_on_listen = match_on_listen
+        self.listener: FakeMatchingListener | None = None
+
+    def declare_matching_listener(self, handler):
+        self.listener = FakeMatchingListener()
+        if self.match_on_listen:
+            self.matching_status.matching = True
+            handler(self.matching_status)
+        return self.listener
+
+
+def test_wait_for_publisher_match_times_out_and_releases_listener():
+    publisher = FakePublisher()
+
+    with pytest.raises(TimeoutError, match="subscriber match"):
+        wait_for_publisher_match(publisher, timeout=0)
+    assert publisher.listener is not None
+    assert publisher.listener.undeclared is True
+
+
+def test_wait_for_publisher_match_observes_listener_and_releases_it():
+    publisher = FakePublisher(match_on_listen=True)
+
+    wait_for_publisher_match(publisher, timeout=0)
+    assert publisher.matching_status.matching is True
+    assert publisher.listener is not None
+    assert publisher.listener.undeclared is True
 
 
 class OwnedResource:
