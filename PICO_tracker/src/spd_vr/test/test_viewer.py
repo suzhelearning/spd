@@ -5,7 +5,7 @@ import numpy as np
 from spd_vr.viewer import PlantController, ViewerRuntime
 from spd_vr.zenoh_transport import CONTROL_CONGESTION_CONTROL
 from spd_vr.viewer_window import ViewerWindow
-from spd_vr.wire import CONTROL_KEY, ControlCommand, ControlFrame, TrackingFrame
+from spd_vr.wire import CONTROL_KEY, STATUS_VIEWER_KEY, ControlCommand, ControlFrame, TrackingFrame
 
 
 class Clock:
@@ -88,15 +88,17 @@ def test_runtime_connects_control_fifo_with_blocking_publisher_and_closes():
     class Node:
         def __init__(self):
             self.publisher = Publisher()
+            self.status_publisher = Publisher()
             self.publisher_kwargs = None
             self.mailboxes = {}
             self.closed = 0
 
         def declare_publisher(self, key, **kwargs):
-            assert key == CONTROL_KEY
-            self.publisher_kwargs = kwargs
-            return self.publisher
-
+            if key == CONTROL_KEY:
+                self.publisher_kwargs = kwargs
+                return self.publisher
+            assert key == STATUS_VIEWER_KEY
+            return self.status_publisher
         def declare_latest_subscriber(self, key, _decoder, mailbox):
             self.mailboxes[key] = mailbox
 

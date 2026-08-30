@@ -22,6 +22,7 @@ from .wire import (
     CONTROL_KEY,
     STATUS_BRIDGE_KEY,
     STATUS_IK_KEY,
+    STATUS_VIEWER_KEY,
     TRACKING_KEY,
     ControlCommand,
     ControlFrame,
@@ -709,6 +710,7 @@ class ViewerRuntime:
         self._sleep = time.sleep if sleep is None else sleep
         self.session = session or SessionController(plant)
         self._publisher: Any | None = None
+        self._status_publisher: Any | None = None
         self._node: Any | None = None
         self._status_mailboxes = {
             "bridge": LatestSample(),
@@ -738,6 +740,7 @@ class ViewerRuntime:
                 CONTROL_KEY,
                 congestion_control=CONTROL_CONGESTION_CONTROL,
             )
+            self._status_publisher = node.declare_publisher(STATUS_VIEWER_KEY)
             node.declare_latest_subscriber(STATUS_BRIDGE_KEY, _decode_status, self._status_mailboxes["bridge"])
             node.declare_latest_subscriber(STATUS_IK_KEY, _decode_status, self._status_mailboxes["ik"])
             connect = getattr(self.plant, "connect", None)
@@ -748,18 +751,34 @@ class ViewerRuntime:
             close = getattr(node, "close", None)
             if close is not None:
                 close()
-            self._node = None
             self._publisher = None
+            self._status_publisher = None
             raise
+        self._publish_status("ready")
+
+    def _publish_status(self, state: str | None = None) -> None:
+        if self._status_publisher is None:
+            return
+        state_value = state or self.session.state.value.lower()
+        payload = {
+            "status": state_value,
+            "ready": state_value != "shutdown",
+            "running": state_value in {"running", "ready"},
+            "paused": state_value == "paused",
+            "tick_count": int(getattr(self, "tick", 0)),
+        }
+        self._status_publisher.put(json.dumps(payload, separators=(",", ":")).encode())
 
     def close(self) -> None:
         close_window = getattr(self.window, "close", None)
         if close_window is not None:
             close_window()
         if self._node is not None:
+            self._publish_status("shutdown")
             self.plant.disconnect()
             self._node = None
             self._publisher = None
+            self._status_publisher = None
 
     def _shutdown_from_window(self) -> None:
         self.send_control(ControlCommand.SHUTDOWN)
@@ -776,7 +795,9 @@ class ViewerRuntime:
             from .wire import encode_control
 
             self._publisher.put(encode_control(frame))
-        return self.session.apply(frame)
+        snapshot = self.session.apply(frame)
+        self._publish_status()
+        return snapshot
 
     def _poll_status(self) -> None:
         for name, mailbox in self._status_mailboxes.items():
