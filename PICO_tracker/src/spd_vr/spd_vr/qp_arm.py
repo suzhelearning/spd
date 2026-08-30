@@ -193,7 +193,7 @@ class ArmQPSolver:
                 continue
             ids.append(index)
         if len(ids) != 7 and side is not None:
-            return tuple(index for index in range(int(self.model.njnt)) if self.model.jnt_type[index] == mujoco.mjtJoint.mjJNT_HINGE)[:7]
+            raise ValueError(f"authoritative manifest must bind exactly seven {side} joints")
         return tuple(ids)
 
     @property
@@ -257,7 +257,7 @@ class ArmQPSolver:
             if dq.shape != (7,) or not np.all(np.isfinite(dq)) or np.any(dq < lower - 1.0e-7) or np.any(dq > upper + 1.0e-7):
                 return self._failure("invalid solution", position_error, orientation_error)
             self._last_dq[:] = dq
-            self._last_q = q_value + dq
+            self._last_q = q_value + dq * float(dt)
             return ArmSolveResult(dq, True, status, position_error, orientation_error)
         except (TypeError, ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
             return self._failure(str(exc))

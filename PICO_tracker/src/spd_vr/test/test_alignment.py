@@ -31,15 +31,24 @@ def test_jump_resets_window_but_holds_last_target_and_sides_are_independent():
     for timestamp in range(1, 11):
         assert left.accept(pose(), True, 1, timestamp).stable_count == min(timestamp, 10)
         right.accept(pose(), True, 1, timestamp)
-    old_target = left.accept(pose(x=0.01), True, 1, 11).target_pose.copy()
-    jumped = left.accept(pose(x=0.0401), True, 1, 12)
+    left.accept(pose(x=0.01), True, 1, 11)
+    steady = left.accept(pose(x=0.0201), True, 1, 12)
+    jumped = left.accept(pose(x=0.041), True, 1, 13)
     inactive = right.accept(pose(), False, 1, 12)
 
+    assert steady.aligned
     assert not jumped.aligned
     assert jumped.hold_reason == "aligning"
-    np.testing.assert_allclose(jumped.target_pose, old_target)
+    np.testing.assert_allclose(jumped.target_pose, steady.target_pose)
     assert inactive.hold_reason == "inactive"
     assert not right.aligned
+
+
+def test_duplicate_timestamp_does_not_advance_stability():
+    alignment = SideAlignment()
+    assert alignment.accept(pose(), True, 1, 1).stable_count == 1
+    assert alignment.accept(pose(), True, 1, 1).hold_reason == "duplicate"
+    assert alignment.stable_count == 1
 
 
 def test_epoch_timestamp_stale_realign_and_reset_hold_last_target():

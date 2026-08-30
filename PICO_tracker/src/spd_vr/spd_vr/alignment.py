@@ -166,12 +166,16 @@ class SideAlignment:
             self._last_timestamp_ns = timestamp
             self._clear_alignment()
             return self._held("epoch_change")
-        if self._last_timestamp_ns is not None and timestamp < self._last_timestamp_ns:
-            self._last_timestamp_ns = timestamp
-            self._clear_alignment()
-            return self._held("timestamp_rollback")
+        if self._last_timestamp_ns is not None:
+            if timestamp < self._last_timestamp_ns:
+                self._last_timestamp_ns = timestamp
+                self._clear_alignment()
+                return self._held("timestamp_rollback")
+            if timestamp == self._last_timestamp_ns:
+                return self._held("duplicate")
         self._last_timestamp_ns = timestamp
         if now_ns is not None and int(now_ns) - timestamp > self.stale_after_ns:
+            self._clear_alignment()
             return self._held("stale")
         if not active:
             self._clear_alignment()
@@ -184,16 +188,18 @@ class SideAlignment:
 
         if self._aligned:
             assert self._candidate is not None
-            translation_step = float(np.linalg.norm(current[:3, 3] - self._candidate[:3, 3]))
-            rotation_step = _rotation_distance(self._candidate[:3, :3], current[:3, :3])
+            previous = self._candidate
+            translation_step = float(np.linalg.norm(current[:3, 3] - previous[:3, 3]))
+            rotation_step = _rotation_distance(previous[:3, :3], current[:3, :3])
             if translation_step > self.max_translation_step_m or rotation_step > self.max_rotation_step_rad:
                 self._clear_alignment()
                 self._candidate = current
                 self._stable_count = 1
                 return self._held("aligning")
-            delta = np.linalg.inv(self._candidate) @ current
+            delta = np.linalg.inv(previous) @ current
             target = self._transform @ current if self._transform is not None else self.neutral_robot @ delta
             target[:3, 3] = self.neutral_robot[:3, 3] + self.position_scale * (target[:3, 3] - self.neutral_robot[:3, 3])
+            self._candidate = current
             self._last_target = target
             return AlignedPose(target, True, None, self._stable_count)
 

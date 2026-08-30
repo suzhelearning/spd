@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 from dataclasses import dataclass
 import sys
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable
 
 import numpy as np
@@ -28,14 +30,38 @@ from .wire import (
     ControlCommand,
     ControlFrame,
     TrackingFrame,
+    TrackingProtocolError,
+    TrackingStreamGate,
+    ControlSequenceGate,
     decode_control,
     decode_tracking,
     encode_arm_target,
 )
-from .zenoh_transport import LatestSample, ZenohNode
+from .zenoh_transport import LatestSample, ZenohNode, peer_config
 
 
 _PERIOD_NS = 5_000_000
+class _OrderedControlQueue:
+    """Thread-safe FIFO used by Zenoh callbacks; sequence gating happens on tick."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._frames: deque[ControlFrame] = deque()
+
+    def put(self, frame: ControlFrame) -> None:
+        with self._lock:
+            self._frames.append(frame)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._frames.clear()
+
+    def drain(self) -> list[ControlFrame]:
+        with self._lock:
+            frames = list(self._frames)
+            self._frames.clear()
+            return frames
+
 
 
 def _hold_reason(value: str | None) -> ArmTargetHoldReason:
@@ -93,9 +119,10 @@ class DualArmController:
             raise ValueError("period_ns must be positive")
         self.publisher = publisher
         self.tracking_mailbox: LatestSample[TrackingFrame] = LatestSample()
-        self.control_mailbox: LatestSample[ControlFrame] = LatestSample()
+        self.control_mailbox = _OrderedControlQueue()
         self._tracking_generation = 0
-        self._control_generation = 0
+        self._tracking_gate = TrackingStreamGate()
+        self._control_gate = ControlSequenceGate()
         self._tracking: TrackingFrame | None = None
         self._paused = False
         self._running = True
@@ -117,15 +144,28 @@ class DualArmController:
         node.declare_latest_subscriber(CONTROL_KEY, decode_control, self.control_mailbox)
         self.publisher = node.declare_publisher(ARM_TARGETS_KEY)
 
-    def accept_tracking(self, frame: TrackingFrame | bytes | bytearray | memoryview) -> None:
-        self._tracking = decode_tracking(frame) if isinstance(frame, (bytes, bytearray, memoryview)) else frame
-        if not isinstance(self._tracking, TrackingFrame):
+    def accept_tracking(self, frame: TrackingFrame | bytes | bytearray | memoryview) -> bool:
+        decoded = decode_tracking(frame) if isinstance(frame, (bytes, bytearray, memoryview)) else frame
+        if not isinstance(decoded, TrackingFrame):
             raise TypeError("tracking frame must be TrackingFrame or encoded bytes")
+        try:
+            accepted = self._tracking_gate.accept(decoded)
+        except TrackingProtocolError:
+            return False
+        if accepted:
+            self._tracking = decoded
+        return accepted
 
-    def accept_control(self, frame: ControlFrame | bytes | bytearray | memoryview) -> None:
+    def accept_control(self, frame: ControlFrame | bytes | bytearray | memoryview) -> bool:
         control = decode_control(frame) if isinstance(frame, (bytes, bytearray, memoryview)) else frame
         if not isinstance(control, ControlFrame):
             raise TypeError("control frame must be ControlFrame or encoded bytes")
+        try:
+            accepted = self._control_gate.accept(control)
+        except ValueError:
+            return False
+        if not accepted:
+            return False
         command = control.command
         if command is ControlCommand.START:
             self._paused = False
@@ -144,21 +184,25 @@ class DualArmController:
             self.right_alignment.reset()
             self.left_solver.reset()
             self.right_solver.reset()
+            self._tracking = None
+            self._tracking_gate.reset()
+            self.control_mailbox.clear()
             self.left_q = np.asarray(self.left_solver.home, dtype=float).copy()
             self.right_q = np.asarray(self.right_solver.home, dtype=float).copy()
             self._left_qdot.fill(0.0)
             self._right_qdot.fill(0.0)
         elif command is ControlCommand.SHUTDOWN:
             self._running = False
+        return True
 
     def _poll_mailboxes(self) -> None:
         sample = self.tracking_mailbox.take_new(self._tracking_generation)
         if sample is not None:
-            self._tracking_generation, self._tracking = sample
-        sample_control = self.control_mailbox.take_new(self._control_generation)
-        if sample_control is not None:
-            self._control_generation, control = sample_control
+            self._tracking_generation, tracking = sample
+            self.accept_tracking(tracking)
+        for control in self.control_mailbox.drain():
             self.accept_control(control)
+
 
     @staticmethod
     def _wrist(hand: np.ndarray) -> np.ndarray:
@@ -190,10 +234,10 @@ class DualArmController:
         result = solver.solve(q, aligned.target_pose, dt)
         if not result.success:
             return _SideOutput(q, np.zeros(7), False, ArmTargetHoldReason.SOLVER_FAILURE)
-        next_q = q + result.dq
+        next_q = q + result.dq * dt
         if not np.all(np.isfinite(next_q)):
             return _SideOutput(q, np.zeros(7), False, ArmTargetHoldReason.SOLVER_FAILURE)
-        return _SideOutput(next_q, result.dq / dt, True, ArmTargetHoldReason.NONE)
+        return _SideOutput(next_q, result.dq, True, ArmTargetHoldReason.NONE)
 
     def tick(self, now_ns: int | None = None) -> ArmTargetFrame:
         self._poll_mailboxes()
@@ -248,9 +292,10 @@ class DualArmController:
         *,
         clock: Callable[[], int] = time.monotonic_ns,
         sleep: Callable[[float], None] = time.sleep,
+        on_tick: Callable[[int], None] | None = None,
     ) -> list[ArmTargetFrame]:
-        """Run on absolute 5 ms deadlines; a miss skips directly to the next period."""
-        outputs: list[ArmTargetFrame] = []
+        """Run on absolute deadlines; infinite operation does not retain history."""
+        outputs: list[ArmTargetFrame] = [] if ticks is not None else []
         deadline = int(clock())
         count = 0
         while self._running and (ticks is None or count < int(ticks)):
@@ -258,7 +303,11 @@ class DualArmController:
             if now < deadline:
                 sleep((deadline - now) * 1.0e-9)
                 now = int(clock())
-            outputs.append(self.tick(now))
+            if on_tick is not None:
+                on_tick(now)
+            frame = self.tick(now)
+            if ticks is not None:
+                outputs.append(frame)
             count += 1
             deadline += self.period_ns
             if now >= deadline:
@@ -325,7 +374,7 @@ def _synthetic_tracking(left_pose: np.ndarray, right_pose: np.ndarray, sequence:
     )
 
 
-def _verified_model(model_path: Path, manifest_path: Path, urdf_path: Path) -> Any:
+def _verified_model(model_path: Path, manifest_path: Path, urdf_path: Path) -> tuple[Any, Any]:
     if mujoco is None:
         raise RuntimeError("mujoco is required for production artifact loading")
     verified = verify_artifacts(manifest_path, urdf_path)
@@ -334,17 +383,73 @@ def _verified_model(model_path: Path, manifest_path: Path, urdf_path: Path) -> A
     model = mujoco.MjModel.from_xml_path(str(model_path))
     if model.nq != 14 or model.nv != 14:
         raise ArtifactError("arm_ik.xml must have exactly 14 DoF")
-    return model
+    return model, verified
+
+
+def _site_pose(model: Any, data: Any, site_name: str) -> np.ndarray:
+    site_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name))
+    if site_id < 0:
+        raise ArtifactError(f"manifest wrist site missing: {site_name}")
+    pose = np.eye(4)
+    pose[:3, :3] = np.asarray(data.site_xmat[site_id], dtype=float).reshape(3, 3)
+    pose[:3, 3] = data.site_xpos[site_id]
+    return pose
+
+
+def _production_controller(model: Any, verified: Any) -> DualArmController:
+    manifest = verified.manifest
+    entries = [entry for entry in manifest["joints"] if entry.get("group") == "arm"]
+    by_side = {
+        side: [entry for entry in entries if entry.get("side") == side]
+        for side in ("left", "right")
+    }
+    if any(len(items) != 7 for items in by_side.values()):
+        raise ArtifactError("manifest must bind exactly seven arm joints per side")
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    solvers: dict[str, ArmQPSolver] = {}
+    alignments: dict[str, SideAlignment] = {}
+    wrist_targets = manifest["wrist_targets"]
+    for side, items in by_side.items():
+        names = [str(item["joint"]) for item in items]
+        joint_ids = tuple(int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)) for name in names)
+        if any(index < 0 for index in joint_ids):
+            raise ArtifactError(f"manifest {side} arm joint is missing from arm_ik.xml")
+        velocity_limits = tuple(float(item["velocity_limit"] or 2.0) for item in items)
+        site_name = str(wrist_targets[f"{side}_site"])
+        neutral = _site_pose(model, data, site_name)
+        solvers[side] = ArmQPSolver(
+            model,
+            data,
+            side=side,
+            site_name=site_name,
+            joint_ids=joint_ids,
+            velocity_limits=velocity_limits,
+        )
+        alignments[side] = SideAlignment(neutral_robot=neutral)
+    return DualArmController(
+        left_solver=solvers["left"],
+        right_solver=solvers["right"],
+        left_alignment=alignments["left"],
+        right_alignment=alignments["right"],
+    )
 
 
 def _self_test(ticks: int) -> int:
     controller, left_pose, right_pose = build_synthetic_fixture()
-    start = time.monotonic_ns()
-    outputs: list[ArmTargetFrame] = []
-    for sequence in range(1, int(ticks) + 1):
-        timestamp = start + sequence * _PERIOD_NS
+    started = time.monotonic_ns()
+    sequence = 0
+    last_timestamp = 0
+
+    def feed(now_ns: int) -> None:
+        nonlocal sequence, last_timestamp
+        sequence += 1
+        timestamp = max(int(now_ns), last_timestamp + 1)
+        last_timestamp = timestamp
         controller.accept_tracking(_synthetic_tracking(left_pose, right_pose, sequence, timestamp))
-        outputs.append(controller.tick(timestamp))
+
+    outputs = controller.run(int(ticks), on_tick=feed)
+    elapsed_ns = time.monotonic_ns() - started
     finite = sum(
         int(np.all(np.isfinite(frame.left_q + frame.right_q + frame.left_qdot + frame.right_qdot)))
         for frame in outputs
@@ -353,8 +458,8 @@ def _self_test(ticks: int) -> int:
         int(frame.left_hold_reason is ArmTargetHoldReason.SOLVER_FAILURE or frame.right_hold_reason is ArmTargetHoldReason.SOLVER_FAILURE)
         for frame in outputs
     )
-    rate = (len(outputs) - 1) / ((outputs[-1].control_timestamp_ns - outputs[0].control_timestamp_ns) * 1.0e-9) if len(outputs) > 1 else 0.0
-    print(f"self-test: ticks={len(outputs)} finite={finite} solver_failures={failures} rate_hz={rate:.2f}")
+    rate = len(outputs) / (elapsed_ns * 1.0e-9) if elapsed_ns > 0 else 0.0
+    print(f"self-test: ticks={len(outputs)} finite={finite} solver_failures={failures} elapsed_s={elapsed_ns * 1e-9:.3f} rate_hz={rate:.2f} synthetic=true")
     return 0 if len(outputs) == int(ticks) and finite == len(outputs) and failures == 0 else 1
 
 
@@ -365,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
+    parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
     args = parser.parse_args(argv)
     if args.self_test:
         if args.ticks <= 0:
@@ -373,13 +479,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.model is None or args.manifest is None or args.urdf is None:
         print("production IK requires --model, --manifest, and --urdf", file=sys.stderr)
         return 2
+    node = None
     try:
-        _verified_model(args.model, args.manifest, args.urdf)
+        model, verified = _verified_model(args.model, args.manifest, args.urdf)
+        controller = _production_controller(model, verified)
+        node = ZenohNode(peer_config(listen=True, endpoint=args.endpoint))
+        controller.connect(node)
+        controller.run()
+    except KeyboardInterrupt:
+        return 0
     except (ArtifactError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         print(f"artifact validation failed: {exc}", file=sys.stderr)
         return 2
-    print("validated arm_ik.xml; runtime transport setup is required")
+    finally:
+        if node is not None:
+            node.close()
     return 0
+
+
 
 
 if __name__ == "__main__":

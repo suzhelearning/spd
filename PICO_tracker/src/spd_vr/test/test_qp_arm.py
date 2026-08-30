@@ -1,5 +1,6 @@
 import numpy as np
 import mujoco
+import pytest
 
 from spd_vr.qp_arm import ArmQPSolver
 
@@ -53,8 +54,8 @@ def test_invalid_target_fails_without_mutating_last_q():
     good = solver.solve(q, target, 0.01)
     previous = solver.last_q.copy()
     bad = solver.solve(q + 0.1, np.full((4, 4), np.nan), 0.01)
-
     assert good.success
+    np.testing.assert_allclose(solver.last_q, q + good.dq * 0.01)
     assert not bad.success
     np.testing.assert_array_equal(solver.last_q, previous)
 
@@ -75,3 +76,9 @@ def test_workspace_is_persistent_for_repeated_solves(monkeypatch):
     solver.solve(np.zeros(7), target, 0.01)
     solver.solve(np.zeros(7), target, 0.01)
     assert calls["setup"] == 1
+
+
+def test_side_selection_does_not_fallback_to_other_side():
+    model, data = make_arm()
+    with pytest.raises(ValueError, match="authoritative"):
+        ArmQPSolver(model, data, side="right", site_name="wrist")

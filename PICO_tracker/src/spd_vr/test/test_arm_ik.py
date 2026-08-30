@@ -1,7 +1,7 @@
 import numpy as np
 
 from spd_vr.arm_ik import DualArmController, build_synthetic_fixture
-from spd_vr.wire import TrackingFrame
+from spd_vr.wire import ArmTargetHoldReason, ControlCommand, ControlFrame, TrackingFrame
 
 
 def frame(sequence=1, timestamp=1_000_000_000):
@@ -46,3 +46,11 @@ def test_controller_uses_absolute_deadlines_without_catchup():
     ticks = controller.run(2, clock=lambda: next(times), sleep=lambda _: None)
     assert len(ticks) == 2
     assert controller.tick_count == 2
+def test_control_gate_processes_ordered_commands_once():
+    controller, _, _ = build_synthetic_fixture()
+    pause = ControlFrame(2, 2_000_000_000, ControlCommand.PAUSE)
+    assert controller.accept_control(pause)
+    assert not controller.accept_control(pause)
+    assert not controller.accept_control(ControlFrame(1, 2_000_000_001, ControlCommand.START))
+    held = controller.tick(2_000_000_000)
+    assert held.left_hold_reason is ArmTargetHoldReason.PAUSED
