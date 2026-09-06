@@ -1,4 +1,4 @@
-"""Minimal ctypes adapter for the PXREA custom tracking callback."""
+"""Minimal ctypes adapter for PXREA tracking callbacks."""
 
 from __future__ import annotations
 
@@ -22,6 +22,13 @@ class PXREADevCustomMessage(ctypes.Structure):
     ]
 
 
+class PXREADevStateJson(ctypes.Structure):
+    _fields_ = [
+        ("devID", ctypes.c_char * 32),
+        ("stateJson", ctypes.c_char * 16352),
+    ]
+
+
 CALLBACK = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p
 )
@@ -39,6 +46,7 @@ PXREA_CALLBACK_MASK = (
     | PXREA_DEVICE_FIND
     | PXREA_DEVICE_MISSING
     | PXREA_DEVICE_CONNECT
+    | PXREA_DEVICE_STATE_JSON
     | PXREA_DEVICE_CUSTOM
 )
 _LIFECYCLE_TYPES = {
@@ -190,7 +198,21 @@ class PXREAClient:
         if callback_type in _LIFECYCLE_TYPES:
             self.queue.put(CallbackEvent("", b"", callback_type))
             return
-        if callback_type != PXREA_DEVICE_CUSTOM or not message_ptr:
+        if not message_ptr:
+            return
+        if callback_type == PXREA_DEVICE_STATE_JSON:
+            message = ctypes.cast(
+                message_ptr, ctypes.POINTER(PXREADevStateJson)
+            ).contents
+            raw = bytes(message.stateJson).split(b"\0", 1)[0]
+            device_id = bytes(message.devID).split(b"\0", 1)[0].decode(
+                "utf-8", "replace"
+            )
+            if not self.queue.put(CallbackEvent(device_id, raw, callback_type)):
+                with self._status_lock:
+                    self._status_counts["dropped_queue"] += 1
+            return
+        if callback_type != PXREA_DEVICE_CUSTOM:
             return
         message = ctypes.cast(
             message_ptr, ctypes.POINTER(PXREADevCustomMessage)
@@ -218,6 +240,7 @@ __all__ = [
     "CallbackEvent",
     "PXREAClient",
     "PXREADevCustomMessage",
+    "PXREADevStateJson",
     "PXREAError",
     "PXREA_CALLBACK_MASK",
     "PXREA_DEVICE_CONNECT",

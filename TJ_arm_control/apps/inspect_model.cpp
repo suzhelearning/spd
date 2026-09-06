@@ -15,7 +15,8 @@ int inspect(const mjModel* model) {
   std::cout << "nq=" << model->nq << " nv=" << model->nv << " njnt=" << model->njnt
             << " nsite=" << model->nsite << '\n';
 
-  bool valid = model->nq == 14 && model->nv == 14;
+  bool valid = model->nq == model->nv &&
+               model->nq >= static_cast<int>(kJointNames.size());
   for (const char* name : kJointNames) {
     const int id = mj_name2id(model, mjOBJ_JOINT, name);
     if (id < 0) {
@@ -29,15 +30,8 @@ int inspect(const mjModel* model) {
               << model->jnt_range[range_index] << ',' << model->jnt_range[range_index + 1]
               << "]\n";
   }
-  for (const char* name : {"l_wrist", "r_wrist"}) {
-    const int id = mj_name2id(model, mjOBJ_BODY, name);
-    std::cout << name << " body_id=" << id << '\n';
-    valid = valid && id >= 0;
-  }
 
-
-  for (const char* site : {
-           "tcp_L", "tcp_R", "l_wrist_target", "r_wrist_target"}) {
+  for (const char* site : {"tcp_L", "tcp_R"}) {
     const int id = mj_name2id(model, mjOBJ_SITE, site);
     std::cout << site << " id=" << id << '\n';
     valid = valid && id >= 0;

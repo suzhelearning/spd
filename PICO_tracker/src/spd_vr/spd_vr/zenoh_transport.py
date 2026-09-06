@@ -49,7 +49,7 @@ class LatestSample(Generic[T]):
 
 def peer_config(*, listen: bool, endpoint: str) -> zenoh.Config:
     config = zenoh.Config()
-    config.insert_json5("mode", '"peer"')
+    config.insert_json5("mode", '"router"' if listen else '"client"')
     config.insert_json5("scouting/multicast/enabled", "false")
     config.insert_json5("listen/endpoints", f'["{endpoint}"]' if listen else "[]")
     config.insert_json5("connect/endpoints", "[]" if listen else f'["{endpoint}"]')

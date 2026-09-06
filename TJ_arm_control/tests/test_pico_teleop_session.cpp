@@ -19,6 +19,15 @@ PicoTeleopFrame frameAt(std::uint64_t epoch, std::uint64_t sequence,
   return frame;
 }
 
+PicoTeleopFrame buttonFrame(std::uint64_t epoch,
+                            std::uint64_t resynchronization_generation,
+                            bool reported_state) {
+  PicoTeleopFrame frame = frameAt(epoch, 1U, 1000000000LL);
+  frame.resynchronization_generation = resynchronization_generation;
+  frame.user_button_pressed = reported_state;
+  return frame;
+}
+
 TEST(PicoTeleopSession, SelectsOneConsistentClockDomainForTargets) {
   constexpr std::int64_t kMonotonicNs = 987654321000LL;
   EXPECT_DOUBLE_EQ(selectTargetTimeSeconds(false, 1.25, kMonotonicNs), 1.25);
@@ -60,14 +69,101 @@ TEST(PicoTeleopSession, ClassifiesEnableFreshDuplicateAndStaleTransitions) {
   const PicoTeleopFreshness awaiting = session.freshness(1030000000LL);
   EXPECT_FALSE(awaiting.live);
   EXPECT_FALSE(awaiting.stale);
+  EXPECT_FALSE(awaiting.has_applied_frame);
   EXPECT_EQ(session.classify(frameAt(9U, 3U, 1028000000LL), 1080000000LL).action,
             PicoTeleopAction::kIgnoreStale);
 
   const PicoTeleopFreshness freshness = session.freshness(1080000000LL);
-  EXPECT_TRUE(freshness.has_applied_frame);
+  EXPECT_FALSE(freshness.has_applied_frame);
   EXPECT_FALSE(freshness.live);
-  EXPECT_TRUE(freshness.stale);
-  EXPECT_GT(freshness.frame_age_seconds, 0.050);
+  EXPECT_FALSE(freshness.stale);
+  EXPECT_DOUBLE_EQ(freshness.frame_age_seconds, 0.0);
+}
+
+TEST(PicoTeleopSession, ReenableStartsANewTakeoverEpochWithinSameStream) {
+  PicoTeleopSession session(0.050);
+  session.setEnabled(true);
+  const PicoTeleopFrame first = frameAt(9U, 1U, 1000000000LL);
+  ASSERT_EQ(session.classify(first, 1000000000LL).action,
+            PicoTeleopAction::kResetEpochAndApply);
+  session.commitApplied(first);
+
+  session.setEnabled(false);
+  session.setEnabled(true);
+  const PicoTeleopFrame reenabled = frameAt(9U, 2U, 1010000000LL);
+  EXPECT_EQ(session.classify(reenabled, 1011000000LL).action,
+            PicoTeleopAction::kResetEpochAndApply);
+}
+
+TEST(PicoTeleopSession, AButtonTogglesOncePerReportedStateChange) {
+  PicoTeleopSession session(0.050);
+  session.setEnabled(true);
+
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kPause);
+  EXPECT_FALSE(session.enabled());
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kResume);
+  EXPECT_TRUE(session.enabled());
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kPause);
+  EXPECT_FALSE(session.enabled());
+}
+
+TEST(PicoTeleopSession, InitialReportedStateDoesNotTriggerAnAction) {
+  PicoTeleopSession session(0.050);
+  session.setEnabled(false);
+
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_FALSE(session.enabled());
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kResume);
+  EXPECT_TRUE(session.enabled());
+}
+
+TEST(PicoTeleopSession, NewTrackingEpochOnlyReinitializesButtonState) {
+  PicoTeleopSession session(0.050);
+  session.setEnabled(true);
+
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kPause);
+  ASSERT_FALSE(session.enabled());
+
+  EXPECT_EQ(session.observeButton(buttonFrame(10U, 0U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_FALSE(session.enabled());
+  EXPECT_EQ(session.observeButton(buttonFrame(10U, 0U, true)),
+            PicoTeleopButtonAction::kResume);
+  EXPECT_TRUE(session.enabled());
+}
+
+TEST(PicoTeleopSession, ResynchronizationOnlyReinitializesButtonState) {
+  PicoTeleopSession session(0.050);
+  session.setEnabled(true);
+
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 0U, true)),
+            PicoTeleopButtonAction::kPause);
+  ASSERT_FALSE(session.enabled());
+
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 1U, false)),
+            PicoTeleopButtonAction::kNone);
+  EXPECT_FALSE(session.enabled());
+  EXPECT_EQ(session.observeButton(buttonFrame(9U, 1U, true)),
+            PicoTeleopButtonAction::kResume);
+  EXPECT_TRUE(session.enabled());
 }
 
 TEST(PicoTeleopSession, TimeoutBoundaryIsStaleAndNewEpochResets) {
@@ -164,6 +260,19 @@ TEST(PicoTeleopSession, ViewerSourceExposesPicoControlsAndCliContract) {
             std::string::npos);
   EXPECT_NE(source.find("control_state_source=actual_feedback_guarded"),
             std::string::npos);
+}
+
+TEST(PicoTeleopSession, PicoPauseGatesManusHandUpdates) {
+  const std::filesystem::path source_path =
+      std::filesystem::path(TIANJI_PROJECT_SOURCE_DIR) /
+      "apps" / "run_qp_ik_viewer.cpp";
+  std::ifstream input(source_path);
+  ASSERT_TRUE(input.good());
+  const std::string source{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+  EXPECT_NE(
+      source.find("if (!paused && !pico_paused && hand_frames != nullptr)"),
+      std::string::npos);
 }
 
 }  // namespace

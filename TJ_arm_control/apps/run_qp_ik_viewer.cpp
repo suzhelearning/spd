@@ -7,7 +7,6 @@
 #include "tianji_qp_ik/mujoco_joint_plot.hpp"
 #include "tianji_qp_ik/mujoco_robot.hpp"
 #include "tianji_qp_ik/pico_teleop_session.hpp"
-#include "tianji_qp_ik/pico_wrist_alignment.hpp"
 #include "tianji_qp_ik/pico_skeleton_overlay.hpp"
 #include "tianji_qp_ik/pico_udp_receiver.hpp"
 #include "tianji_qp_ik/so3.hpp"
@@ -15,15 +14,12 @@
 #include "tianji_qp_ik/spark_qpoases_diagnostic.hpp"
 #include "tianji_qp_ik/target_manager.hpp"
 #include "tianji_qp_ik/telemetry.hpp"
-#include "tianji_qp_ik/arm_target_protocol.hpp"
+#include "tianji_qp_ik/wuji_hand_udp_receiver.hpp"
 
 #include <GLFW/glfw3.h>
 #include <mujoco/mujoco.h>
 
 #include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <Eigen/Geometry>
 
@@ -56,26 +52,20 @@ constexpr double kPicoInputTimeoutSeconds = 0.050;
 
 struct Options {
   std::string config_path{"config/qp_ik_pico_teleop.yaml"};
-  std::string model_path{"models/marvin_m6_qp_pico_fast.xml"};
+  std::string model_path{"models/marvin_m6_wuji2.xml"};
   std::string telemetry_path;
   std::string joint_telemetry_path;
   bool headless{false};
   double duration_seconds{0.0};
   bool pico_teleop{true};
-  std::string arm_target_host{"127.0.0.1"};
-  std::uint16_t arm_target_port{15100U};
-  bool no_arm_target_output{false};
   bool pico_skeleton_overlay{true};
+  bool hand_teleop{false};
   std::string pico_bind{"127.0.0.1"};
   std::uint16_t pico_port{15000U};
+  std::string hand_bind{"127.0.0.1"};
+  std::uint16_t hand_port{16000U};
+  double hand_stale_timeout_seconds{0.100};
   std::string pico_record_path;
-  std::string left_end_effector_site{"tcp_L"};
-  std::string right_end_effector_site{"tcp_R"};
-  bool pico_wrist_input{false};
-  std::size_t wrist_stable_frames{10U};
-  double wrist_max_position_step{0.02};
-  double wrist_max_orientation_step{0.15};
-  double wrist_position_scale{1.0};
   std::optional<ControlLevel> control_level_override;
   std::optional<IkAlgorithm> algorithm_override;
   std::optional<bool> model_state_only_override;
@@ -131,14 +121,9 @@ Options parseOptions(int argc, char** argv) {
                    "[--pico-skeleton-overlay|--no-pico-skeleton-overlay] "
                    "[--pico-bind IPV4] [--pico-port PORT] "
                    "[--pico-record FILE.tjvr] "
-                   "[--left-end-effector-site SITE] "
-                   "[--right-end-effector-site SITE] [--pico-wrist-input] "
-                   "[--wrist-stable-frames N] "
-                   "[--wrist-max-position-step METERS] "
-                   "[--wrist-max-orientation-step RADIANS] "
-                   "[--wrist-position-scale SCALE] "
-                   "[--arm-target-host IPV4] [--arm-target-port PORT] "
-                   "[--no-arm-target-output] "
+                   "[--hand-teleop|--no-hand-teleop] "
+                   "[--hand-bind IPV4] [--hand-port PORT] "
+                   "[--hand-stale-timeout SECONDS] "
                    "[--control-level velocity|acceleration] "
                    "[--algorithm hierarchical_qp|nullspace_dls|"
                    "spark_guided_velocity_qp|spark_direct_velocity_qp|"
@@ -163,6 +148,14 @@ Options parseOptions(int argc, char** argv) {
       options.pico_teleop = false;
       continue;
     }
+    if (argument == "--hand-teleop") {
+      options.hand_teleop = true;
+      continue;
+    }
+    if (argument == "--no-hand-teleop") {
+      options.hand_teleop = false;
+      continue;
+    }
     if (argument == "--pico-skeleton-overlay") {
       options.pico_skeleton_overlay = true;
       continue;
@@ -177,14 +170,6 @@ Options parseOptions(int argc, char** argv) {
     }
     if (argument == "--actual-feedback-control") {
       options.model_state_only_override = false;
-      continue;
-    }
-    if (argument == "--no-arm-target-output") {
-      options.no_arm_target_output = true;
-      continue;
-    }
-    if (argument == "--pico-wrist-input") {
-      options.pico_wrist_input = true;
       continue;
     }
     if (index + 1 >= argc) {
@@ -205,24 +190,6 @@ Options parseOptions(int argc, char** argv) {
       options.pico_bind = value;
     } else if (argument == "--pico-record") {
       options.pico_record_path = value;
-    } else if (argument == "--left-end-effector-site") {
-      options.left_end_effector_site = value;
-    } else if (argument == "--right-end-effector-site") {
-      options.right_end_effector_site = value;
-    } else if (argument == "--wrist-stable-frames") {
-      std::size_t parsed_characters = 0U;
-      const unsigned long parsed = std::stoul(value, &parsed_characters);
-      if (parsed_characters != value.size() || parsed == 0UL) {
-        throw std::invalid_argument(
-            "--wrist-stable-frames must be a non-zero integer");
-      }
-      options.wrist_stable_frames = static_cast<std::size_t>(parsed);
-    } else if (argument == "--wrist-max-position-step") {
-      options.wrist_max_position_step = std::stod(value);
-    } else if (argument == "--wrist-max-orientation-step") {
-      options.wrist_max_orientation_step = std::stod(value);
-    } else if (argument == "--wrist-position-scale") {
-      options.wrist_position_scale = std::stod(value);
     } else if (argument == "--pico-port") {
       std::size_t parsed_characters = 0U;
       const unsigned long parsed = std::stoul(value, &parsed_characters);
@@ -230,16 +197,18 @@ Options parseOptions(int argc, char** argv) {
         throw std::invalid_argument("--pico-port must be in [1,65535]");
       }
       options.pico_port = static_cast<std::uint16_t>(parsed);
-    } else if (argument == "--arm-target-host") {
-      options.arm_target_host = value;
-    } else if (argument == "--arm-target-port") {
+    } else if (argument == "--hand-bind") {
+      options.hand_bind = value;
+    } else if (argument == "--hand-port") {
       std::size_t parsed_characters = 0U;
       const unsigned long parsed = std::stoul(value, &parsed_characters);
-      if (parsed_characters != value.size() ||
-          parsed < 1UL || parsed > 65535UL) {
-        throw std::invalid_argument("--arm-target-port must be in [1,65535]");
+      if (parsed_characters != value.size() || parsed < 1UL ||
+          parsed > 65535UL) {
+        throw std::invalid_argument("--hand-port must be in [1,65535]");
       }
-      options.arm_target_port = static_cast<std::uint16_t>(parsed);
+      options.hand_port = static_cast<std::uint16_t>(parsed);
+    } else if (argument == "--hand-stale-timeout") {
+      options.hand_stale_timeout_seconds = std::stod(value);
     } else if (argument == "--control-level") {
       if (value == "velocity") {
         options.control_level_override = ControlLevel::kVelocity;
@@ -299,47 +268,23 @@ Options parseOptions(int argc, char** argv) {
   if (options.duration_seconds < 0.0) {
     throw std::invalid_argument("--duration must be non-negative");
   }
+  if (!std::isfinite(options.hand_stale_timeout_seconds) ||
+      options.hand_stale_timeout_seconds <= 0.0) {
+    throw std::invalid_argument(
+        "--hand-stale-timeout must be finite and positive");
+  }
   if (options.headless && options.duration_seconds == 0.0) {
     options.duration_seconds = 2.0;
   }
   if (!options.pico_record_path.empty() && !options.pico_teleop) {
     throw std::invalid_argument("--pico-record requires --pico-teleop");
   }
-  if (options.pico_wrist_input && !options.pico_teleop) {
-    throw std::invalid_argument("--pico-wrist-input requires --pico-teleop");
-  }
-  if (options.pico_wrist_input &&
-      (options.left_end_effector_site != "l_wrist_target" ||
-       options.right_end_effector_site != "r_wrist_target")) {
-    throw std::invalid_argument(
-        "--pico-wrist-input requires l_wrist_target and r_wrist_target sites");
-  }
-  if (options.wrist_stable_frames == 0U) {
-    throw std::invalid_argument("--wrist-stable-frames must be non-zero");
-  }
-  if (!std::isfinite(options.wrist_max_position_step) ||
-      options.wrist_max_position_step <= 0.0) {
-    throw std::invalid_argument(
-        "--wrist-max-position-step must be finite and positive");
-  }
-  if (!std::isfinite(options.wrist_max_orientation_step) ||
-      options.wrist_max_orientation_step <= 0.0) {
-    throw std::invalid_argument(
-        "--wrist-max-orientation-step must be finite and positive");
-  }
-  if (!std::isfinite(options.wrist_position_scale) ||
-      options.wrist_position_scale <= 0.0) {
-    throw std::invalid_argument(
-        "--wrist-position-scale must be finite and positive");
-  }
   in_addr parsed_address{};
   if (inet_pton(AF_INET, options.pico_bind.c_str(), &parsed_address) != 1) {
     throw std::invalid_argument("--pico-bind must be a valid IPv4 address");
   }
-  if (!options.no_arm_target_output) {
-    if (inet_pton(AF_INET, options.arm_target_host.c_str(), &parsed_address) != 1) {
-      throw std::invalid_argument("--arm-target-host must be a valid IPv4 address");
-    }
+  if (inet_pton(AF_INET, options.hand_bind.c_str(), &parsed_address) != 1) {
+    throw std::invalid_argument("--hand-bind must be a valid IPv4 address");
   }
   return options;
 }
@@ -350,15 +295,6 @@ std::int64_t monotonicNowNs() {
     throw std::runtime_error("clock_gettime(CLOCK_MONOTONIC) failed");
   }
   return static_cast<std::int64_t>(now.tv_sec) * 1000000000LL + now.tv_nsec;
-}
-
-std::string_view wristHoldReasonForTelemetry(
-    const WristAlignmentSideResult& result) noexcept {
-  if (result.hold_reason == "stable_window") return "stable_window";
-  if (result.hold_reason == "inactive") return "inactive";
-  if (result.hold_reason == "invalid_pose") return "invalid_pose";
-  if (result.hold_reason == "alignment_reset") return "alignment_reset";
-  return "";
 }
 
 timespec addNanoseconds(timespec value, std::int64_t nanoseconds) {
@@ -395,9 +331,18 @@ void setInitialConfiguration(MujocoRobot& robot,
   robot.forward();
 }
 
+Vec20 handVector(
+    const std::array<double, kWujiHandJointDof>& values) noexcept {
+  Vec20 result;
+  for (int index = 0; index < kHandDof; ++index) {
+    result[index] = values[static_cast<std::size_t>(index)];
+  }
+  return result;
+}
+
 DualArmTargets currentTargets(MujocoRobot& robot) {
   robot.forward();
-  return {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)};
+  return {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)};
 }
 
 std::unique_ptr<DualArmController> makeController(MujocoRobot& robot,
@@ -469,27 +414,13 @@ bool resumeFromPause(
 void processCommand(const ViewerCommand& command, MujocoRobot& robot,
                     QpIkConfig& config, double target_time,
                     TargetManager& targets, PicoTeleopSession& pico_session,
-                    bool pico_configured, bool wrist_endpoint_mode,
+                    bool pico_configured,
                     ArmAngleReferenceMode& arm_angle_reference_mode,
                     bool& paused,
+                    bool& pico_paused,
                     std::unique_ptr<DualArmController>& controller,
                     std::unique_ptr<DualArmAccelerationController>&
                         acceleration_controller) {
-  if (wrist_endpoint_mode &&
-      command.type == ViewerCommandType::kSetIkAlgorithm &&
-      command.algorithm != IkAlgorithm::kHierarchicalQp) {
-    std::cerr << "rejected runtime IK algorithm change: "
-                 "wrist endpoint mode requires hierarchical_qp\n";
-    return;
-  }
-  if (wrist_endpoint_mode &&
-      command.type == ViewerCommandType::kSetControlLevel &&
-      command.control_level != config.control_level) {
-    std::cerr << "rejected runtime control-level change: "
-                 "wrist endpoint mode is fixed at startup\n";
-    return;
-  }
-
   switch (command.type) {
     case ViewerCommandType::kSetMode:
       if (!resumeFromPause(paused, config.control_level, *controller,
@@ -582,6 +513,7 @@ void processCommand(const ViewerCommand& command, MujocoRobot& robot,
       {
         const bool was_enabled = pico_session.enabled();
         pico_session.setEnabled(!was_enabled);
+        pico_paused = was_enabled;
         if (was_enabled) {
           targets.setMode(TargetMode::kHold, target_time);
         }
@@ -652,66 +584,6 @@ void setPlotDerivatives(
   sample.actual_jerk_valid = derivatives.actual_jerk_valid;
 }
 
-class ArmTargetUdpOutput {
- public:
-  ArmTargetUdpOutput(const std::string& host, std::uint16_t port) {
-    socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_ < 0) {
-      throw std::runtime_error("cannot create arm target UDP socket");
-    }
-    destination_.sin_family = AF_INET;
-    destination_.sin_port = htons(port);
-    if (inet_pton(AF_INET, host.c_str(), &destination_.sin_addr) != 1) {
-      ::close(socket_);
-      socket_ = -1;
-      throw std::invalid_argument("arm target host must be a valid IPv4 address");
-    }
-  }
-
-  ~ArmTargetUdpOutput() {
-    if (socket_ >= 0) ::close(socket_);
-  }
-
-  ArmTargetUdpOutput(const ArmTargetUdpOutput&) = delete;
-  ArmTargetUdpOutput& operator=(const ArmTargetUdpOutput&) = delete;
-
-  void send(const ArmMotionState& left, const ArmMotionState& right,
-            std::uint64_t tracking_epoch, std::uint64_t source_timestamp_ns,
-            std::uint64_t control_timestamp_ns, std::uint8_t valid_mask,
-            ArmTargetHoldReason left_hold_reason,
-            ArmTargetHoldReason right_hold_reason) noexcept {
-    ArmTargetFrame frame;
-    frame.sequence = ++sequence_;
-    frame.tracking_epoch = tracking_epoch == 0U ? 1U : tracking_epoch;
-    frame.source_timestamp_ns =
-        source_timestamp_ns == 0U ? control_timestamp_ns : source_timestamp_ns;
-    frame.control_timestamp_ns = control_timestamp_ns;
-    frame.valid_mask = valid_mask;
-    frame.left_hold_reason = left_hold_reason;
-    frame.right_hold_reason = right_hold_reason;
-    for (std::size_t index = 0U; index < 7U; ++index) {
-      frame.left_q[index] = left.q[index];
-      frame.right_q[index] = right.q[index];
-      frame.left_qdot[index] = left.qdot[index];
-      frame.right_qdot[index] = right.qdot[index];
-    }
-    std::array<std::uint8_t, kArmTargetPacketV2Size> packet{};
-    if (!encodeArmTargetPacket(frame, packet)) return;
-    const ssize_t written = ::sendto(
-        socket_, packet.data(), packet.size(), MSG_DONTWAIT,
-        reinterpret_cast<const sockaddr*>(&destination_), sizeof(destination_));
-    if (written != static_cast<ssize_t>(packet.size())) ++send_failures_;
-  }
-
-  std::uint64_t sendFailures() const noexcept { return send_failures_; }
-
- private:
-  int socket_{-1};
-  sockaddr_in destination_{};
-  std::uint64_t sequence_{0U};
-  std::uint64_t send_failures_{0U};
-};
-
 void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  BoundedSpscQueue<ViewerCommand>& commands,
                  LatestSnapshotExchange<ViewerSnapshot>& snapshots,
@@ -720,10 +592,10 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
                  TelemetryBuffer* telemetry,
                  LatestSpscExchange<PicoTeleopFrame>* pico_frames,
                  PicoUdpReceiver* pico_receiver,
-                 bool pico_initially_enabled, bool wrist_endpoint_mode,
-                 WristAlignmentConfig wrist_alignment_config,
+                 LatestSpscExchange<WujiHandTeleopFrame>* hand_frames,
+                 WujiHandUdpReceiver* hand_receiver,
+                 bool pico_initially_enabled,
                  ArmAngleReferenceMode initial_arm_angle_reference_mode,
-                 ArmTargetUdpOutput* arm_target_output,
                  std::atomic<bool>& running) {
   setInitialConfiguration(robot, config);
   const DualArmTargets initial_targets = currentTargets(robot);
@@ -767,19 +639,16 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   DualArmTargets last_spark_targets = initial_targets;
   DualArmReferences last_spark_references = directReferences(initial_targets);
   SparkGuidanceDiagnostics spark_diagnostics;
+  bool joint_takeover_active = false;
+  bool pico_paused = false;
   ArmMotionState direct_left_state;
   direct_left_state.q = robot.armPosition(ArmSide::kLeft);
   ArmMotionState direct_right_state;
   direct_right_state.q = robot.armPosition(ArmSide::kRight);
-  bool latest_left_target_accepted = false;
-  bool latest_right_target_accepted = false;
-  ArmMotionState last_arm_target_left = direct_left_state;
-  ArmMotionState last_arm_target_right = direct_right_state;
   const bool pico_configured = pico_frames != nullptr && pico_receiver != nullptr;
+  const bool hand_configured = hand_frames != nullptr && hand_receiver != nullptr;
   PicoTeleopSession pico_session(
       config.cartesian_servo.target_timeout_seconds);
-  PicoWristAlignment wrist_alignment(wrist_alignment_config);
-  WristAlignmentUpdate latest_wrist_alignment;
   ArmDirectionReferenceManager arm_direction_manager(
       config.arm_angle.reference_rate_limit_rad_s);
   ArmAngleReferenceMode arm_angle_reference_mode{
@@ -812,7 +681,6 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
   timespec deadline{};
   clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline = addNanoseconds(deadline, period_nanoseconds);
-  bool previous_pico_live = false;
 
   while (running.load(std::memory_order_acquire)) {
     const auto cycle_start = std::chrono::steady_clock::now();
@@ -826,21 +694,15 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       const ControlLevel previous_control_level = config.control_level;
       const IkAlgorithm previous_algorithm = controller->algorithm();
       const bool previous_paused = paused;
-      const bool previous_pico_enabled = pico_session.enabled();
       processCommand(command, robot, config, target_time, targets,
-                     pico_session, pico_configured, wrist_endpoint_mode,
-                     arm_angle_reference_mode, paused, controller,
-                     acceleration_controller);
-      if (wrist_endpoint_mode &&
-          (paused != previous_paused ||
-           pico_session.enabled() != previous_pico_enabled ||
-           command.type == ViewerCommandType::kResetNominal)) {
-        wrist_alignment.reset();
-        latest_wrist_alignment = {};
-        latest_left_target_accepted = false;
-        latest_right_target_accepted = false;
-        latest_wrist_alignment.left.hold_reason = "alignment_reset";
-        latest_wrist_alignment.right.hold_reason = "alignment_reset";
+                     pico_session, pico_configured, arm_angle_reference_mode,
+                     paused, pico_paused,
+                     controller, acceleration_controller);
+      if (pico_paused && joint_takeover_active) {
+        if (spark_guidance != nullptr) {
+          spark_guidance->cancelJointSpaceTakeover();
+        }
+        joint_takeover_active = false;
       }
       if (config.control_level != previous_control_level) {
         const CartesianOtgConfig selected_otg_config =
@@ -860,8 +722,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         direct_left_state.q = robot.armPosition(ArmSide::kLeft);
         direct_right_state = ArmMotionState{};
         direct_right_state.q = robot.armPosition(ArmSide::kRight);
-        left_otg.reset(robot.endEffectorPose(ArmSide::kLeft));
-        right_otg.reset(robot.endEffectorPose(ArmSide::kRight));
+        left_otg.reset(robot.tcpPose(ArmSide::kLeft));
+        right_otg.reset(robot.tcpPose(ArmSide::kRight));
         last_spark_targets = currentTargets(robot);
         last_spark_references = directReferences(last_spark_targets);
         spark_diagnostics = {};
@@ -878,138 +740,119 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
 
     PicoTeleopFrame pico_frame;
     if (pico_frames != nullptr && pico_frames->tryReadLatest(pico_frame)) {
-      const PicoTeleopClassification classification =
-          pico_session.classify(pico_frame, monotonic_now_ns);
-      if (classification.action == PicoTeleopAction::kApply ||
-          classification.action == PicoTeleopAction::kResetEpochAndApply) {
-        const double source_seconds =
-            static_cast<double>(pico_frame.source_timestamp_ns) * 1.0e-9;
-        const bool reset_epoch =
-            classification.action == PicoTeleopAction::kResetEpochAndApply;
-        const bool reject_legacy_wrist_frame =
-            wrist_endpoint_mode && !pico_frame.wrist_pose_input;
-        if (!reject_legacy_wrist_frame) {
-        if (reset_epoch && wrist_endpoint_mode) {
-          wrist_alignment.reset();
-          pico_frame.wrist_alignment_reset = true;
+      const PicoTeleopButtonAction button_action =
+          pico_session.observeButton(pico_frame);
+      if (button_action == PicoTeleopButtonAction::kPause) {
+        pico_paused = true;
+        if (spark_guidance != nullptr) {
+          spark_guidance->cancelJointSpaceTakeover();
         }
-        const DualArmTargets current = currentTargets(robot);
-        bool target_accepted = false;
-        bool left_target_accepted = false;
-        bool right_target_accepted = false;
-        TargetManager candidate = reset_epoch
-                                      ? TargetManager(config, current)
-                                      : targets;
-        if (wrist_endpoint_mode) {
-          latest_wrist_alignment = wrist_alignment.update(
-              pico_frame, current.left, current.right);
-          candidate.setMode(TargetMode::kManual, target_time);
-          if (latest_wrist_alignment.left.valid) {
-            left_target_accepted = candidate.setManualTarget(
-                ArmSide::kLeft, latest_wrist_alignment.left.target,
-                source_seconds,
-                monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
-          }
-          if (latest_wrist_alignment.right.valid) {
-            right_target_accepted = candidate.setManualTarget(
-                ArmSide::kRight, latest_wrist_alignment.right.target,
-                source_seconds,
-                monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
-          }
-          latest_left_target_accepted = left_target_accepted;
-          latest_right_target_accepted = right_target_accepted;
-          target_accepted = left_target_accepted || right_target_accepted;
-        } else if (spark_guidance != nullptr &&
-                   usesSparkGuidance(controller->algorithm())) {
-          if (reset_epoch) {
+        joint_takeover_active = false;
+        targets.setMode(TargetMode::kHold, target_time);
+      } else {
+        if (button_action == PicoTeleopButtonAction::kResume) {
+          pico_paused = false;
+        }
+        const PicoTeleopClassification classification =
+            pico_session.classify(pico_frame, monotonic_now_ns);
+        if (classification.action == PicoTeleopAction::kApply ||
+            classification.action == PicoTeleopAction::kResetEpochAndApply) {
+          const double source_seconds =
+              static_cast<double>(pico_frame.source_timestamp_ns) * 1.0e-9;
+          const bool reset_epoch =
+              classification.action == PicoTeleopAction::kResetEpochAndApply;
+          const DualArmTargets current = currentTargets(robot);
+          bool target_accepted = false;
+          TargetManager candidate = reset_epoch
+                                        ? TargetManager(config, current)
+                                        : targets;
+          if (spark_guidance != nullptr &&
+              usesSparkGuidance(controller->algorithm())) {
             const bool spark_direct_qpos =
                 usesSparkUpperQpoasesDirect(controller->algorithm());
-            (void)spark_guidance->reset(
-                spark_direct_qpos
-                    ? direct_left_state
-                    : controller->referenceState(ArmSide::kLeft),
-                spark_direct_qpos
-                    ? direct_right_state
-                    : controller->referenceState(ArmSide::kRight));
-          }
-          target_accepted = spark_guidance->updatePicoFrame(pico_frame).valid;
-        } else {
-          candidate.setMode(TargetMode::kManual, target_time);
-          target_accepted = candidate.setManualTargets(
-              pico_frame.left, pico_frame.right, source_seconds,
-              monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
-          left_target_accepted = target_accepted;
-          right_target_accepted = target_accepted;
-        }
-        if (wrist_endpoint_mode && reset_epoch) {
-          // Clear per-side TargetManager timestamp/filter history even when
-          // alignment is still pending for this reset frame.
-          targets = std::move(candidate);
-        } else if (target_accepted &&
-                   (spark_guidance == nullptr ||
-                    !usesSparkGuidance(controller->algorithm()))) {
-          targets = std::move(candidate);
-        }
-        if (target_accepted) {
-          if (reset_epoch && !config.controller.model_state_only) {
-            const bool synchronized =
-                config.control_level == ControlLevel::kAcceleration
-                    ? acceleration_controller->synchronizeReferencesToActual()
-                    : controller->synchronizeReferencesToActual();
-            if (!synchronized) {
-              continue;
+            if (reset_epoch) {
+              joint_takeover_active = false;
+              spark_guidance->cancelJointSpaceTakeover();
+              (void)spark_guidance->reset(
+                  spark_direct_qpos
+                      ? direct_left_state
+                      : controller->referenceState(ArmSide::kLeft),
+                  spark_direct_qpos
+                      ? direct_right_state
+                      : controller->referenceState(ArmSide::kRight));
             }
+            const SparkUpperTargets spark_targets =
+                spark_guidance->updatePicoFrame(pico_frame);
+            target_accepted = spark_targets.valid;
+            if (target_accepted && reset_epoch && !spark_direct_qpos &&
+                controller->algorithm() != IkAlgorithm::kSparkPoseVelocityQp) {
+              const ArmMotionState left_alignment_model =
+                  spark_direct_qpos
+                      ? direct_left_state
+                      : controller->referenceState(ArmSide::kLeft);
+              const ArmMotionState right_alignment_model =
+                  spark_direct_qpos
+                      ? direct_right_state
+                      : controller->referenceState(ArmSide::kRight);
+              joint_takeover_active = spark_guidance->startJointSpaceTakeover(
+                  spark_targets, left_alignment_model, right_alignment_model);
+            }
+          } else {
+            candidate.setMode(TargetMode::kManual, target_time);
+            target_accepted = candidate.setManualTargets(
+                pico_frame.left, pico_frame.right, source_seconds,
+                monotonicTimestampSeconds(pico_frame.receive_monotonic_ns));
           }
-          if (reset_epoch) {
-            // Keep the OTG state continuous across a PICO epoch change.
-            plot_reset_requested = true;
-            ++pico_reset_applies;
+          if (target_accepted) {
+            if (reset_epoch && !config.controller.model_state_only) {
+              const bool synchronized =
+                  config.control_level == ControlLevel::kAcceleration
+                      ? acceleration_controller->synchronizeReferencesToActual()
+                      : controller->synchronizeReferencesToActual();
+              if (!synchronized) {
+                continue;
+              }
+            }
+            if (spark_guidance == nullptr ||
+                !usesSparkGuidance(controller->algorithm())) {
+              targets = std::move(candidate);
+            }
+            if (reset_epoch) {
+              // A PICO epoch reset changes the target stream, not the robot's
+              // commanded Cartesian state.  Keep the OTG state continuous and
+              // let it move toward the newly accepted target under its normal
+              // velocity, acceleration, and jerk limits.  Resetting from the
+              // MuJoCo feedback pose here teleported the reference whenever
+              // the model reference and simulated feedback had separated.
+              plot_reset_requested = true;
+              ++pico_reset_applies;
+            }
+            pico_session.commitApplied(pico_frame);
+            latest_pico_upper_limb_skeleton = pico_frame.upper_limb_skeleton;
+            if (pico_frame.left_arm_direction.valid) {
+              latest_pico_arm_directions.left = pico_frame.left_arm_direction;
+            }
+            if (pico_frame.right_arm_direction.valid) {
+              latest_pico_arm_directions.right = pico_frame.right_arm_direction;
+            }
+            pico_applied_epoch = pico_frame.tracking_epoch;
+            pico_applied_sequence = pico_frame.sequence;
+            pico_left_source_timestamp_ns = pico_frame.source_timestamp_ns;
+            pico_right_source_timestamp_ns = pico_frame.source_timestamp_ns;
+            pico_receive_to_control_us = 1.0e-3 * static_cast<double>(
+                std::max<std::int64_t>(
+                    0, monotonic_now_ns - pico_frame.receive_monotonic_ns));
+            pico_bridge_to_control_us = 1.0e-3 * static_cast<double>(
+                std::max<std::int64_t>(
+                    0, monotonic_now_ns -
+                           pico_frame.bridge_send_monotonic_ns));
           }
-        }
-        // A structurally valid wrist frame is consumed even while its stable
-        // window is pending, so the sequence gate can advance to the next
-        // candidate. Per-side target validity is retained in the alignment
-        // result and target manager state above.
-        if (wrist_endpoint_mode || target_accepted) {
-          pico_session.commitApplied(pico_frame);
-          latest_pico_upper_limb_skeleton = pico_frame.upper_limb_skeleton;
-          if (pico_frame.left_arm_direction.valid) {
-            latest_pico_arm_directions.left = pico_frame.left_arm_direction;
-          }
-          if (pico_frame.right_arm_direction.valid) {
-            latest_pico_arm_directions.right = pico_frame.right_arm_direction;
-          }
-          pico_applied_epoch = pico_frame.tracking_epoch;
-          pico_applied_sequence = pico_frame.sequence;
-          pico_left_source_timestamp_ns = pico_frame.source_timestamp_ns;
-          pico_right_source_timestamp_ns = pico_frame.source_timestamp_ns;
-          pico_receive_to_control_us = 1.0e-3 * static_cast<double>(
-              std::max<std::int64_t>(
-                  0, monotonic_now_ns - pico_frame.receive_monotonic_ns));
-          pico_bridge_to_control_us = 1.0e-3 * static_cast<double>(
-              std::max<std::int64_t>(
-                  0, monotonic_now_ns -
-                         pico_frame.bridge_send_monotonic_ns));
-        }
         }
       }
     }
+
     const PicoTeleopFreshness pico_freshness =
         pico_session.freshness(monotonic_now_ns);
-    if (wrist_endpoint_mode && previous_pico_live &&
-        !pico_freshness.live && pico_freshness.stale) {
-      // A live stream becoming stale invalidates the accepted alignment and
-      // target state. The next same-epoch frame must reacquire its own stable
-      // window instead of applying a target against the old baseline.
-      wrist_alignment.reset();
-      targets = TargetManager(config, currentTargets(robot));
-      latest_wrist_alignment = {};
-      latest_wrist_alignment.left.hold_reason = "input_stale";
-      latest_wrist_alignment.right.hold_reason = "input_stale";
-      latest_left_target_accepted = false;
-      latest_right_target_accepted = false;
-    }
-    previous_pico_live = pico_freshness.live;
     const PicoReceiverStats pico_stats =
         pico_receiver != nullptr ? pico_receiver->stats() : PicoReceiverStats{};
     if (spark_guidance != nullptr &&
@@ -1024,33 +867,41 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         arm_direction_manager.update(requested_arm_directions, dt);
 
     DualArmTargets desired = targets.sample(target_time);
-    if (wrist_endpoint_mode) {
-      desired.left_stale =
-          paused || !pico_freshness.live ||
-          !latest_wrist_alignment.left.valid || !latest_left_target_accepted;
-      desired.right_stale =
-          paused || !pico_freshness.live ||
-          !latest_wrist_alignment.right.valid || !latest_right_target_accepted;
-    }
     const bool spark_mode = spark_guidance != nullptr &&
                             usesSparkGuidance(controller->algorithm());
+    bool joint_takeover_cycle = false;
     if (spark_mode) {
       if (!pico_freshness.live) {
+        if (joint_takeover_active) {
+          spark_guidance->cancelJointSpaceTakeover();
+          joint_takeover_active = false;
+        }
         spark_guidance->invalidateTarget("spark_pico_stale");
       }
+      joint_takeover_cycle = joint_takeover_active;
       const bool spark_direct_qpos =
           usesSparkUpperQpoasesDirect(controller->algorithm());
-      spark_diagnostics = spark_guidance->step(
+      const ArmMotionState left_spark_model =
           spark_direct_qpos ? direct_left_state
-                            : controller->referenceState(ArmSide::kLeft),
+                            : controller->referenceState(ArmSide::kLeft);
+      const ArmMotionState right_spark_model =
           spark_direct_qpos ? direct_right_state
-                            : controller->referenceState(ArmSide::kRight),
-          dt);
+                            : controller->referenceState(ArmSide::kRight);
+      spark_diagnostics = joint_takeover_active
+                              ? spark_guidance->stepJointSpaceTakeover(
+                                    left_spark_model, right_spark_model, dt)
+                              : spark_guidance->step(
+                                    left_spark_model, right_spark_model, dt);
       if (spark_diagnostics.accepted) {
         last_spark_targets = spark_diagnostics.cartesian_targets;
         if (spark_diagnostics.cartesian_references_valid) {
           last_spark_references = spark_diagnostics.cartesian_references;
         }
+      }
+      if (joint_takeover_cycle &&
+          (!spark_diagnostics.accepted ||
+           spark_diagnostics.joint_takeover_finished)) {
+        joint_takeover_active = false;
       }
       desired = last_spark_targets;
       desired.left_stale = !pico_freshness.live ||
@@ -1064,8 +915,11 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     const bool spark_internal_reference =
         spark_internal_otg || spark_internal_feedforward;
     DualArmReferences references =
-        spark_internal_reference ? last_spark_references
-                                 : directReferences(desired);
+        (joint_takeover_cycle && spark_diagnostics.accepted &&
+         spark_diagnostics.cartesian_references_valid)
+            ? spark_diagnostics.cartesian_references
+            : (spark_internal_reference ? last_spark_references
+                                        : directReferences(desired));
     const bool spark_direct_qpos =
         usesSparkUpperQpoasesDirect(controller->algorithm());
     const bool spark_joint_reference_velocity =
@@ -1083,7 +937,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     controller->setArmAngleReferenceMode(arm_angle_reference_mode);
     acceleration_controller->setArmAngleReferenceMode(
         arm_angle_reference_mode);
-    if (!paused) {
+    if (!paused && !pico_paused) {
       if (spark_direct_qpos) {
         const SparkQpoasesDirectCommand direct_command =
             makeDirectCommand(spark_diagnostics);
@@ -1118,7 +972,7 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               arm.target = reference.pose;
               arm.q_ref = state.q;
               arm.q_actual = robot.armPosition(side);
-              arm.current = robot.endEffectorPose(side);
+              arm.current = robot.tcpPose(side);
               arm.tcp_actual = arm.current;
               arm.pose_error = poseErrorWorld(arm.target, arm.current);
               arm.actual_pose_error = arm.pose_error;
@@ -1154,7 +1008,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       }
       if (spark_guidance != nullptr &&
           usesSparkHeadroomFeedforwardVelocityQp(controller->algorithm()) &&
-          config.control_level == ControlLevel::kVelocity) {
+          config.control_level == ControlLevel::kVelocity &&
+          !joint_takeover_cycle) {
         const bool pico_headroom_feedback_valid =
             pico_freshness.live && spark_diagnostics.accepted;
         const auto feedback = [&controller, pico_headroom_feedback_valid](
@@ -1185,12 +1040,12 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
               : controller->reference(ArmSide::kRight);
       diagnostics.left.q_actual = robot.armPosition(ArmSide::kLeft);
       diagnostics.right.q_actual = robot.armPosition(ArmSide::kRight);
-      diagnostics.left.tcp_actual = robot.endEffectorPose(ArmSide::kLeft);
-      diagnostics.right.tcp_actual = robot.endEffectorPose(ArmSide::kRight);
+      diagnostics.left.tcp_actual = robot.tcpPose(ArmSide::kLeft);
+      diagnostics.right.tcp_actual = robot.tcpPose(ArmSide::kRight);
       diagnostics.left.current = robot.armKinematicsAt(
-          ArmSide::kLeft, diagnostics.left.q_ref).end_effector_pose;
+          ArmSide::kLeft, diagnostics.left.q_ref).tcp_pose;
       diagnostics.right.current = robot.armKinematicsAt(
-          ArmSide::kRight, diagnostics.right.q_ref).end_effector_pose;
+          ArmSide::kRight, diagnostics.right.q_ref).tcp_pose;
       diagnostics.left.reference = config.cartesian_otg.enabled
                                        ? references.left
                                        : CartesianReference{desired.left};
@@ -1210,65 +1065,23 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       diagnostics.hold_reason = HoldReason::kNone;
     }
 
-    const bool arm_target_acceleration_level =
-        config.control_level == ControlLevel::kAcceleration;
-    const bool left_commit_accepted =
-        !paused && (arm_target_acceleration_level
-                        ? acceleration_diagnostics.left.accepted
-                        : diagnostics.left.accepted);
-    const bool right_commit_accepted =
-        !paused && (arm_target_acceleration_level
-                        ? acceleration_diagnostics.right.accepted
-                        : diagnostics.right.accepted);
-    const ArmMotionState committed_left_reference =
-        spark_direct_qpos
-            ? direct_left_state
-            : arm_target_acceleration_level
-                  ? acceleration_controller->referenceState(ArmSide::kLeft)
-                  : controller->referenceState(ArmSide::kLeft);
-    const ArmMotionState committed_right_reference =
-        spark_direct_qpos
-            ? direct_right_state
-            : arm_target_acceleration_level
-                  ? acceleration_controller->referenceState(ArmSide::kRight)
-                  : controller->referenceState(ArmSide::kRight);
-    if (left_commit_accepted && !desired.left_stale) {
-      last_arm_target_left = committed_left_reference;
+    if (!paused && !pico_paused && hand_frames != nullptr) {
+      WujiHandTeleopFrame hand_frame;
+      if (hand_frames->tryReadLatest(hand_frame)) {
+        if (hand_frame.left_valid) {
+          robot.setHandPosition(ArmSide::kLeft, handVector(hand_frame.left));
+        }
+        if (hand_frame.right_valid) {
+          robot.setHandPosition(ArmSide::kRight,
+                                handVector(hand_frame.right));
+        }
+        robot.forward();
+      }
     }
-    if (right_commit_accepted && !desired.right_stale) {
-      last_arm_target_right = committed_right_reference;
-    }
-    std::uint8_t arm_target_valid_mask = 0U;
-    if (left_commit_accepted && !desired.left_stale) {
-      arm_target_valid_mask |= kArmTargetLeftValid;
-    }
-    if (right_commit_accepted && !desired.right_stale) {
-      arm_target_valid_mask |= kArmTargetRightValid;
-    }
-    const ArmTargetHoldReason left_arm_target_hold_reason =
-        paused
-            ? ArmTargetHoldReason::kPaused
-            : (left_commit_accepted && !desired.left_stale
-                   ? ArmTargetHoldReason::kNone
-                   : (desired.left_stale ? ArmTargetHoldReason::kInputStale
-                                         : ArmTargetHoldReason::kSolverFailure));
-    const ArmTargetHoldReason right_arm_target_hold_reason =
-        paused
-            ? ArmTargetHoldReason::kPaused
-            : (right_commit_accepted && !desired.right_stale
-                   ? ArmTargetHoldReason::kNone
-                   : (desired.right_stale ? ArmTargetHoldReason::kInputStale
-                                          : ArmTargetHoldReason::kSolverFailure));
-    if (arm_target_output != nullptr) {
-      arm_target_output->send(
-          last_arm_target_left, last_arm_target_right, pico_applied_epoch,
-          static_cast<std::uint64_t>(
-              std::max<std::int64_t>(0, pico_left_source_timestamp_ns)),
-          static_cast<std::uint64_t>(std::max<std::int64_t>(
-              1, monotonic_now_ns)),
-          arm_target_valid_mask, left_arm_target_hold_reason,
-          right_arm_target_hold_reason);
-    }
+
+    const WujiHandReceiverStats hand_stats =
+        hand_receiver != nullptr ? hand_receiver->stats()
+                                  : WujiHandReceiverStats{};
 
     ViewerSnapshot snapshot;
     snapshot.sequence = sequence;
@@ -1276,6 +1089,10 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     snapshot.control_time_seconds = control_time;
     snapshot.left_q = robot.armPosition(ArmSide::kLeft);
     snapshot.right_q = robot.armPosition(ArmSide::kRight);
+    if (robot.hasHandMappings()) {
+      snapshot.left_hand_q = robot.handPosition(ArmSide::kLeft);
+      snapshot.right_hand_q = robot.handPosition(ArmSide::kRight);
+    }
     const Vec7 left_nominal =
         0.5 * (robot.mapping(ArmSide::kLeft).limits.lower_position +
                robot.mapping(ArmSide::kLeft).limits.upper_position);
@@ -1303,6 +1120,15 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
         spark_internal_otg ||
         (config.cartesian_otg.enabled && !spark_direct_qpos &&
          !spark_joint_reference_velocity);
+    snapshot.hand_configured = hand_configured;
+    snapshot.hand_stale = hand_stats.stale;
+    snapshot.hand_live = hand_configured && !hand_stats.stale;
+    snapshot.hand_sequence = hand_stats.sequence;
+    snapshot.hand_datagrams = hand_stats.datagrams;
+    snapshot.hand_accepted = hand_stats.accepted;
+    snapshot.hand_malformed = hand_stats.malformed;
+    snapshot.hand_crc_failures = hand_stats.crc_failures;
+    snapshot.hand_reordered = hand_stats.reordered;
     snapshot.left_position_error = diagnostics.left.pose_error.head<3>().norm();
     snapshot.left_orientation_error = diagnostics.left.pose_error.tail<3>().norm();
     snapshot.right_position_error = diagnostics.right.pose_error.head<3>().norm();
@@ -2091,16 +1917,6 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
     snapshot.pico_frame_age_ms = 1.0e3 * pico_freshness.frame_age_seconds;
     snapshot.pico_receive_to_control_us = pico_receive_to_control_us;
     snapshot.pico_bridge_to_control_us = pico_bridge_to_control_us;
-    snapshot.left_wrist_alignment_count =
-        wrist_alignment.stableCount(ArmSide::kLeft);
-    snapshot.right_wrist_alignment_count =
-        wrist_alignment.stableCount(ArmSide::kRight);
-    snapshot.left_wrist_aligned = latest_wrist_alignment.left.aligned;
-    snapshot.right_wrist_aligned = latest_wrist_alignment.right.aligned;
-    snapshot.left_wrist_hold_reason =
-        wristHoldReasonForTelemetry(latest_wrist_alignment.left);
-    snapshot.right_wrist_hold_reason =
-        wristHoldReasonForTelemetry(latest_wrist_alignment.right);
     snapshot.pico_upper_limb_skeleton = latest_pico_upper_limb_skeleton;
     snapshot.pico_upper_limb_skeleton.valid =
         snapshot.pico_upper_limb_skeleton.valid && pico_session.enabled() &&
@@ -2160,17 +1976,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
           snapshot.pico_right_source_timestamp_ns;
       sample.pico_input_frequency_hz = snapshot.pico_input_frequency_hz;
       sample.pico_frame_age_ms = snapshot.pico_frame_age_ms;
-      sample.pico_receive_to_control_us =
-          snapshot.pico_receive_to_control_us;
+      sample.pico_receive_to_control_us = snapshot.pico_receive_to_control_us;
       sample.pico_bridge_to_control_us = snapshot.pico_bridge_to_control_us;
-      sample.left_wrist_alignment_count =
-          snapshot.left_wrist_alignment_count;
-      sample.right_wrist_alignment_count =
-          snapshot.right_wrist_alignment_count;
-      sample.left_wrist_aligned = snapshot.left_wrist_aligned;
-      sample.right_wrist_aligned = snapshot.right_wrist_aligned;
-      sample.left_wrist_hold_reason = snapshot.left_wrist_hold_reason;
-      sample.right_wrist_hold_reason = snapshot.right_wrist_hold_reason;
       sample.left_target_pose = desired.left;
       sample.right_target_pose = desired.right;
       sample.left_reference_pose = config.cartesian_otg.enabled
@@ -2179,8 +1986,8 @@ void controlLoop(MujocoRobot& robot, QpIkConfig config,
       sample.right_reference_pose = config.cartesian_otg.enabled
                                         ? references.right.pose
                                         : desired.right;
-      sample.left_actual_pose = robot.endEffectorPose(ArmSide::kLeft);
-      sample.right_actual_pose = robot.endEffectorPose(ArmSide::kRight);
+      sample.left_actual_pose = robot.tcpPose(ArmSide::kLeft);
+      sample.right_actual_pose = robot.tcpPose(ArmSide::kRight);
       if (!telemetry->tryPush(sample)) {
         ++telemetry_drops;
       }
@@ -2234,9 +2041,6 @@ void writeTelemetryCsv(const std::string& path, TelemetryBuffer& telemetry,
             "pico_left_source_timestamp_ns,pico_right_source_timestamp_ns,"
             "pico_input_frequency_hz,pico_frame_age_ms,"
             "pico_receive_to_control_us,pico_bridge_to_control_us,"
-            "left_wrist_alignment_count,right_wrist_alignment_count,"
-            "left_wrist_aligned,right_wrist_aligned,"
-            "left_wrist_hold_reason,right_wrist_hold_reason,"
             "left_actual_position_error_m,left_actual_orientation_error_rad,"
             "right_actual_position_error_m,right_actual_orientation_error_rad,"
             "left_target_px,left_target_py,left_target_pz,left_target_qx,left_target_qy,left_target_qz,left_target_qw,"
@@ -2495,12 +2299,6 @@ void writeTelemetryCsv(const std::string& path, TelemetryBuffer& telemetry,
              << sample.pico_frame_age_ms << ','
              << sample.pico_receive_to_control_us << ','
              << sample.pico_bridge_to_control_us << ','
-             << sample.left_wrist_alignment_count << ','
-             << sample.right_wrist_alignment_count << ','
-             << sample.left_wrist_aligned << ','
-             << sample.right_wrist_aligned << ','
-             << sample.left_wrist_hold_reason << ','
-             << sample.right_wrist_hold_reason << ','
              << sample.left_ik.actual_position_error << ','
              << sample.left_ik.actual_orientation_error << ','
              << sample.right_ik.actual_position_error << ','
@@ -3172,6 +2970,12 @@ void scrollCallback(GLFWwindow* window, double, double y_offset) {
 void renderSnapshot(ViewerApplication& application) {
   application.robot.setArmPosition(ArmSide::kLeft, application.snapshot.left_q);
   application.robot.setArmPosition(ArmSide::kRight, application.snapshot.right_q);
+  if (application.robot.hasHandMappings()) {
+    application.robot.setHandPosition(ArmSide::kLeft,
+                                      application.snapshot.left_hand_q);
+    application.robot.setHandPosition(ArmSide::kRight,
+                                      application.snapshot.right_hand_q);
+  }
   const Pose left_target = application.preview.resolve(
       ArmSide::kLeft, application.snapshot.targets.left,
       application.snapshot.last_processed_command_id);
@@ -3201,7 +3005,6 @@ void drawOverlay(const ViewerApplication& application, mjrRect viewport) {
       "control failures: %llu | snapshot/telemetry drops: %llu / %llu | command drops: %llu\n"
       "PICO cfg/en/live/stale %d/%d/%d/%d | epoch/seq %llu/%llu | %.1f Hz | age %.1f ms\n"
       "PICO rx accepted/datagrams %llu/%llu | bad/crc/order/jump/super/epoch/resync/reset %llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu | latency recv/bridge %.1f/%.1f us\n"
-      "wrist align L/R count/aligned/hold %zu/%d/%s | %zu/%d/%s\n"
       "arm angle mode: %s | effective left/right: %s/%s\n"
       "skeleton overlay: %s | PICO %s | Spark %s\n"
       "safety: %s",
@@ -3273,12 +3076,6 @@ void drawOverlay(const ViewerApplication& application, mjrRect viewport) {
       static_cast<unsigned long long>(application.snapshot.pico_reset_applies),
       application.snapshot.pico_receive_to_control_us,
       application.snapshot.pico_bridge_to_control_us,
-      application.snapshot.left_wrist_alignment_count,
-      application.snapshot.left_wrist_aligned ? 1 : 0,
-      application.snapshot.left_wrist_hold_reason.data(),
-      application.snapshot.right_wrist_alignment_count,
-      application.snapshot.right_wrist_aligned ? 1 : 0,
-      application.snapshot.right_wrist_hold_reason.data(),
       toString(application.snapshot.arm_angle_reference_mode).data(),
       toString(application.snapshot.left_ik.arm_angle_reference_source).data(),
       toString(application.snapshot.right_ik.arm_angle_reference_source).data(),
@@ -3505,6 +3302,17 @@ int runHeadless(const Options& options, BoundedSpscQueue<ViewerCommand>& command
             << " control_level=" << toString(latest.control_level)
             << " mode=" << toString(latest.mode)
             << " accepted=" << latest.accepted
+            << " hand_configured=" << latest.hand_configured
+            << " hand_live=" << latest.hand_live
+            << " hand_stale=" << latest.hand_stale
+            << " hand_sequence=" << latest.hand_sequence
+            << " hand_datagrams=" << latest.hand_datagrams
+            << " hand_accepted=" << latest.hand_accepted
+            << " hand_malformed=" << latest.hand_malformed
+            << " hand_crc_failures=" << latest.hand_crc_failures
+            << " hand_reordered=" << latest.hand_reordered
+            << " hand_left_q0=" << latest.left_hand_q[0]
+            << " hand_right_q0=" << latest.right_hand_q[0]
             << " cycle_p99_us=" << latest.cycle_p99_us
             << " deadline_misses=" << latest.deadline_misses
             << " control_failures=" << latest.control_failures
@@ -3614,6 +3422,17 @@ int runPicoHeadless(const Options& options,
             << latest.pico_receive_to_control_us
             << " pico_bridge_to_control_us="
             << latest.pico_bridge_to_control_us
+            << " hand_configured=" << latest.hand_configured
+            << " hand_live=" << latest.hand_live
+            << " hand_stale=" << latest.hand_stale
+            << " hand_sequence=" << latest.hand_sequence
+            << " hand_datagrams=" << latest.hand_datagrams
+            << " hand_accepted=" << latest.hand_accepted
+            << " hand_malformed=" << latest.hand_malformed
+            << " hand_crc_failures=" << latest.hand_crc_failures
+            << " hand_reordered=" << latest.hand_reordered
+            << " hand_left_q0=" << latest.left_hand_q[0]
+            << " hand_right_q0=" << latest.right_hand_q[0]
             << " left_arm_angle_source="
             << toString(latest.left_ik.arm_angle_reference_source)
             << " left_arm_angle_error_rad="
@@ -3651,9 +3470,7 @@ int runViewer(const Options& options, BoundedSpscQueue<ViewerCommand>& commands,
   }
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
-  const EndEffectorSiteNames end_effector_sites{
-      options.left_end_effector_site, options.right_end_effector_site};
-  MujocoRobot render_robot(options.model_path, end_effector_sites);
+  MujocoRobot render_robot(options.model_path);
   ViewerApplication application(render_robot, commands);
   application.show_pico_skeleton = options.pico_skeleton_overlay;
   application.target_left_body = mj_name2id(render_robot.model(), mjOBJ_BODY, "target_L");
@@ -3781,11 +3598,6 @@ int run(int argc, char** argv) {
   if (options.algorithm_override.has_value()) {
     config.ik_algorithm = *options.algorithm_override;
   }
-  if (options.pico_wrist_input &&
-      config.ik_algorithm != IkAlgorithm::kHierarchicalQp) {
-    throw std::invalid_argument(
-        "--pico-wrist-input requires hierarchical_qp");
-  }
   if (usesSparkGuidance(config.ik_algorithm)) {
     if (!options.pico_teleop) {
       throw std::invalid_argument(
@@ -3799,10 +3611,6 @@ int run(int argc, char** argv) {
       config.joint_limits.hard_jerk_enabled = true;
     }
   }
-  const WristAlignmentConfig wrist_alignment_config{
-      options.wrist_stable_frames, options.wrist_max_position_step,
-      options.wrist_max_orientation_step, options.wrist_position_scale};
-  const bool use_wrist_end_effector = options.pico_wrist_input;
   if (options.model_state_only_override.has_value()) {
     config.controller.model_state_only = *options.model_state_only_override;
   }
@@ -3816,6 +3624,7 @@ int run(int argc, char** argv) {
   BoundedSpscQueue<JointKinematicsSample> joint_telemetry(16384U);
   TelemetryBuffer telemetry(8192U);
   LatestSpscExchange<PicoTeleopFrame> pico_frames;
+  LatestSpscExchange<WujiHandTeleopFrame> hand_frames;
   std::unique_ptr<PicoUdpReceiver> pico_receiver;
   if (options.pico_teleop) {
     PicoUdpReceiverOptions receiver_options;
@@ -3829,15 +3638,20 @@ int run(int argc, char** argv) {
     pico_receiver = std::make_unique<PicoUdpReceiver>(
         std::move(receiver_options), pico_frames);
   }
-  const EndEffectorSiteNames end_effector_sites{
-      options.left_end_effector_site, options.right_end_effector_site};
-  MujocoRobot control_robot(options.model_path, end_effector_sites);
-  std::unique_ptr<ArmTargetUdpOutput> arm_target_output;
-  if (!options.no_arm_target_output) {
-    arm_target_output = std::make_unique<ArmTargetUdpOutput>(
-        options.arm_target_host, options.arm_target_port);
-    std::cout << "arm_target_udp=" << options.arm_target_host << ':'
-              << options.arm_target_port << '\n';
+  MujocoRobot control_robot(options.model_path);
+  std::unique_ptr<WujiHandUdpReceiver> hand_receiver;
+  if (options.hand_teleop) {
+    if (!control_robot.hasHandMappings()) {
+      throw std::invalid_argument(
+          "--hand-teleop requires a combined Wuji Hand 2 model");
+    }
+    WujiHandUdpReceiverOptions receiver_options;
+    receiver_options.bind_address = options.hand_bind;
+    receiver_options.port = options.hand_port;
+    receiver_options.stale_timeout_seconds =
+        options.hand_stale_timeout_seconds;
+    hand_receiver = std::make_unique<WujiHandUdpReceiver>(
+        std::move(receiver_options), hand_frames);
   }
   std::atomic<bool> running{true};
   std::atomic<bool> control_finished{false};
@@ -3858,6 +3672,11 @@ int run(int argc, char** argv) {
       if (!options.pico_record_path.empty()) {
         std::cout << "pico_record_path=" << options.pico_record_path << '\n';
       }
+    }
+    if (hand_receiver != nullptr) {
+      hand_receiver->start();
+      std::cout << "hand_udp_bind=" << options.hand_bind << ':'
+                << hand_receiver->boundPort() << '\n';
     }
     if (!options.telemetry_path.empty()) {
       telemetry_thread = std::thread([&] {
@@ -3889,10 +3708,11 @@ int run(int argc, char** argv) {
                         : &joint_telemetry,
                     options.telemetry_path.empty() ? nullptr : &telemetry,
                     options.pico_teleop ? &pico_frames : nullptr,
-                    pico_receiver.get(), options.pico_teleop,
-                    use_wrist_end_effector, wrist_alignment_config,
-                    initial_arm_angle_reference_mode, arm_target_output.get(),
-                    running);
+                    pico_receiver.get(),
+                    options.hand_teleop ? &hand_frames : nullptr,
+                    hand_receiver.get(),
+                    options.pico_teleop,
+                    initial_arm_angle_reference_mode, running);
       } catch (...) {
         control_error = std::current_exception();
         running.store(false, std::memory_order_release);
@@ -3904,6 +3724,9 @@ int run(int argc, char** argv) {
     control_finished.store(true, std::memory_order_release);
     if (pico_receiver != nullptr) {
       pico_receiver->stop();
+    }
+    if (hand_receiver != nullptr) {
+      hand_receiver->stop();
     }
     if (control_thread.joinable()) {
       control_thread.join();
@@ -3934,6 +3757,9 @@ int run(int argc, char** argv) {
     if (pico_receiver != nullptr) {
       pico_receiver->stop();
     }
+    if (hand_receiver != nullptr) {
+      hand_receiver->stop();
+    }
     if (control_thread.joinable()) {
       control_thread.join();
     }
@@ -3957,6 +3783,16 @@ int run(int argc, char** argv) {
                 << recording.recording_packet_size
                 << '\n';
     }
+  }
+  if (hand_receiver != nullptr) {
+    hand_receiver->stop();
+    const WujiHandReceiverStats hand_stats = hand_receiver->stats();
+    std::cout << "hand_record_complete hand_udp_state=stopped"
+              << " hand_datagrams=" << hand_stats.datagrams
+              << " hand_accepted=" << hand_stats.accepted
+              << " hand_malformed=" << hand_stats.malformed
+              << " hand_crc_failures=" << hand_stats.crc_failures
+              << " hand_reordered=" << hand_stats.reordered << '\n';
   }
   if (telemetry_thread.joinable()) {
     telemetry_thread.join();

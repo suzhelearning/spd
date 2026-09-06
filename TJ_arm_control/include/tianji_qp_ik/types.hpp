@@ -8,11 +8,13 @@
 namespace tianji_qp_ik {
 
 inline constexpr int kArmDof = 7;
+inline constexpr int kHandDof = 20;
 
 enum class ArmSide { kLeft, kRight };
 
 using Vec6 = Eigen::Matrix<double, 6, 1>;
 using Vec7 = Eigen::Matrix<double, 7, 1>;
+using Vec20 = Eigen::Matrix<double, 20, 1>;
 using Mat37 = Eigen::Matrix<double, 3, 7>;
 using Mat67 = Eigen::Matrix<double, 6, 7>;
 using Mat77 = Eigen::Matrix<double, 7, 7>;

@@ -26,7 +26,7 @@ TEST(IterativePoseDls, ConvergesFromPreviousGoalToNearbyPose) {
   IterativeDlsConfig config;
   IterativePoseDlsIk7 solver(config, 0.05);
   PoseDlsInput input;
-  input.target = robot.armKinematicsAt(side, reachable).end_effector_pose;
+  input.target = robot.armKinematicsAt(side, reachable).tcp_pose;
   input.seed = seed;
   input.limits = limits;
   input.evaluate = [&robot, side](const Vec7& q) {
@@ -52,10 +52,10 @@ TEST(IterativePoseDls, SecondaryMotionRemainsInStrictCartesianNullspace) {
   IterativePoseDlsIk7 solver(config, 0.0);
   const auto evaluate = [](const Vec7& q) {
     ArmKinematicSample sample;
-    sample.end_effector_jacobian.setZero();
-    sample.end_effector_jacobian.block<6, 6>(0, 0) =
+    sample.tcp_jacobian.setZero();
+    sample.tcp_jacobian.block<6, 6>(0, 0) =
         0.01 * Eigen::Matrix<double, 6, 6>::Identity();
-    sample.end_effector_pose.position = (sample.end_effector_jacobian * q).head<3>();
+    sample.tcp_pose.position = (sample.tcp_jacobian * q).head<3>();
     return sample;
   };
   PoseDlsInput primary;
@@ -72,7 +72,7 @@ TEST(IterativePoseDls, SecondaryMotionRemainsInStrictCartesianNullspace) {
 
   const PoseDlsResult without_secondary = solver.solve(primary);
   const PoseDlsResult with_secondary = solver.solve(secondary);
-  const Mat67 jacobian = evaluate(Vec7::Zero()).end_effector_jacobian;
+  const Mat67 jacobian = evaluate(Vec7::Zero()).tcp_jacobian;
 
   EXPECT_TRUE((jacobian * (with_secondary.q - without_secondary.q))
                   .isZero(1.0e-12));
@@ -100,9 +100,9 @@ TEST(IterativePoseDls,
   input.secondary_task.activation = 1.0;
   input.evaluate = [](const Vec7& q) {
     ArmKinematicSample sample;
-    sample.end_effector_jacobian.leftCols<6>() =
+    sample.tcp_jacobian.leftCols<6>() =
         Eigen::Matrix<double, 6, 6>::Identity();
-    sample.end_effector_pose.position = q.head<3>();
+    sample.tcp_pose.position = q.head<3>();
     return sample;
   };
 
@@ -113,7 +113,7 @@ TEST(IterativePoseDls,
   // tolerance, retain the nearest seed branch instead of continuing to chase
   // a potentially incompatible elbow-plane target.
   EXPECT_NEAR(result.q[6], 0.0, 1.0e-12);
-  EXPECT_TRUE((input.evaluate(result.q).end_effector_jacobian * result.q)
+  EXPECT_TRUE((input.evaluate(result.q).tcp_jacobian * result.q)
                   .isZero(1.0e-12));
 }
 
@@ -140,9 +140,9 @@ TEST(IterativePoseDls,
   input.secondary_task.activation = 1.0;
   input.evaluate = [](const Vec7& q) {
     ArmKinematicSample sample;
-    sample.end_effector_jacobian.leftCols<6>() =
+    sample.tcp_jacobian.leftCols<6>() =
         Eigen::Matrix<double, 6, 6>::Identity();
-    sample.end_effector_pose.position = q.head<3>();
+    sample.tcp_pose.position = q.head<3>();
     return sample;
   };
 
@@ -180,9 +180,9 @@ TEST(IterativePoseDls, NeverPublishesAnInfeasiblePostureGuideCandidate) {
   input.secondary_task.activation = 1.0;
   input.evaluate = [](const Vec7& q) {
     ArmKinematicSample sample;
-    sample.end_effector_jacobian.leftCols<6>() =
+    sample.tcp_jacobian.leftCols<6>() =
         Eigen::Matrix<double, 6, 6>::Identity();
-    sample.end_effector_pose.position = q.head<3>();
+    sample.tcp_pose.position = q.head<3>();
     sample.shoulder_position.setZero();
     sample.elbow_position.y() = q[6];
     return sample;
@@ -217,15 +217,15 @@ TEST(IterativePoseDls, NeverPublishesACandidateWithWorseCartesianMerit) {
   input.target.position.x() = 0.98;
   input.evaluate = [](const Vec7& q) {
     ArmKinematicSample sample;
-    sample.end_effector_pose.position =
+    sample.tcp_pose.position =
         Eigen::Vector3d(std::sin(2.0 * q[0]), q[1], q[2]);
-    sample.end_effector_jacobian.setZero();
-    sample.end_effector_jacobian(0, 0) = 2.0 * std::cos(2.0 * q[0]);
-    sample.end_effector_jacobian(1, 1) = 1.0;
-    sample.end_effector_jacobian(2, 2) = 1.0;
-    sample.end_effector_jacobian(3, 3) = 1.0;
-    sample.end_effector_jacobian(4, 4) = 1.0;
-    sample.end_effector_jacobian(5, 5) = 1.0;
+    sample.tcp_jacobian.setZero();
+    sample.tcp_jacobian(0, 0) = 2.0 * std::cos(2.0 * q[0]);
+    sample.tcp_jacobian(1, 1) = 1.0;
+    sample.tcp_jacobian(2, 2) = 1.0;
+    sample.tcp_jacobian(3, 3) = 1.0;
+    sample.tcp_jacobian(4, 4) = 1.0;
+    sample.tcp_jacobian(5, 5) = 1.0;
     return sample;
   };
 

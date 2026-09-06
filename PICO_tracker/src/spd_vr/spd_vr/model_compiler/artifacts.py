@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover
 from .collision import CollisionArtifact, CollisionSettings, decompose_mesh, load_collision_piece
 from .urdf_model import UrdfModel, aggregate_fixed_point_masses, load_urdf
 from .mjcf import render_mjcf
+from ..manifest import DEFAULT_ARM_HOME_RAD
 
 FILES = (
     "unified_plant.xml",
@@ -209,7 +210,40 @@ def _compile_collisions(
     model: UrdfModel,
     cache_dir: Path,
     output_root: Path,
+    mesh_assets: Mapping[str, tuple[str, str, tuple[float, float, float]]],
+    *,
+    raw: bool = False,
 ) -> tuple[dict[tuple[str, int], tuple[str, ...]], dict[str, Any]]:
+    if raw:
+        # ponytail: MuJoCo treats raw mesh collisions as convex hulls; use the
+        # default decomposed mode when accurate concave contact matters.
+        assets: dict[tuple[str, int], tuple[str, ...]] = {}
+        records: list[dict[str, Any]] = []
+        for link in model.links:
+            for index, geometry in enumerate(link.collisions):
+                asset_name, output_file, _ = mesh_assets[str(geometry.path.resolve())]
+                digest = _sha256(geometry.path)
+                assets[(link.name, index)] = (asset_name,)
+                records.append({
+                    "link": link.name,
+                    "collision_index": index,
+                    "source_filename": geometry.filename,
+                    "source_sha256": digest,
+                    "scale": list(geometry.scale),
+                    "mode": "raw",
+                    "piece_count": 1,
+                    "pieces": [{"file": output_file, "sha256": digest, "source_sha256": digest}],
+                })
+        records.sort(key=lambda item: (item["link"], item["collision_index"]))
+        document = {
+            "version": 1,
+            "source_urdf_sha256": _sha256(model.source_path),
+            "settings": {"mode": "raw"},
+            "records": records,
+        }
+        (output_root / "collision_manifest.yaml").write_bytes(_yaml_bytes(document))
+        return assets, document
+
     # Collision-only decimation keeps every quality-gated piece within Task6's
     # fixed 64-vertex limit; visual meshes are copied byte-for-byte below.
     arm_settings = CollisionSettings(decimate=True, surface_p95_threshold_m=0.003)
@@ -309,8 +343,9 @@ def _calibration(model_path: Path, joint_order: tuple[str, ...]) -> dict[str, An
     actuators = []
     for index, joint_name in enumerate(joint_order):
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{joint_name}_position")
         dof = int(model.jnt_dofadr[joint_id])
-        kp = 25.0 if joint_name.startswith("Joint") else 1.0
+        kp = float(model.actuator_gainprm[actuator_id, 0])
         mii = max(float(mass[dof, dof]), 0.0)
         actuators.append({
             "index": index,
@@ -319,7 +354,7 @@ def _calibration(model_path: Path, joint_order: tuple[str, ...]) -> dict[str, An
             "group": "arm" if joint_name.startswith("Joint") else "hand",
             "mass_ii_home": mii,
             "kp": kp,
-            "kd": float(2.0 * np.sqrt(kp * mii)),
+            "kd": float(-model.actuator_biasprm[actuator_id, 2]),
             "metrics": {"tracking_p95_rad": 0.0, "overshoot_rad": 0.0, "force_saturation_ratio": 0.0},
         })
     return {
@@ -379,6 +414,7 @@ def _manifest_document(
         "joint_order": list(full_joints),
         "actuator_order": [f"{name}_position" for name in full_joints],
         "arm_joint_order": list(arm_joints),
+        "arm_home_rad": {side: list(values) for side, values in DEFAULT_ARM_HOME_RAD.items()},
         "hand_joint_order": {
             "left": [name for name in full_joints if name.startswith("l_")],
             "right": [name for name in full_joints if name.startswith("r_")],
@@ -418,7 +454,10 @@ def _publish_atomic(temp_root: Path, output_root: Path) -> None:
     """
     output_root.parent.mkdir(parents=True, exist_ok=True)
     if output_root.exists():
-        raise ArtifactError(f"refusing to replace existing artifact directory: {output_root}")
+        try:
+            output_root.rmdir()
+        except OSError as exc:
+            raise ArtifactError(f"refusing to replace existing artifact directory: {output_root}") from exc
     os.replace(temp_root, output_root)
 
 
@@ -426,6 +465,8 @@ def compile_models(
     urdf_path: str | Path,
     output_dir: str | Path,
     cache_dir: str | Path | None = None,
+    *,
+    raw_collisions: bool = False,
 ) -> ModelManifest:
     """Compile and atomically publish the two MJCF models and three YAML files."""
     source = Path(urdf_path).resolve()
@@ -447,7 +488,9 @@ def compile_models(
     temp = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
     try:
         mesh_assets = _copy_source_meshes(mesh_records, temp)
-        collision_assets, collision_document = _compile_collisions(model, cache, temp)
+        collision_assets, collision_document = _compile_collisions(
+            model, cache, temp, mesh_assets, raw=raw_collisions
+        )
         full_path = temp / "unified_plant.xml"
         arm_path = temp / "arm_ik.xml"
         full_joints, excludes = render_mjcf(model, full_path, mesh_assets=mesh_assets, collision_assets=collision_assets, mode="full")

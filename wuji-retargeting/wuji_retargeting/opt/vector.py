@@ -147,15 +147,18 @@ class VectorOptimizer(BaseOptimizer):
         qpos = np.asarray(qpos, dtype=np.float64)
 
         # --- Forward kinematics ---
+        wrist_link_id = self.computed_link_indices[self.origin_indices[0]]
         self.robot.compute_forward_kinematics(qpos)
-        positions = np.array([
-            self.robot.get_link_pose(idx)[:3, 3]
-            for idx in self._kv_computed_link_indices
-        ], dtype=np.float64) * M_TO_CM
+        positions = self.robot.get_link_positions_in_frame(
+            self._kv_computed_link_indices,
+            wrist_link_id,
+        ) * M_TO_CM
 
         # --- Batch Jacobians: (num_unique_links, 3, nq) ---
         Js = self.robot.compute_all_jacobians_batch(
-            qpos, self._kv_computed_link_indices
+            qpos,
+            self._kv_computed_link_indices,
+            reference_link_id=wrist_link_id,
         ) * M_TO_CM
 
         # --- Per-vector positions and Jacobians ---

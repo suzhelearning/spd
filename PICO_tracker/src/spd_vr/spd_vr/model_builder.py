@@ -16,7 +16,12 @@ def build_model(output_dir: str | Path | None = None) -> tuple[Path, Path, Path]
     """Compile the unified plant and return full XML, manifest, calibration paths."""
     output = Path(output_dir) if output_dir is not None else Path(__file__).resolve().parents[1] / "generated"
     urdf = workspace_root() / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
-    result = compile_models(urdf, output, output.parent / "collision_cache")
+    result = compile_models(
+        urdf,
+        output,
+        output.parent / "collision_cache",
+        raw_collisions=True,
+    )
     return result.full_model, result.path, result.actuator_calibration
 
 
@@ -28,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output = args.output_dir or Path(__file__).resolve().parents[1] / "generated"
     urdf = args.urdf or workspace_root() / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
-    result = compile_models(urdf, output, args.cache)
+    result = compile_models(urdf, output, args.cache, raw_collisions=True)
     print(result.output_dir)
     return 0
 

@@ -17,11 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .model_compiler.artifacts import verify_artifacts
 
 
 SESSION_NAME = "spd-teleop"
-DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
+DEFAULT_ENDPOINT = DEFAULT_ZENOH_ENDPOINT
 DEFAULT_SDK_LIBRARY = "/opt/apps/roboticsservice/SDK/x64/libPXREARobotSDK.so"
 ARTIFACT_FILES = (
     "unified_plant.xml",
@@ -112,7 +113,7 @@ def _check_adb(
     ok, reverse = _adb_command(run_command, reverse_command)
     reverse_lines = reverse.splitlines()
     reverse_fields = reverse_target.split()
-    reverse_ok = ok and bool(serial) and len(reverse_fields) == 2 and any(line.split()[:3] == [serial, *reverse_fields] for line in reverse_lines if len(line.split()) >= 3)
+    reverse_ok = ok and bool(serial) and len(reverse_fields) == 2 and any(line.split()[1:3] == reverse_fields for line in reverse_lines if len(line.split()) >= 3)
     reverse_detail = reverse if reverse else f"expected reverse entry missing: {reverse_target or 'dynamic RoboticsService port'}"
     reverse_result = CheckResult("adb_reverse", reverse_ok, reverse_detail)
     service_result = CheckResult("robotics_service", service_port is not None, f"non-loopback RoboticsService listener: {service_port}" if service_port else service_detail)
@@ -158,8 +159,8 @@ def _check_port(
     try:
         ok, detail = checker(endpoint) if checker is not None else _port_is_free(endpoint)
     except Exception as exc:
-        return CheckResult("port_7447", False, str(exc))
-    return CheckResult("port_7447", bool(ok), str(detail))
+        return CheckResult("zenoh_endpoint", False, str(exc))
+    return CheckResult("zenoh_endpoint", bool(ok), str(detail))
 
 
 def _port_is_free(endpoint: str) -> tuple[bool, str]:
@@ -219,6 +220,7 @@ def run_checks(
     session_name: str = SESSION_NAME,
     selected_serial: str | None = None,
     expected_reverse: str | None = None,
+    fake_source_path: str | Path | None = None,
     run_command: RunCommand | None = None,
     sdk_loader: Callable[[str], Any] | None = None,
     dependency_loader: Callable[[str], Any] | None = None,
@@ -241,8 +243,14 @@ def run_checks(
     check_session = (lambda name: _check_session(name, command)) if session_checker is None else session_checker
     environment = os.environ if display_env is None else display_env
     check_artifact = verify_artifacts if artifact_checker is None else artifact_checker
-    results = _check_adb(command, selected_serial=selected_serial, expected_reverse=expected_reverse)
-    results.extend((_check_sdk(sdk, load_sdk), _check_dependencies(load_dependency), _check_display(environment), _check_artifacts(manifest, urdf, check_artifact), _check_port(endpoint, port_checker)))
+    if fake_source_path is None:
+        results = _check_adb(command, selected_serial=selected_serial, expected_reverse=expected_reverse)
+        results.extend((_check_sdk(sdk, load_sdk), _check_dependencies(load_dependency), _check_display(environment)))
+    else:
+        fake_source = Path(fake_source_path)
+        results = [CheckResult("fake_source", fake_source.is_file(), f"missing fake source: {fake_source}" if not fake_source.is_file() else f"readable {fake_source}")]
+        results.append(_check_dependencies(load_dependency))
+    results.extend((_check_artifacts(manifest, urdf, check_artifact), _check_port(endpoint, port_checker)))
     try:
         session_ok, session_detail = check_session(session_name)
     except Exception as exc:
@@ -255,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=None)
     parser.add_argument("--sdk-library", type=Path, default=None)
+    parser.add_argument("--fake-source", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
@@ -270,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         endpoint=args.endpoint,
         session_name=getattr(args, "session", SESSION_NAME),
         selected_serial=args.serial,
+        fake_source_path=args.fake_source,
         expected_reverse=args.expected_reverse,
     )
     for result in results:

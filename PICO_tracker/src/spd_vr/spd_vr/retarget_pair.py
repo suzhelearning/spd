@@ -369,7 +369,7 @@ class WujiRetargetPair:
             try:
                 self._left_target = self._mapped_target(
                     self.left_retargeter,
-                    input_frame.get_side_fingers_data("left"),
+                    input_frame.get_side_mediapipe_landmarks("left"),
                     self._left_perm,
                     self._left_limits,
                 )
@@ -381,7 +381,7 @@ class WujiRetargetPair:
             try:
                 self._right_target = self._mapped_target(
                     self.right_retargeter,
-                    input_frame.get_side_fingers_data("right"),
+                    input_frame.get_side_mediapipe_landmarks("right"),
                     self._right_perm,
                     self._right_limits,
                 )

@@ -58,6 +58,8 @@ struct SparkGuidanceDiagnostics {
   bool target_valid{false};
   bool blend_active{false};
   double blend_progress{0.0};
+  bool joint_takeover_active{false};
+  bool joint_takeover_finished{false};
   double compute_time_us{0.0};
   std::string_view detail{"not_updated"};
   SparkGuidanceArmDiagnostics left;
@@ -77,6 +79,13 @@ class DualArmSparkGuidance {
                            SparkPostureGuideMode::kRuckig);
 
   SparkUpperTargets updatePicoFrame(const PicoTeleopFrame& frame);
+  bool startJointSpaceTakeover(const SparkUpperTargets& targets,
+                               const ArmMotionState& left_model,
+                               const ArmMotionState& right_model);
+  SparkGuidanceDiagnostics stepJointSpaceTakeover(
+      const ArmMotionState& left_model, const ArmMotionState& right_model,
+      double dt);
+  void cancelJointSpaceTakeover() noexcept;
   SparkGuidanceDiagnostics step(const ArmMotionState& left_model,
                                 const ArmMotionState& right_model, double dt);
   void updateHeadroomFeedback(
@@ -137,6 +146,9 @@ class DualArmSparkGuidance {
   Pose latest_right_input_palm_;
   std::uint64_t last_feedforward_sequence_{0U};
   std::uint64_t last_palm_twist_sequence_{0U};
+  bool joint_takeover_active_{false};
+  Vec7 joint_takeover_left_goal_{Vec7::Zero()};
+  Vec7 joint_takeover_right_goal_{Vec7::Zero()};
 };
 
 }  // namespace tianji_qp_ik

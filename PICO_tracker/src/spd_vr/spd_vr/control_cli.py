@@ -13,6 +13,7 @@ from typing import Any, Callable
 import zenoh
 
 from .control_sequence import ControlSequenceAllocator, default_path
+from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .wire import (
     CONTROL_KEY,
     STATUS_BRIDGE_KEY,
@@ -23,7 +24,7 @@ from .wire import (
     encode_control,
 )
 from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
-DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
+DEFAULT_ENDPOINT = DEFAULT_ZENOH_ENDPOINT
 DEFAULT_SEQUENCE_FILE = default_path()
 
 

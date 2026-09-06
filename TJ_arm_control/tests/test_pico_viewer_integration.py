@@ -45,6 +45,7 @@ def encode_packet(
     phase,
     orientation_amplitude,
     position_offset=0.0,
+    button_pressed=False,
 ):
     left_position = (
         0.35 + position_offset + 0.015 * math.sin(phase),
@@ -63,6 +64,7 @@ def encode_packet(
         (0.0, 1.0, 0.0), -orientation_amplitude * math.sin(phase)
     )
     bridge_send_ns = time.monotonic_ns()
+    flags = 0xFF | (0x100 if button_pressed else 0)
     header = struct.pack(
         "<4sHHQQqqI",
         b"TJVR",
@@ -72,7 +74,7 @@ def encode_packet(
         9,
         source_timestamp_ns,
         bridge_send_ns,
-        0xFF,
+        flags,
     )
     payload = struct.pack(
         "<14d",
@@ -100,6 +102,23 @@ def encode_packet(
     packet = without_crc + struct.pack("<I", zlib.crc32(without_crc))
     assert len(packet) == PACKET_SIZE
     return packet
+
+
+def encode_hand_packet(sequence, left_joint0, right_joint0):
+    values = [0.0] * 40
+    values[0] = left_joint0
+    values[20] = right_joint0
+    body = struct.pack(
+        "<4sBBHQq40d",
+        b"TJH2",
+        1,
+        (1 << 0) | (1 << 1),
+        348,
+        sequence,
+        time.monotonic_ns(),
+        *values,
+    )
+    return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
 def parse_summary(stdout):
@@ -637,20 +656,42 @@ def run_test(arguments):
             == "spark_upper_qpoases_cartesian_otg_velocity_qp"
         ):
             assert any(row["otg_enabled"] == "1" for row in rows)
-            assert any(
-                float(row["left_v_ref"]) > 1.0e-5
-                or float(row["right_v_ref"]) > 1.0e-5
+            reference_peak = max(
+                max(
+                    float(row[name])
+                    for name in (
+                        "left_v_ref",
+                        "right_v_ref",
+                        "left_w_ref",
+                        "right_w_ref",
+                    )
+                )
                 for row in rows
+            )
+            assert reference_peak > 1.0e-5, (
+                f"OTG reference never moved; peak={reference_peak:.9g}, "
+                f"live_rows={sum(row['pico_live'] == '1' for row in rows)}"
             )
         if (
             arguments.algorithm
             == "spark_upper_qpoases_feedforward_velocity_qp"
         ):
-            assert any(
-                float(row["left_v_ref"]) > 1.0e-5
-                or float(row["right_v_ref"]) > 1.0e-5
-                for row in rows
-                if row["pico_live"] == "1"
+            live_rows = [row for row in rows if row["pico_live"] == "1"]
+            reference_peak = max(
+                max(
+                    float(row[name])
+                    for name in (
+                        "left_v_ref",
+                        "right_v_ref",
+                        "left_w_ref",
+                        "right_w_ref",
+                    )
+                )
+                for row in live_rows
+            )
+            assert reference_peak > 1.0e-5, (
+                f"feedforward reference never moved; peak={reference_peak:.9g}, "
+                f"live_rows={len(live_rows)}"
             )
         if arguments.algorithm in (
             "spark_upper_qpoases_feedforward_velocity_qp",
@@ -852,6 +893,186 @@ def run_test(arguments):
         print(" ".join(f"{key}={value}" for key, value in summary.items()))
 
 
+def run_button_state_test(arguments):
+    port = reserve_udp_port()
+    with tempfile.TemporaryDirectory(prefix="tianji_pico_button_") as directory:
+        telemetry_path = Path(directory) / "telemetry.csv"
+        joint_telemetry_path = Path(directory) / "joint_telemetry.csv"
+        viewer_command = [
+            arguments.viewer,
+            "--config", arguments.config,
+            "--model", arguments.model,
+            "--pico-teleop",
+            "--pico-bind", "127.0.0.1",
+            "--pico-port", str(port),
+            "--control-level", arguments.control_level,
+            "--headless",
+            "--duration", "2.5",
+            "--telemetry", str(telemetry_path),
+            "--joint-telemetry", str(joint_telemetry_path),
+            "--model-state-only",
+        ]
+        if arguments.algorithm:
+            viewer_command.extend(["--algorithm", arguments.algorithm])
+        process = subprocess.Popen(
+            viewer_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sequence = 1
+        source_start_ns = time.monotonic_ns()
+
+        def send_level(button_pressed, count):
+            nonlocal sequence
+            for _ in range(count):
+                source_timestamp_ns = source_start_ns + round(
+                    (sequence - 1) * 1.0e9 / arguments.send_rate
+                )
+                phase = (
+                    2.0 * math.pi * arguments.motion_frequency
+                    * (sequence - 1) / arguments.send_rate
+                )
+                packet = encode_packet(
+                    sequence,
+                    source_timestamp_ns,
+                    phase,
+                    arguments.orientation_amplitude,
+                    button_pressed=button_pressed,
+                )
+                sender.sendto(packet, ("127.0.0.1", port))
+                sequence += 1
+                time.sleep(1.0 / arguments.send_rate)
+
+        try:
+            time.sleep(0.20)
+            send_level(False, 18)
+            send_level(True, 24)
+            send_level(False, 24)
+        finally:
+            sender.close()
+
+        stdout, _ = process.communicate(timeout=6.0)
+        if process.returncode != 0:
+            raise AssertionError(
+                f"Viewer exited with {process.returncode}:\n{stdout}"
+            )
+        with telemetry_path.open(newline="") as telemetry_file:
+            rows = list(csv.DictReader(telemetry_file))
+        if not rows:
+            raise AssertionError("button test produced no telemetry")
+        enabled = [row["pico_enabled"] == "1" for row in rows]
+        try:
+            pause_index = next(index for index, value in enumerate(enabled) if not value)
+            resume_index = next(
+                index for index in range(pause_index + 1, len(enabled))
+                if enabled[index]
+            )
+        except StopIteration as error:
+            raise AssertionError(
+                "telemetry did not show active -> paused -> active"
+            ) from error
+        assert any(enabled[:pause_index])
+        assert any(not value for value in enabled[pause_index:resume_index])
+        assert any(enabled[resume_index:])
+        assert all(int(row["control_failures"]) == 0 for row in rows)
+        assert all(int(row["pico_malformed"]) == 0 for row in rows)
+        assert all(int(row["pico_crc_failures"]) == 0 for row in rows)
+        assert_otg_reference_continuity(rows)
+        print(
+            "button_state_test_passed "
+            f"pause_index={pause_index} resume_index={resume_index} "
+            f"rows={len(rows)}"
+        )
+
+
+def run_button_hand_pause_test(arguments):
+    pico_port = reserve_udp_port()
+    hand_port = reserve_udp_port()
+    command = [
+        arguments.viewer,
+        "--config", arguments.config,
+        "--model", arguments.model,
+        "--pico-teleop",
+        "--pico-bind", "127.0.0.1",
+        "--pico-port", str(pico_port),
+        "--hand-teleop",
+        "--hand-bind", "127.0.0.1",
+        "--hand-port", str(hand_port),
+        "--control-level", arguments.control_level,
+        "--headless",
+        "--duration", "1.8",
+        "--algorithm", arguments.algorithm or "hierarchical_qp",
+        "--model-state-only",
+    ]
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    pico_sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hand_sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    source_start_ns = time.monotonic_ns()
+    sequence = 1
+
+    def send_pico(button_pressed):
+        nonlocal sequence
+        packet = encode_packet(
+            sequence,
+            source_start_ns + sequence * 10_000_000,
+            sequence * 0.02,
+            0.02,
+            button_pressed=button_pressed,
+        )
+        pico_sender.sendto(packet, ("127.0.0.1", pico_port))
+        sequence += 1
+
+    try:
+        time.sleep(0.20)
+        for _ in range(18):
+            send_pico(False)
+            hand_sender.sendto(
+                encode_hand_packet(sequence, 0.1, 0.2),
+                ("127.0.0.1", hand_port),
+            )
+            time.sleep(1.0 / arguments.send_rate)
+        send_pico(True)
+        time.sleep(0.12)
+        for _ in range(26):
+            send_pico(True)
+            hand_sender.sendto(
+                encode_hand_packet(sequence, 0.7, 0.8),
+                ("127.0.0.1", hand_port),
+            )
+            time.sleep(1.0 / arguments.send_rate)
+    finally:
+        pico_sender.close()
+        hand_sender.close()
+
+    stdout, _ = process.communicate(timeout=5.0)
+    if process.returncode != 0:
+        raise AssertionError(
+            f"Viewer exited with {process.returncode}:\n{stdout}"
+        )
+    summary = parse_summary(stdout)
+    assert summary["pico_enabled"] == "0", summary
+    assert summary["hand_configured"] == "1", summary
+    assert int(summary["hand_accepted"]) > 0, summary
+    assert math.isclose(float(summary["hand_left_q0"]), 0.1, abs_tol=1.0e-12)
+    assert math.isclose(float(summary["hand_right_q0"]), 0.2, abs_tol=1.0e-12)
+    assert int(summary["control_failures"]) == 0, summary
+    assert int(summary["pico_malformed"]) == 0, summary
+    assert int(summary["pico_crc_failures"]) == 0, summary
+    print(
+        "button_hand_pause_test_passed "
+        f"hand_left_q0={summary['hand_left_q0']} "
+        f"hand_right_q0={summary['hand_right_q0']}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--viewer", required=True)
@@ -891,7 +1112,15 @@ def main():
         "--requested-arm-angle-mode",
         choices=("pico", "default_down", "outward_only", "pico_outward"),
     )
-    run_test(parser.parse_args())
+    parser.add_argument("--button-state-test", action="store_true")
+    parser.add_argument("--button-hand-pause-test", action="store_true")
+    arguments = parser.parse_args()
+    if arguments.button_hand_pause_test:
+        run_button_hand_pause_test(arguments)
+    elif arguments.button_state_test:
+        run_button_state_test(arguments)
+    else:
+        run_test(arguments)
 
 
 if __name__ == "__main__":

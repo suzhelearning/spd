@@ -1,4 +1,5 @@
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -55,14 +56,89 @@ def test_compile_models_writes_five_loadable_artifacts(tmp_path: Path, monkeypat
     arm = mujoco.MjModel.from_xml_path(str(result.arm_model))
     assert (full.nq, full.nv, full.nu) == (54, 54, 54)
     assert (arm.nq, arm.nv, arm.nu) == (14, 14, 14)
+    arm_actuator = mujoco.mj_name2id(full, mujoco.mjtObj.mjOBJ_ACTUATOR, "Joint1_L_position")
+    assert full.actuator_gainprm[arm_actuator, 0] == pytest.approx(500.0)
+    assert full.actuator_biasprm[arm_actuator, 2] < 0.0
+    upstream_hand_root = (
+        Path(__file__).resolve().parents[4]
+        / "wuji-retargeting"
+        / "wuji_retargeting"
+        / "wuji-description"
+        / "hand2"
+        / "hand2_beta2"
+        / "body"
+        / "mjcf"
+    )
+    for side in ("left", "right"):
+        official = ET.parse(upstream_hand_root / f"{side}.xml").getroot()
+        official_gains = {
+            element.attrib["joint"]: (
+                float(element.attrib["kp"]),
+                float(element.attrib["kv"]),
+            )
+            for element in official.findall("./actuator/position")
+        }
+        assert len(official_gains) == 20
+        for joint_name, (kp, kv) in official_gains.items():
+            actuator_id = mujoco.mj_name2id(
+                full,
+                mujoco.mjtObj.mjOBJ_ACTUATOR,
+                f"{joint_name}_position",
+            )
+            joint_id = mujoco.mj_name2id(
+                full, mujoco.mjtObj.mjOBJ_JOINT, joint_name
+            )
+            assert actuator_id >= 0
+            assert joint_id >= 0
+            assert full.actuator_gainprm[actuator_id, 0] == pytest.approx(kp)
+            assert -full.actuator_biasprm[actuator_id, 2] == pytest.approx(kv)
+            dof_id = int(full.jnt_dofadr[joint_id])
+            assert full.dof_damping[dof_id] == pytest.approx(0.0)
     assert all(mujoco.mj_name2id(arm, mujoco.mjtObj.mjOBJ_SITE, name) >= 0 for name in ("l_wrist_target", "r_wrist_target"))
     manifest = yaml.safe_load(result.path.read_text(encoding="utf-8"))
     assert load_manifest(result.path)["dof"] == 54
     assert len(manifest["axis_visuals"]) == 24
+    assert manifest["arm_home_rad"]["left"] == pytest.approx(
+        [0.9599310886, -1.1344640138, -1.2217304764, -1.0471975512, 1.0471975512, 0.0, 0.0]
+    )
+    assert manifest["arm_home_rad"]["right"] == pytest.approx(
+        [-0.9599310886, -1.1344640138, 1.2217304764, -1.0471975512, -1.0471975512, 0.0, 0.0]
+    )
+    from spd_vr.arm_ik import _production_controller
+    from spd_vr.viewer import PlantController
+
+    ik = _production_controller(arm, type("Verified", (), {"manifest": manifest})())
+    np.testing.assert_allclose(ik.left_solver.home, manifest["arm_home_rad"]["left"])
+    np.testing.assert_allclose(ik.right_solver.home, manifest["arm_home_rad"]["right"])
+    plant = PlantController(result.full_model, result.path, model=full, hand_retargeter=object(), strict_artifacts=False)
+    np.testing.assert_allclose(plant.data.qpos[:7], manifest["arm_home_rad"]["left"])
+    np.testing.assert_allclose(plant.data.qpos[27:34], manifest["arm_home_rad"]["right"])
+    np.testing.assert_allclose(plant.data.ctrl[:7], manifest["arm_home_rad"]["left"])
+    np.testing.assert_allclose(plant.data.ctrl[27:34], manifest["arm_home_rad"]["right"])
+    plant.close()
     assert len(manifest["collision"]["adjacent_excludes"]) == 79
     assert manifest["source"]["meshes"]
     assert not Path(manifest["source"]["urdf"]).is_absolute()
     assert all(not Path(record["path"]).is_absolute() for record in manifest["visual_meshes"])
+
+
+def test_compile_models_can_reuse_raw_collision_meshes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "spd_vr.model_compiler.artifacts.decompose_mesh",
+        lambda *_args, **_kwargs: pytest.fail("raw collision mode called CoACD"),
+    )
+    output = tmp_path / "generated"
+    output.mkdir()
+    result = compile_models(URDF, output, raw_collisions=True)
+
+    import mujoco
+    import yaml
+
+    assert mujoco.MjModel.from_xml_path(str(result.full_model)).nq == 54
+    collision = yaml.safe_load(result.collision_manifest.read_text(encoding="utf-8"))
+    assert collision["settings"] == {"mode": "raw"}
+    assert collision["records"]
+    assert all(record["mode"] == "raw" and record["piece_count"] == 1 for record in collision["records"])
 
 
 def test_verify_artifacts_rejects_source_or_output_tampering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

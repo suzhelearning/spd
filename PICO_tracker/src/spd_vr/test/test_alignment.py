@@ -1,6 +1,6 @@
 import numpy as np
 
-from spd_vr.alignment import SideAlignment
+from spd_vr.alignment import PICO_TO_ROBOT_ROTATION, SideAlignment
 
 
 def pose(x=0.0, y=0.0, z=0.0, angle=0.0):
@@ -24,6 +24,31 @@ def test_alignment_requires_ten_frames_and_uses_explicit_transform():
         robot_neutral @ np.linalg.inv(pico_neutral),
     )
     np.testing.assert_allclose(result.target_pose, robot_neutral)
+
+
+def test_pico_world_axes_map_to_robot_world_axes_after_alignment():
+    alignment = SideAlignment(pico_to_robot_rotation=PICO_TO_ROBOT_ROTATION)
+    for timestamp in range(1, 11):
+        alignment.accept(np.eye(4), True, 1, timestamp)
+
+    current = np.eye(4)
+    current[:3, 3] = (0.005, 0.004, 0.003)
+    angle = 0.05
+    current[:3, :3] = (
+        (1.0, 0.0, 0.0),
+        (0.0, np.cos(angle), -np.sin(angle)),
+        (0.0, np.sin(angle), np.cos(angle)),
+    )
+    target = alignment.accept(current, True, 1, 11).target_pose
+
+    np.testing.assert_allclose(
+        target[:3, 3],
+        PICO_TO_ROBOT_ROTATION @ current[:3, 3],
+    )
+    np.testing.assert_allclose(
+        target[:3, :3],
+        PICO_TO_ROBOT_ROTATION @ current[:3, :3] @ PICO_TO_ROBOT_ROTATION.T,
+    )
 
 def test_jump_resets_window_but_holds_last_target_and_sides_are_independent():
     left = SideAlignment(neutral_robot=pose(1.0))
@@ -83,3 +108,31 @@ def test_epoch_timestamp_stale_realign_and_reset_hold_last_target():
     assert alignment.accept(pose(), True, 2, 22).hold_reason == "aligning"
     alignment.reset()
     assert alignment.last_target is None
+
+
+def test_stationary_hold_rejects_wrist_jitter_without_delaying_real_motion():
+    alignment = SideAlignment()
+    frame_ns = 16_666_667
+    for index in range(10):
+        result = alignment.accept(
+            pose(), True, 1, (index + 1) * frame_ns,
+        )
+    assert result.valid
+
+    outputs = []
+    for index in range(20):
+        sign = -1.0 if index % 2 else 1.0
+        jitter = pose(x=sign * 0.0008, angle=sign * 0.002)
+        result = alignment.accept(
+            jitter, True, 1, (index + 11) * frame_ns,
+        )
+        outputs.append(result.target_pose)
+
+    for output in outputs[-5:]:
+        np.testing.assert_allclose(output, outputs[-1], atol=1.0e-12)
+
+    moved = alignment.accept(
+        pose(x=0.015, angle=0.05), True, 1, 31 * frame_ns,
+    )
+    assert moved.valid
+    assert moved.target_pose[0, 3] > 0.01

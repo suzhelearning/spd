@@ -24,7 +24,7 @@ from .arm_target_protocol import (
     decode_packet,
 )
 from .camera import CameraError, CameraFrame
-from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_model_addresses
+from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_home_positions, resolve_model_addresses
 from .model_compiler.artifacts import verify_artifacts
 
 if TYPE_CHECKING:
@@ -205,7 +205,7 @@ class UnifiedSimulator:
         }
         if any(value < 0 for value in self._actuator_ids.values()):
             raise ManifestError("manifest actuator address resolution failed")
-        self._home = np.asarray([(entry.range[0] + entry.range[1]) * 0.5 for entry in self.joints], dtype=np.float64)
+        self._home = np.asarray(resolve_home_positions(self.joints, self.manifest_document), dtype=np.float64)
         self._qpos_by_index = {entry.index: entry.qpos_address for entry in self.joints}
         self._set_home_state()
 
@@ -262,8 +262,11 @@ class UnifiedSimulator:
     def _set_home_state(self) -> None:
         self.data.qpos[:] = 0.0
         self.data.qvel[:] = 0.0
+        self.data.ctrl[:] = 0.0
         for entry in self.joints:
-            self.data.qpos[entry.qpos_address] = (entry.range[0] + entry.range[1]) * 0.5
+            value = self._home[entry.index]
+            self.data.qpos[entry.qpos_address] = value
+            self.data.ctrl[self._actuator_ids[entry.actuator]] = value
         self._mujoco.mj_forward(self.model, self.data)
 
     def reset_scene(self, scene_result: Any) -> None:
@@ -289,7 +292,6 @@ class UnifiedSimulator:
         self.data.qvel[:] = 0.0
         if getattr(self.data, "act", None) is not None:
             self.data.act[:] = 0.0
-        self.data.ctrl[:] = 0.0
         self.data.time = 0.0
         self.tick = 0
         self._mujoco.mj_forward(self.model, self.data)

@@ -38,20 +38,20 @@ TEST(MujocoJacobian, MatchesCentralFiniteDifferenceForBothArms) {
 
       robot.setArmPosition(side, q);
       robot.forward();
-      const Mat67 analytic = robot.endEffectorJacobianWorld(side);
+      const Mat67 analytic = robot.tcpJacobianWorld(side);
 
       for (int joint = 0; joint < kArmDof; ++joint) {
         Vec7 plus_q = q;
         plus_q[joint] += kEpsilon;
         robot.setArmPosition(side, plus_q);
         robot.forward();
-        const Pose plus = robot.endEffectorPose(side);
+        const Pose plus = robot.tcpPose(side);
 
         Vec7 minus_q = q;
         minus_q[joint] -= kEpsilon;
         robot.setArmPosition(side, minus_q);
         robot.forward();
-        const Pose minus = robot.endEffectorPose(side);
+        const Pose minus = robot.tcpPose(side);
 
         const Eigen::Vector3d position_fd =
             (plus.position - minus.position) / (2.0 * kEpsilon);

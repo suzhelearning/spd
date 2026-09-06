@@ -133,9 +133,9 @@ bool SparkUpperQpoasesIk7::buildProblem(
     return false;
   }
   const ArmKinematicSample sample = kinematics_.sample(side_, q);
-  if (!sample.end_effector_pose.position.allFinite() ||
-      !isProperRotation(sample.end_effector_pose.rotation) ||
-      !sample.end_effector_jacobian.allFinite() ||
+  if (!sample.tcp_pose.position.allFinite() ||
+      !isProperRotation(sample.tcp_pose.rotation) ||
+      !sample.tcp_jacobian.allFinite() ||
       !sample.shoulder_position.allFinite() ||
       !sample.elbow_position.allFinite() ||
       !sample.wrist_position.allFinite() ||
@@ -145,7 +145,7 @@ bool SparkUpperQpoasesIk7::buildProblem(
     return false;
   }
 
-  const Vec6 pose_error = poseErrorWorld(target.palm, sample.end_effector_pose);
+  const Vec6 pose_error = poseErrorWorld(target.palm, sample.tcp_pose);
   const auto upper_direction = linearizeSparkDirectionTask(
       target.elbow - target.shoulder, sample.shoulder_position,
       sample.elbow_position, sample.shoulder_position_jacobian,
@@ -179,7 +179,7 @@ bool SparkUpperQpoasesIk7::buildProblem(
          stage == SparkQpoasesStage::kStage1
              ? config_.stage1_forearm_direction_weight
              : config_.stage2_forearm_direction_weight);
-  append(sample.end_effector_jacobian.bottomRows<3>(), pose_error.tail<3>(),
+  append(sample.tcp_jacobian.bottomRows<3>(), pose_error.tail<3>(),
          stage == SparkQpoasesStage::kStage1
              ? config_.stage1_palm_orientation_weight
              : config_.stage2_palm_orientation_weight);
@@ -190,7 +190,7 @@ bool SparkUpperQpoasesIk7::buildProblem(
     append(sample.wrist_position_jacobian,
            target.wrist - sample.wrist_position,
            config_.stage2_wrist_position_weight);
-    append(sample.end_effector_jacobian.topRows<3>(), pose_error.head<3>(),
+    append(sample.tcp_jacobian.topRows<3>(), pose_error.head<3>(),
            config_.stage2_palm_position_weight);
   }
   if (row != rows) {
@@ -489,8 +489,8 @@ SparkUpperIkResult SparkUpperQpoasesIk7::solveOtgConsistent(
   };
 
   ArmKinematicSample sample = kinematics_.sample(side_, current);
-  Vec6 pose_error = poseErrorWorld(otg_pose, sample.end_effector_pose);
-  if (!pose_error.allFinite() || !sample.end_effector_jacobian.allFinite()) {
+  Vec6 pose_error = poseErrorWorld(otg_pose, sample.tcp_pose);
+  if (!pose_error.allFinite() || !sample.tcp_jacobian.allFinite()) {
     result.detail = "invalid_otg_consistent_stage1_sample";
     return result;
   }
@@ -506,21 +506,20 @@ SparkUpperIkResult SparkUpperQpoasesIk7::solveOtgConsistent(
       break;
     }
     QpProblem7 problem;
-    Mat67 weighted_end_effector_jacobian = sample.end_effector_jacobian;
+    Mat67 weighted_tcp_jacobian = sample.tcp_jacobian;
     Vec6 weighted_pose_error = pose_error;
     const double position_scale =
         1.0 / config_.otg_position_tolerance_m;
     const double orientation_scale =
         1.0 / config_.otg_orientation_tolerance_rad;
-    weighted_end_effector_jacobian.topRows<3>() *= position_scale;
-    weighted_end_effector_jacobian.bottomRows<3>() *= orientation_scale;
+    weighted_tcp_jacobian.topRows<3>() *= position_scale;
+    weighted_tcp_jacobian.bottomRows<3>() *= orientation_scale;
     weighted_pose_error.head<3>() *= position_scale;
     weighted_pose_error.tail<3>() *= orientation_scale;
-    problem.H = weighted_end_effector_jacobian.transpose() *
-                    weighted_end_effector_jacobian +
+    problem.H = weighted_tcp_jacobian.transpose() * weighted_tcp_jacobian +
                 (config_.damping + config_.otg_continuity_weight) *
                     Mat77::Identity();
-    problem.g = -weighted_end_effector_jacobian.transpose() * weighted_pose_error +
+    problem.g = -weighted_tcp_jacobian.transpose() * weighted_pose_error +
                 config_.otg_continuity_weight * (current - clamped_seed);
     problem.lower =
         (safe_lower - current).array().max(-config_.trust_region_rad).matrix();
@@ -550,9 +549,9 @@ SparkUpperIkResult SparkUpperQpoasesIk7::solveOtgConsistent(
       const ArmKinematicSample candidate_sample =
           kinematics_.sample(side_, candidate);
       const Vec6 candidate_error =
-          poseErrorWorld(otg_pose, candidate_sample.end_effector_pose);
+          poseErrorWorld(otg_pose, candidate_sample.tcp_pose);
       if (!candidate_error.allFinite() ||
-          !candidate_sample.end_effector_jacobian.allFinite() ||
+          !candidate_sample.tcp_jacobian.allFinite() ||
           poseMerit(candidate_error) + 1.0e-12 >= current_merit) {
         continue;
       }
@@ -641,14 +640,14 @@ SparkUpperIkResult SparkUpperQpoasesIk7::solveOtgConsistent(
       result.budget_exhausted = true;
       break;
     }
-    pose_error = poseErrorWorld(otg_pose, sample.end_effector_pose);
+    pose_error = poseErrorWorld(otg_pose, sample.tcp_pose);
     EqualityConstrainedQpProblem7 problem;
     problem.H = weighted_jacobian.transpose() * weighted_jacobian +
                 (config_.damping + config_.otg_continuity_weight) *
                     Mat77::Identity();
     problem.g = -weighted_jacobian.transpose() * weighted_error +
                 config_.otg_continuity_weight * (current - clamped_seed);
-    problem.A = sample.end_effector_jacobian;
+    problem.A = sample.tcp_jacobian;
     problem.equality = pose_error;
     problem.lower =
         (safe_lower - current).array().max(-config_.trust_region_rad).matrix();
@@ -674,7 +673,7 @@ SparkUpperIkResult SparkUpperQpoasesIk7::solveOtgConsistent(
     const ArmKinematicSample candidate_sample =
         kinematics_.sample(side_, candidate);
     const Vec6 candidate_pose_error =
-        poseErrorWorld(otg_pose, candidate_sample.end_effector_pose);
+        poseErrorWorld(otg_pose, candidate_sample.tcp_pose);
     Eigen::MatrixXd candidate_jacobian;
     Eigen::VectorXd candidate_error;
     double candidate_shape_error = 0.0;

@@ -38,7 +38,7 @@ TEST(BenchmarkDatasetTest, SafeSingularFixtureIsInteriorAndRankDeficient) {
 
   for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
     const Eigen::JacobiSVD<Mat67> decomposition(
-        robot.endEffectorJacobianWorld(side));
+        robot.tcpJacobianWorld(side));
     const auto singular_values = decomposition.singularValues();
     double minimum_singular_value = singular_values[0];
     for (Eigen::Index index = 1; index < singular_values.size(); ++index) {

@@ -94,7 +94,9 @@ def test_generated_wrist_pose_matches_control_model_at_same_joint_state(
         np.testing.assert_allclose(
             generated_data.xpos[generated_id],
             control_data.xpos[control_id],
-            atol=1e-8,
+            # The legacy hand-authored arm MJCF stores transforms with
+            # fewer decimal places than the generated URDF model.
+            atol=1e-6,
         )
         # Quaternion signs are equivalent; compare the represented rotation.
         assert abs(

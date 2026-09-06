@@ -31,10 +31,17 @@ struct PicoTeleopFreshness {
   double frame_age_seconds{0.0};
 };
 
+enum class PicoTeleopButtonAction {
+  kNone,
+  kPause,
+  kResume,
+};
+
 class PicoTeleopSession {
  public:
   explicit PicoTeleopSession(double timeout_seconds);
   void setEnabled(bool enabled) noexcept;
+  PicoTeleopButtonAction observeButton(const PicoTeleopFrame& frame) noexcept;
   bool enabled() const noexcept { return enabled_; }
   PicoTeleopClassification classify(const PicoTeleopFrame& frame,
                                      std::int64_t now_monotonic_ns) const;
@@ -54,6 +61,10 @@ class PicoTeleopSession {
   std::uint64_t applied_sequence_{0U};
   std::uint64_t applied_resynchronization_generation_{0U};
   std::int64_t applied_receive_monotonic_ns_{0};
+  bool button_state_initialized_{false};
+  bool previous_button_state_{false};
+  std::uint64_t button_tracking_epoch_{0U};
+  std::uint64_t button_resynchronization_generation_{0U};
 };
 
 }  // namespace tianji_qp_ik

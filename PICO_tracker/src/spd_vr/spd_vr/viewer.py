@@ -15,7 +15,8 @@ import numpy as np
 import zenoh
 
 from .arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, LEFT_VALID, RIGHT_VALID, decode_packet
-from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_model_addresses
+from .defaults import DEFAULT_ZENOH_ENDPOINT
+from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_home_positions, resolve_model_addresses
 from .viewer_window import ViewerWindow
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
 from .zenoh_transport import CONTROL_CONGESTION_CONTROL, LatestSample, ZenohNode, peer_config
@@ -198,6 +199,7 @@ class PlantController:
             data = mujoco.MjData(model)
         self.model = model
         self.data = data
+        manifest = None
         if joints is not None:
             self.joints = list(joints)
         elif manifest_path is not None and Path(manifest_path).is_file():
@@ -217,7 +219,10 @@ class PlantController:
         if any(value < 0 for value in self._actuator_ids.values()):
             raise ManifestError("manifest actuator address resolution failed")
         self._home = np.asarray(
-            [(entry.range[0] + entry.range[1]) * 0.5 for entry in self.joints], dtype=np.float64
+            resolve_home_positions(self.joints, manifest)
+            if manifest is not None
+            else [(entry.range[0] + entry.range[1]) * 0.5 for entry in self.joints],
+            dtype=np.float64,
         )
         if hand_retargeter is None and production_model:
             if verified is None or urdf_path is None:
@@ -247,6 +252,25 @@ class PlantController:
         self._last_tracking_sequence: tuple[int, int] | None = None
         self._arm_values = {"left": self._home[:7].copy(), "right": self._home[27:34].copy()}
         self._hand_values = {"left": self._home[7:27].copy(), "right": self._home[34:54].copy()}
+        self._mediapipe_points: dict[str, np.ndarray | None] = {
+            "left": None,
+            "right": None,
+        }
+        self._mediapipe_arrival: dict[str, int | None] = {
+            "left": None,
+            "right": None,
+        }
+        self._target_data = mujoco.MjData(model)
+        self._wrist_site_ids = {
+            side: int(
+                mujoco.mj_name2id(
+                    model, mujoco.mjtObj.mjOBJ_SITE, f"{side[0]}_wrist_target"
+                )
+            )
+            for side in ("left", "right")
+        }
+        if any(site_id < 0 for site_id in self._wrist_site_ids.values()):
+            raise ManifestError("full plant requires l_wrist/r_wrist target sites")
         self._arm_valid = {"left": False, "right": False}
         self._hand_valid = {"left": False, "right": False}
         self._arm_reason = {"left": ArmTargetHoldReason.INPUT_STALE, "right": ArmTargetHoldReason.INPUT_STALE}
@@ -340,9 +364,11 @@ class PlantController:
     def _set_home_state(self) -> None:
         self.data.qpos[:] = 0.0
         self.data.qvel[:] = 0.0
-        for entry in self.joints:
-            self.data.qpos[entry.qpos_address] = (entry.range[0] + entry.range[1]) * 0.5
         self.data.ctrl[:] = 0.0
+        for entry in self.joints:
+            value = self._home[entry.index]
+            self.data.qpos[entry.qpos_address] = value
+            self.data.ctrl[self._actuator_ids[entry.actuator]] = value
         if getattr(self.data, "act", None) is not None:
             self.data.act[:] = 0.0
         self.data.time = 0.0
@@ -401,6 +427,8 @@ class PlantController:
         self._hand_arrival = {"left": None, "right": None}
         self._arm_values = {"left": self._home[:7].copy(), "right": self._home[27:34].copy()}
         self._hand_values = {"left": self._home[7:27].copy(), "right": self._home[34:54].copy()}
+        self._mediapipe_points = {"left": None, "right": None}
+        self._mediapipe_arrival = {"left": None, "right": None}
         self.require_fresh_alignment(control_timestamp_ns)
 
     def set_paused(self, paused: bool) -> None:
@@ -559,6 +587,7 @@ class PlantController:
 
     def _process_tracking(self, mailbox: _TrackingMailbox) -> None:
         frame = self._pico_hand_frame(mailbox.frame)
+        self._capture_mediapipe_points(frame, mailbox.arrival_ns)
         if hasattr(frame, "left_qpos") and hasattr(frame, "right_qpos"):
             result = frame
         elif self._hand_retargeter is None:
@@ -595,6 +624,40 @@ class PlantController:
         if self._fresh_alignment_required:
             self._update_alignment_ready()
 
+    def _capture_mediapipe_points(self, frame: Any, arrival_ns: int) -> None:
+        """Keep the exact wrist-relative 21-point input used by retargeting."""
+        has_hands = (
+            "left_hand" in frame and "right_hand" in frame
+            if isinstance(frame, Mapping)
+            else hasattr(frame, "left_hand") and hasattr(frame, "right_hand")
+        )
+        if not has_hands:
+            self._mediapipe_points = {"left": None, "right": None}
+            self._mediapipe_arrival = {"left": None, "right": None}
+            return
+        from .pico_hands import PicoHandsInput
+
+        try:
+            hand_input = PicoHandsInput(frame)
+        except (TypeError, ValueError, np.linalg.LinAlgError):
+            self._mediapipe_points = {"left": None, "right": None}
+            self._mediapipe_arrival = {"left": None, "right": None}
+            return
+        source = hand_input.frame
+        for side in ("left", "right"):
+            if not bool(getattr(source, f"{side}_active")):
+                self._mediapipe_points[side] = None
+                self._mediapipe_arrival[side] = None
+                continue
+            try:
+                points = hand_input.get_side_fingers_data(side)
+            except (TypeError, ValueError, np.linalg.LinAlgError):
+                self._mediapipe_points[side] = None
+                self._mediapipe_arrival[side] = None
+                continue
+            self._mediapipe_points[side] = np.asarray(points, dtype=np.float64).copy()
+            self._mediapipe_arrival[side] = int(arrival_ns)
+
     def _refresh_stale(self, now_ns: int) -> None:
         for side in ("left", "right"):
             if self._arm_valid[side] and self._arm_arrival[side] is not None and now_ns - self._arm_arrival[side] > INPUT_STALE_NS:
@@ -607,6 +670,10 @@ class PlantController:
                 self._hand_reason[side] = "input_stale"
                 if self._fresh_alignment_required:
                     self._fresh_hand_valid[side] = False
+            mediapipe_arrival = self._mediapipe_arrival[side]
+            if mediapipe_arrival is not None and now_ns - mediapipe_arrival > INPUT_STALE_NS:
+                self._mediapipe_points[side] = None
+                self._mediapipe_arrival[side] = None
         if self._fresh_alignment_required:
             self._update_alignment_ready()
 
@@ -690,6 +757,43 @@ class PlantController:
     def hand_valid_mask(self) -> int:
         return (LEFT_VALID if self._hand_valid["left"] and self._alignment_ready["left"] else 0) | (RIGHT_VALID if self._hand_valid["right"] and self._alignment_ready["right"] else 0)
 
+    def desired_wrist_poses(self) -> dict[str, np.ndarray]:
+        """Return FK poses for the commanded l_wrist/r_wrist targets."""
+        self._target_data.qpos[:] = self.data.qpos
+        for entry in self.joints:
+            if entry.group != "arm":
+                continue
+            side_index = entry.index if entry.side == "left" else entry.index - 27
+            self._target_data.qpos[entry.qpos_address] = self._arm_values[entry.side][side_index]
+        self._mujoco.mj_forward(self.model, self._target_data)
+        poses = {}
+        for side, site_id in self._wrist_site_ids.items():
+            if not self._arm_valid[side] or not self._alignment_ready[side]:
+                continue
+            pose = np.eye(4, dtype=float)
+            pose[:3, :3] = self._target_data.site_xmat[site_id].reshape(3, 3)
+            pose[:3, 3] = self._target_data.site_xpos[site_id]
+            poses[side] = pose
+        return poses
+
+    def mediapipe_keypoints_world(self) -> dict[str, np.ndarray]:
+        """Return live MediaPipe landmarks anchored at each simulated wrist."""
+        from .pico_hands import mediapipe_to_wuji2_wrist_frame
+
+        result: dict[str, np.ndarray] = {}
+        for side in ("left", "right"):
+            points = self._mediapipe_points[side]
+            if points is None or self._mediapipe_arrival[side] is None:
+                continue
+            site_id = self._wrist_site_ids[side]
+            wrist_position = np.asarray(self.data.site_xpos[site_id], dtype=np.float64)
+            wrist_rotation = np.asarray(self.data.site_xmat[site_id], dtype=np.float64).reshape(3, 3)
+            wuji_points = mediapipe_to_wuji2_wrist_frame(points, side)
+            world = wuji_points @ wrist_rotation.T + wrist_position
+            if world.shape == (21, 3) and np.all(np.isfinite(world)):
+                result[side] = world
+        return result
+
     def shutdown(self) -> None:
         self._closed = True
 
@@ -733,6 +837,8 @@ class ViewerRuntime:
                 shutdown=self._shutdown_from_window,
                 control=self.send_control,
                 state=lambda: self.session.state.value,
+                pose_markers=getattr(plant, "desired_wrist_poses", None),
+                hand_keypoints=getattr(plant, "mediapipe_keypoints_world", None),
             )
         self.window = window
         self._allocator = ControlSequenceAllocator(sequence_file, session=session_name)
@@ -768,6 +874,11 @@ class ViewerRuntime:
         if self._status_publisher is None:
             return
         state_value = state or self.session.state.value.lower()
+        finite = bool(
+            np.all(np.isfinite(self.plant.data.qpos))
+            and np.all(np.isfinite(self.plant.data.qvel))
+            and np.all(np.isfinite(self.plant.data.ctrl))
+        )
         payload = {
             "status": state_value,
             "ready": state_value != "shutdown",
@@ -775,6 +886,11 @@ class ViewerRuntime:
             "paused": state_value == "paused",
             "tick_count": int(getattr(self.plant, "tick", 0)),
             "sequence": self.session.snapshot.last_sequence,
+            "finite": finite,
+            "contact": int(getattr(self.plant.data, "ncon", 0)),
+            "arm_valid_mask": int(getattr(self.plant, "arm_valid_mask", 0)),
+            "hand_valid_mask": int(getattr(self.plant, "hand_valid_mask", 0)),
+            "target_sequence": getattr(self.plant, "_last_arm_sequence", None),
         }
         self._status_publisher.put(json.dumps(payload, separators=(",", ":")).encode())
 
@@ -891,13 +1007,19 @@ class ViewerRuntime:
             "contact": getattr(getattr(self.plant, "data", None), "ncon", "unknown"),
             "artifact_hash": getattr(self.plant, "artifact_hash", "unknown"),
         }
-    def run(self, *, ticks: int | None = None, auto_start: bool = False) -> int:
+    def run(self, *, ticks: int | None = None, auto_start: bool = False, until_shutdown: bool = False) -> int:
         if ticks is not None and int(ticks) < 0:
             raise ValueError("ticks must be non-negative")
         if not self.headless and hasattr(self.window, "open"):
             self.window.open()
         if auto_start:
             self.send_control(ControlCommand.START)
+        elif self.session.state is SessionState.IDLE:
+            # Enter the normal session lifecycle so the viewer, IK process and
+            # bridge agree on PAUSED.  Merely leaving the session IDLE does not
+            # stop MuJoCo's physics_tick loop.
+            self.send_control(ControlCommand.START)
+            self.send_control(ControlCommand.PAUSE)
         period_ns = TIMESTEP_NS
         render_period_ns = 1_000_000_000 // RENDER_HZ
         physics_deadline = int(self._clock_ns())
@@ -955,15 +1077,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--ticks", type=int, default=None)
+    parser.add_argument("--until-shutdown", action="store_true")
     parser.add_argument("--auto-start", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
-    parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
+    parser.add_argument("--endpoint", default=DEFAULT_ZENOH_ENDPOINT)
     args = parser.parse_args(argv)
     synthetic = False
-    if args.ticks is None and args.headless:
+    if args.ticks is None and args.headless and not args.until_shutdown:
         args.ticks = PHYSICS_HZ
     if args.synthetic:
         if not args.headless:
@@ -983,10 +1106,10 @@ def main(argv: list[str] | None = None) -> int:
             plant.close()
             raise
     try:
-        count = runtime.run(ticks=args.ticks, auto_start=args.auto_start)
+        count = runtime.run(ticks=args.ticks, auto_start=args.auto_start, until_shutdown=args.until_shutdown)
         finite = bool(np.all(np.isfinite(plant.data.qpos)) and np.all(np.isfinite(plant.data.qvel)) and np.all(np.isfinite(plant.data.ctrl)))
         print(f"headless={args.headless} ticks={count} simulated_seconds={plant.sim_time_ns / 1e9:.6f} finite={finite} synthetic={synthetic}")
-        return 0 if finite and (args.ticks is None or count == args.ticks) else 1
+        return 0 if finite and (args.until_shutdown or args.ticks is None or count == args.ticks) else 1
     finally:
         runtime.close()
         plant.close()

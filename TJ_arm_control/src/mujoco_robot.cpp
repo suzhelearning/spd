@@ -18,27 +18,44 @@ std::string jointName(int one_based_index, ArmSide side) {
          (side == ArmSide::kLeft ? "L" : "R");
 }
 
-const std::string& endEffectorSiteName(
-    ArmSide side, const EndEffectorSiteNames& names) {
-  return side == ArmSide::kLeft ? names.left : names.right;
+std::string tcpSiteName(ArmSide side) {
+  return side == ArmSide::kLeft ? "tcp_L" : "tcp_R";
 }
 
-Pose endEffectorPoseFromData(const ArmMapping& arm, const mjData* data) {
+std::string handTcpFrameSiteName(ArmSide side) {
+  return side == ArmSide::kLeft ? "hand_tcp_frame_L"
+                                : "hand_tcp_frame_R";
+}
+
+const std::array<std::string_view, kHandDof>& handJointStems() {
+  static const std::array<std::string_view, kHandDof> stems{
+      "thumb_cmc_flex", "thumb_cmc_abd", "thumb_mcp", "thumb_ip",
+      "index_finger_mcp_flex", "index_finger_mcp_abd",
+      "index_finger_pip", "index_finger_dip",
+      "middle_finger_mcp_flex", "middle_finger_mcp_abd",
+      "middle_finger_pip", "middle_finger_dip",
+      "ring_finger_mcp_flex", "ring_finger_mcp_abd",
+      "ring_finger_pip", "ring_finger_dip",
+      "pinky_mcp_flex", "pinky_mcp_abd", "pinky_pip", "pinky_dip"};
+  return stems;
+}
+
+Pose tcpPoseFromData(const ArmMapping& arm, const mjData* data) {
   Pose result;
-  result.position = Eigen::Map<const Eigen::Vector3d>(
-      &data->site_xpos[3 * arm.end_effector_site_id]);
+  result.position =
+      Eigen::Map<const Eigen::Vector3d>(&data->site_xpos[3 * arm.tcp_site_id]);
   using RowMajorMatrix3d = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>;
   result.rotation = Eigen::Map<const RowMajorMatrix3d>(
-      &data->site_xmat[9 * arm.end_effector_site_id]);
+      &data->site_xmat[9 * arm.tcp_site_id]);
   return result;
 }
 
-Mat67 endEffectorJacobianFromData(
-    const mjModel* model, const mjData* data, const ArmMapping& arm,
-    std::vector<mjtNum>& jacobian_position,
-    std::vector<mjtNum>& jacobian_rotation) {
+Mat67 tcpJacobianFromData(const mjModel* model, const mjData* data,
+                          const ArmMapping& arm,
+                          std::vector<mjtNum>& jacobian_position,
+                          std::vector<mjtNum>& jacobian_rotation) {
   mj_jacSite(model, data, jacobian_position.data(), jacobian_rotation.data(),
-             arm.end_effector_site_id);
+             arm.tcp_site_id);
   Mat67 result;
   for (int column = 0; column < kArmDof; ++column) {
     const int source_column =
@@ -85,9 +102,7 @@ Mat37 bodyPositionJacobianFromData(
 
 }  // namespace
 
-MujocoRobot::MujocoRobot(const std::string& model_path,
-                         EndEffectorSiteNames end_effector_sites)
-    : end_effector_site_names_(end_effector_sites) {
+MujocoRobot::MujocoRobot(const std::string& model_path) {
   char error[1024]{};
   model_ = mj_loadXML(model_path.c_str(), nullptr, error, sizeof(error));
   if (model_ == nullptr) {
@@ -111,8 +126,25 @@ MujocoRobot::MujocoRobot(const std::string& model_path,
   try {
     left_ = buildMapping(ArmSide::kLeft);
     right_ = buildMapping(ArmSide::kRight);
-    if (model_->nq != 14 || model_->nv != 14) {
-      throw std::runtime_error("expected exactly nq=nv=14 for dual-arm V1");
+    if (model_->nq != model_->nv || model_->nq < 2 * kArmDof) {
+      throw std::runtime_error(
+          "expected equal nq=nv with at least 14 scalar arm coordinates");
+    }
+    const std::string left_first_hand_joint =
+        "l_" + std::string(handJointStems().front());
+    const std::string right_first_hand_joint =
+        "r_" + std::string(handJointStems().front());
+    const bool left_has_hands =
+        mj_name2id(model_, mjOBJ_JOINT, left_first_hand_joint.c_str()) >= 0;
+    const bool right_has_hands =
+        mj_name2id(model_, mjOBJ_JOINT, right_first_hand_joint.c_str()) >= 0;
+    if (left_has_hands != right_has_hands) {
+      throw std::runtime_error(
+          "model must contain both left and right Hand 2 joint sets");
+    }
+    if (left_has_hands) {
+      left_hand_ = buildHandMapping(ArmSide::kLeft);
+      right_hand_ = buildHandMapping(ArmSide::kRight);
     }
     for (const ArmSide side : {ArmSide::kLeft, ArmSide::kRight}) {
       const std::size_t index = side == ArmSide::kLeft ? 0U : 1U;
@@ -208,33 +240,87 @@ ArmMapping MujocoRobot::buildMapping(ArmSide side) const {
     }
   }
 
-  result.end_effector_site_name =
-      endEffectorSiteName(side, end_effector_site_names_);
-  result.end_effector_site_id = mj_name2id(
-      model_, mjOBJ_SITE, result.end_effector_site_name.c_str());
-  if (result.end_effector_site_id < 0) {
-    throw std::runtime_error(
-        "missing end-effector site: " + result.end_effector_site_name);
+  result.tcp_site_id = mj_name2id(
+      model_, mjOBJ_SITE, handTcpFrameSiteName(side).c_str());
+  if (result.tcp_site_id < 0) {
+    result.tcp_site_id =
+        mj_name2id(model_, mjOBJ_SITE, tcpSiteName(side).c_str());
   }
-  result.end_effector_body_id =
-      model_->site_bodyid[result.end_effector_site_id];
-  bool attached_to_arm = false;
-  for (int body_id = result.end_effector_body_id; body_id != 0;
-       body_id = model_->body_parentid[body_id]) {
-    if (body_id == result.body_ids.back()) {
-      attached_to_arm = true;
+  if (result.tcp_site_id < 0) {
+    throw std::runtime_error("missing TCP site: " + tcpSiteName(side) +
+                             " or " + handTcpFrameSiteName(side));
+  }
+  result.tcp_body_id = model_->site_bodyid[result.tcp_site_id];
+  const int expected_tcp_body = result.body_ids.back();
+  bool tcp_attached_to_link7 = false;
+  for (int body_id = result.tcp_body_id; body_id >= 0;) {
+    if (body_id == expected_tcp_body) {
+      tcp_attached_to_link7 = true;
       break;
     }
+    const int parent_id = model_->body_parentid[body_id];
+    if (parent_id == body_id) {
+      break;
+    }
+    body_id = parent_id;
   }
-  if (!attached_to_arm) {
+  if (!tcp_attached_to_link7) {
     throw std::runtime_error(
-        "end-effector site is not attached to the expected arm body");
+        "TCP site is not attached to the expected Link7 body or its fixed "
+        "descendant");
   }
   return result;
 }
 
 const ArmMapping& MujocoRobot::mapping(ArmSide side) const noexcept {
   return side == ArmSide::kLeft ? left_ : right_;
+}
+
+const HandMapping& MujocoRobot::handMapping(ArmSide side) const {
+  const std::optional<HandMapping>& mapping =
+      side == ArmSide::kLeft ? left_hand_ : right_hand_;
+  if (!mapping.has_value()) {
+    throw std::runtime_error("model does not contain Wuji Hand 2 joints");
+  }
+  return *mapping;
+}
+
+HandMapping MujocoRobot::buildHandMapping(ArmSide side) const {
+  HandMapping result;
+  const std::string prefix = side == ArmSide::kLeft ? "l_" : "r_";
+  std::unordered_set<int> joint_ids;
+  std::unordered_set<int> qpos_addresses;
+  for (int index = 0; index < kHandDof; ++index) {
+    const std::size_t array_index = static_cast<std::size_t>(index);
+    result.joint_names[array_index] =
+        prefix + std::string(handJointStems()[array_index]);
+    const int id = mj_name2id(model_, mjOBJ_JOINT,
+                               result.joint_names[array_index].c_str());
+    if (id < 0 || !joint_ids.insert(id).second) {
+      throw std::runtime_error("missing or duplicate hand joint: " +
+                               result.joint_names[array_index]);
+    }
+    if (model_->jnt_type[id] != mjJNT_HINGE) {
+      throw std::runtime_error("hand joint is not scalar revolute: " +
+                               result.joint_names[array_index]);
+    }
+    const int qpos_address = model_->jnt_qposadr[id];
+    if (!qpos_addresses.insert(qpos_address).second) {
+      throw std::runtime_error("duplicate hand qpos mapping for " +
+                               result.joint_names[array_index]);
+    }
+    result.joint_ids[array_index] = id;
+    result.qpos_addresses[array_index] = qpos_address;
+    result.lower_position[index] = model_->jnt_range[2 * id];
+    result.upper_position[index] = model_->jnt_range[2 * id + 1];
+    if (!std::isfinite(result.lower_position[index]) ||
+        !std::isfinite(result.upper_position[index]) ||
+        !(result.upper_position[index] > result.lower_position[index])) {
+      throw std::runtime_error("invalid hand joint range for " +
+                               result.joint_names[array_index]);
+    }
+  }
+  return result;
 }
 
 void MujocoRobot::setArmPosition(ArmSide side, const Vec7& position) {
@@ -260,6 +346,19 @@ void MujocoRobot::setArmState(ArmSide side, const Vec7& position,
   }
 }
 
+void MujocoRobot::setHandPosition(ArmSide side, const Vec20& position) {
+  if (!position.allFinite()) {
+    throw std::invalid_argument("hand joint position contains NaN or infinity");
+  }
+  const HandMapping& hand = handMapping(side);
+  for (int index = 0; index < kHandDof; ++index) {
+    const std::size_t mapped = static_cast<std::size_t>(index);
+    data_->qpos[hand.qpos_addresses[mapped]] =
+        std::clamp(position[index], hand.lower_position[index],
+                   hand.upper_position[index]);
+  }
+}
+
 Vec7 MujocoRobot::armPosition(ArmSide side) const {
   Vec7 result;
   const ArmMapping& arm = mapping(side);
@@ -279,16 +378,41 @@ Vec7 MujocoRobot::armVelocity(ArmSide side) const {
   return result;
 }
 
-void MujocoRobot::forward() { mj_forward(model_, data_); }
-
-Pose MujocoRobot::endEffectorPose(ArmSide side) const {
-  return endEffectorPoseFromData(mapping(side), data_);
+Vec20 MujocoRobot::handPosition(ArmSide side) const {
+  Vec20 result;
+  const HandMapping& hand = handMapping(side);
+  for (int index = 0; index < kHandDof; ++index) {
+    result[index] = data_->qpos[
+        hand.qpos_addresses[static_cast<std::size_t>(index)]];
+  }
+  return result;
 }
 
-Mat67 MujocoRobot::endEffectorJacobianWorld(ArmSide side) {
+void MujocoRobot::forward() { mj_forward(model_, data_); }
+
+Pose MujocoRobot::tcpPose(ArmSide side) const {
+  return tcpPoseFromData(mapping(side), data_);
+}
+
+Pose MujocoRobot::tcpRelativeToLink7(ArmSide side) const {
   const ArmMapping& arm = mapping(side);
-  return endEffectorJacobianFromData(model_, data_, arm, jacobian_position_,
-                                     jacobian_rotation_);
+  const Eigen::Vector3d link7_position =
+      bodyPosition(data_, arm.body_ids.back());
+  const Eigen::Matrix3d link7_rotation =
+      bodyRotation(data_, arm.body_ids.back());
+  const Pose tcp = tcpPoseFromData(arm, data_);
+
+  Pose result;
+  result.position = link7_rotation.transpose() *
+                    (tcp.position - link7_position);
+  result.rotation = link7_rotation.transpose() * tcp.rotation;
+  return result;
+}
+
+Mat67 MujocoRobot::tcpJacobianWorld(ArmSide side) {
+  const ArmMapping& arm = mapping(side);
+  return tcpJacobianFromData(model_, data_, arm, jacobian_position_,
+                             jacobian_rotation_);
 }
 
 ArmKinematicSample MujocoRobot::armKinematicsAt(ArmSide side,
@@ -305,8 +429,8 @@ ArmKinematicSample MujocoRobot::armKinematicsAt(ArmSide side,
   mj_forward(model_, kinematics_data_);
 
   ArmKinematicSample result;
-  result.end_effector_pose = endEffectorPoseFromData(arm, kinematics_data_);
-  result.end_effector_jacobian = endEffectorJacobianFromData(
+  result.tcp_pose = tcpPoseFromData(arm, kinematics_data_);
+  result.tcp_jacobian = tcpJacobianFromData(
       model_, kinematics_data_, arm, kinematics_jacobian_position_,
       kinematics_jacobian_rotation_);
   result.shoulder_position = bodyPosition(kinematics_data_, arm.body_ids[0]);
@@ -327,16 +451,17 @@ ArmKinematicSample MujocoRobot::armKinematicsAt(ArmSide side,
   return result;
 }
 
-Vec6 MujocoRobot::endEffectorJacobianDotTimesVelocityWorld(
-    ArmSide side, const Vec7& q, const Vec7& qdot) {
+Vec6 MujocoRobot::tcpJacobianDotTimesVelocityWorld(ArmSide side,
+                                                   const Vec7& q,
+                                                   const Vec7& qdot) {
   if (!q.allFinite() || !qdot.allFinite()) {
     throw std::invalid_argument("Jdot*qdot input contains NaN or infinity");
   }
   constexpr double kEpsilon = 1e-6;
   const Vec6 plus =
-      armKinematicsAt(side, q + kEpsilon * qdot).end_effector_jacobian * qdot;
+      armKinematicsAt(side, q + kEpsilon * qdot).tcp_jacobian * qdot;
   const Vec6 minus =
-      armKinematicsAt(side, q - kEpsilon * qdot).end_effector_jacobian * qdot;
+      armKinematicsAt(side, q - kEpsilon * qdot).tcp_jacobian * qdot;
   return (plus - minus) / (2.0 * kEpsilon);
 }
 

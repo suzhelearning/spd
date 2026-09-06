@@ -90,10 +90,11 @@ build-core = "colcon build --base-paths src --symlink-install --packages-select 
 build = "bash -lc 'export ROS_VERSION=2; bash src/odin/scripts/ensure_odin_sdk.sh && colcon build --base-paths src --symlink-install --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin spd_vr --cmake-args -DPython_ROOT_DIR=$CONDA_PREFIX -DPython_FIND_VIRTUALENV=ONLY && bash src/odin/scripts/fix_ament_hook.sh'"
 test = "bash -lc 'export ROS_VERSION=2; colcon test --base-paths src --packages-select imu_ros2 pico_bridge fisheye_camera data_collector odin_ros_driver odin_ros_driver_rev1 pico_odin spd_vr --event-handlers console_direct+'"
 clean = "rm -rf build install log"
+pico-adb = "bash ../adb.sh"
 odin = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=original'"
 odin-lite = "bash -lc 'source install/setup.bash && ros2 launch pico_odin odin_select.launch.py odin_impl:=lite'"
 
-spd-model = "python -m spd_vr.model_compiler.cli --urdf ../assets/tianji_wuji2/tianji_wuji2.urdf --output src/spd_vr/generated --cache src/spd_vr/collision_cache"
+spd-model = "python -m spd_vr.model_compiler.cli --urdf ../assets/tianji_wuji2/tianji_wuji2.urdf --output src/spd_vr/generated --cache src/spd_vr/collision_cache --raw-collisions"
 spd-teleop = "bash scripts/start_spd_vr.sh"
 spd-teleop-status = "spd-status"
 spd-teleop-stop = "bash scripts/stop_spd_vr.sh"

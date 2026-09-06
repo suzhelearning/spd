@@ -47,6 +47,20 @@ def test_preflight_matches_selected_reverse_to_dynamic_robotics_listener():
         "robotics_service": True,
     }
 
+
+def test_preflight_accepts_adb_transport_label_in_reverse_list():
+    def fake_run(command, **_kwargs):
+        if command[:2] == ["adb", "devices"]:
+            output = "List of devices attached\nPICO-1\tdevice\n"
+        elif command[:2] == ["ss", "-H"]:
+            output = 'LISTEN 0 128 0.0.0.0:15555 0.0.0.0:* users:(("RoboticsService",pid=42,fd=3))'
+        else:
+            output = "UsbFfs tcp:15555 tcp:15555\n"
+        return type("Completed", (), {"returncode": 0, "stdout": output, "stderr": ""})()
+
+    results = preflight._check_adb(fake_run, selected_serial="PICO-1")
+    assert all(item.ok for item in results)
+
 def test_preflight_cli_returns_nonzero_and_json_lines(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         preflight,

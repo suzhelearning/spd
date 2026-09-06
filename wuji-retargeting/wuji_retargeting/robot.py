@@ -180,12 +180,47 @@ class RobotWrapper:
         pose: pin.SE3 = pin.updateFramePlacement(self.model, self.data, link_id)
         return pose.homogeneous
 
+    def get_link_positions_in_frame(
+        self,
+        link_indices: List[int],
+        reference_link_id: int,
+    ) -> npt.NDArray:
+        """Return link positions expressed in a fixed reference-link frame.
+
+        Hand targets are wrist-local vectors.  A reduced hand extracted from a
+        complete arm URDF can still have a non-identity wrist pose, so comparing
+        those targets with world-frame FK silently rotates every optimized
+        finger.  The reference frame must be fixed with respect to the active
+        hand joints; :meth:`compute_all_jacobians_batch` validates that contract
+        when it transforms the matching Jacobians.
+
+        ``compute_forward_kinematics`` must be called for the same qpos first.
+        """
+        reference_pose: pin.SE3 = pin.updateFramePlacement(
+            self.model, self.data, reference_link_id
+        )
+        world_positions = np.array(
+            [
+                pin.updateFramePlacement(self.model, self.data, idx).translation
+                for idx in link_indices
+            ],
+            dtype=np.float64,
+        )
+        return (
+            world_positions - np.asarray(reference_pose.translation)
+        ) @ np.asarray(reference_pose.rotation)
+
     def compute_single_link_local_jacobian(self, qpos, link_id: int) -> npt.NDArray:
         """Compute Jacobian for a single link."""
         J = pin.computeFrameJacobian(self.model, self.data, qpos, link_id)
         return J
 
-    def compute_all_jacobians_batch(self, qpos: npt.NDArray, link_indices: List[int]) -> npt.NDArray:
+    def compute_all_jacobians_batch(
+        self,
+        qpos: npt.NDArray,
+        link_indices: List[int],
+        reference_link_id: int | None = None,
+    ) -> npt.NDArray:
         """Batch compute position Jacobians for multiple links.
 
         This is more efficient than calling compute_single_link_local_jacobian
@@ -194,9 +229,12 @@ class RobotWrapper:
         Args:
             qpos: Joint positions
             link_indices: List of frame indices
+            reference_link_id: If supplied, express positions' derivatives in
+                this fixed frame instead of the world frame.
 
         Returns:
-            jacobians: (num_links, 3, nq) position Jacobians in world frame
+            jacobians: (num_links, 3, nq) position Jacobians in the world frame,
+                or in ``reference_link_id`` when one is supplied
         """
         qpos = np.asarray(qpos, dtype=np.float64)
 
@@ -215,7 +253,29 @@ class RobotWrapper:
             J_world_pos = R @ J_local[:3, :]
             jacobians.append(J_world_pos)
 
-        return np.stack(jacobians, axis=0)
+        result = np.stack(jacobians, axis=0)
+        if reference_link_id is None:
+            return result
+
+        # The hand optimizer intentionally locks all arm joints.  Enforce that
+        # the selected wrist frame is consequently constant with respect to the
+        # active qpos; otherwise rotating the Jacobian alone would omit the
+        # derivative of the moving reference orientation.
+        reference_parent_joint = self.model.frames[reference_link_id].parentJoint
+        # Read the model's dimension table instead of JointModel.nv.  Some
+        # Pinocchio Python builds expose ``model.joints[0].nv == 1`` for the
+        # universe sentinel even though ``model.nvs[0] == 0`` (and the joint
+        # has no configuration variable).  The table is the authoritative
+        # value used by Model.nv and buildReducedModel.
+        if self.model.nvs[reference_parent_joint] != 0:
+            raise ValueError(
+                "reference link must be fixed with respect to active joints"
+            )
+        reference_rotation = np.asarray(
+            self.data.oMf[reference_link_id].rotation,
+            dtype=np.float64,
+        )
+        return np.einsum("ij,njk->nik", reference_rotation.T, result)
 
     def compute_fk_batch(self, qpos: npt.NDArray, link_indices: List[int]) -> npt.NDArray:
         """Batch compute FK positions for multiple links.

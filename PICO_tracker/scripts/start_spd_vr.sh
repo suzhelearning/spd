@@ -6,7 +6,7 @@ session_name="spd-teleop"
 mode="detach"
 action="start"
 dry_run=0
-endpoint="tcp/127.0.0.1:7447"
+endpoint="${SPD_VR_ZENOH_ENDPOINT:-tcp/127.0.0.1:8888}"
 serial="${PICO_ADB_SERIAL:-}"
 sdk_library="${PXREA_SDK_LIBRARY:-${PXREA_SDK_ROOT:-/opt/apps/roboticsservice/SDK}/x64/libPXREARobotSDK.so}"
 manifest="$repo_root/src/spd_vr/generated/model_manifest.yaml"
@@ -60,15 +60,10 @@ fi
 windows=(pxrea_bridge arm_ik viewer)
 endpoint_q="$(printf '%q' "$endpoint")"
 urdf_q="$(printf '%q' "$urdf")"
-serial_q="$(printf '%q' "$serial")"
 sdk_library_q="$(printf '%q' "$sdk_library")"
 manifest_q="$(printf '%q' "$manifest")"
-device_arg=""
-if [[ -n "$serial" ]]; then
-  device_arg="--device-id $serial_q"
-fi
 commands=(
-  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library_q --endpoint $endpoint_q $device_arg --listen"
+  "python -m spd_vr.pxrea_bridge --sdk-library $sdk_library_q --endpoint $endpoint_q --listen"
   "python -m spd_vr.arm_ik --model $(printf '%q' "${manifest%/*}/arm_ik.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
   "python -m spd_vr.viewer --model $(printf '%q' "${manifest%/*}/unified_plant.xml") --manifest $manifest_q --urdf $urdf_q --endpoint $endpoint_q"
 )

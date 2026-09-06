@@ -223,6 +223,28 @@ TEST(PicoTeleopProtocol, DecodesPicoTrackerMainV4UpperLimbRotations) {
   }
 }
 
+TEST(PicoTeleopProtocol, DecodesV4UserButtonFlag) {
+  auto bytes = v4Packet();
+  writeLe32(&bytes, 40U, 0x1ffU);
+  refreshCrc(&bytes);
+
+  const PicoPacketDecodeResult result =
+      decodePicoTeleopPacket(bytes.data(), bytes.size());
+
+  ASSERT_EQ(result.error, PicoPacketError::kNone);
+  ASSERT_TRUE(result.frame.has_value());
+  EXPECT_TRUE(result.frame->user_button_pressed);
+}
+
+TEST(PicoTeleopProtocol, RejectsV4UnknownFlagAboveUserButton) {
+  auto bytes = v4Packet();
+  writeLe32(&bytes, 40U, 0x2ffU);
+  refreshCrc(&bytes);
+
+  EXPECT_EQ(decodePicoTeleopPacket(bytes.data(), bytes.size()).error,
+            PicoPacketError::kInvalidFlags);
+}
+
 TEST(PicoTeleopProtocol, V4WithoutRotationFlagUsesPositionFallback) {
   auto bytes = v4Packet();
   writeLe32(&bytes, 40U, 0x7fU);

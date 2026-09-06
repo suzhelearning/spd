@@ -21,6 +21,37 @@ PICO_TO_MEDIAPIPE = np.asarray(
 PICO_HAND_JOINT_COUNT = 26
 MEDIAPIPE_JOINT_COUNT = 21
 
+# ``apply_mediapipe_transformations`` produces the shared MANO/MediaPipe wrist
+# frame.  Wuji Hand 2's frozen wrist frames use different axes.  These proper
+# rotations are the matrix form of the tuned Hand 2 settings kept in the
+# upstream examples:
+#   left:  extrinsic XYZ (180, 0, -90) degrees
+#   right: extrinsic XYZ (0, 180, -90) degrees
+_MEDIAPIPE_TO_WUJI2_ROTATION = {
+    "left": np.asarray(
+        ((0.0, -1.0, 0.0), (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)),
+        dtype=np.float64,
+    ),
+    "right": np.asarray(
+        ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, -1.0)),
+        dtype=np.float64,
+    ),
+}
+
+
+def mediapipe_to_wuji2_wrist_frame(points: Any, side: str) -> np.ndarray:
+    """Rotate wrist-relative MediaPipe points into the Wuji2 wrist frame."""
+    if side not in _MEDIAPIPE_TO_WUJI2_ROTATION:
+        raise ValueError("side must be left or right")
+    array = np.asarray(points, dtype=np.float64)
+    if array.shape != (MEDIAPIPE_JOINT_COUNT, 3):
+        raise HandFrameError(
+            f"MediaPipe keypoints must have shape (21,3), got {array.shape}"
+        )
+    if not np.all(np.isfinite(array)):
+        raise HandFrameError("MediaPipe keypoints must contain only finite values")
+    return array @ _MEDIAPIPE_TO_WUJI2_ROTATION[side].T
+
 
 class HandFrameError(ValueError):
     """Raised when one PICO hand does not contain a usable 26-joint frame."""
@@ -44,9 +75,9 @@ class PicoHandFrame:
 class PicoHandsInput:
     """Convert the latest atomic PICO frame into two 21×3 hand arrays.
 
-    The adapter only selects PICO's fixed joint indices and delegates all palm
-    frame/MANO rotations to ``wuji_retargeting.mediapipe``.  It never applies a
-    second rotation or a controller-to-palm calibration artifact.
+    Raw MediaPipe-ordered landmarks remain in the PICO source frame so the
+    ``Retargeter`` stays the single owner of palm/MANO preprocessing.  A
+    separate wrist-frame accessor is retained for visualization consumers.
     """
 
     def __init__(self, frame: PicoHandFrame | Mapping[str, Any] | Any | None = None) -> None:
@@ -171,8 +202,8 @@ class PicoHandsInput:
             frame = self._from_message(frame)
         self._frame = frame
 
-    def get_side_fingers_data(self, side: str) -> np.ndarray:
-        """Return one side so a failed hand cannot block the other side."""
+    def get_side_mediapipe_landmarks(self, side: str) -> np.ndarray:
+        """Return one side in MediaPipe index order and the PICO source frame."""
         if self._frame is None:
             raise HandFrameError("PICO hand frame is not initialized")
         if side not in {"left", "right"}:
@@ -182,9 +213,15 @@ class PicoHandsInput:
         active = self._frame.left_active if side == "left" else self._frame.right_active
         if not active:
             return np.zeros((MEDIAPIPE_JOINT_COUNT, 3), dtype=np.float64)
-        # Selection is the only PICO-specific geometry here. The shared
-        # function subtracts the wrist and applies the MANO hand frame.
-        mediapipe_points = source[PICO_TO_MEDIAPIPE, :3].copy() * scale
+        return source[PICO_TO_MEDIAPIPE, :3].copy() * scale
+
+    def get_side_fingers_data(self, side: str) -> np.ndarray:
+        """Return wrist-local MANO points for overlays and diagnostics.
+
+        Retargeting code should use :meth:`get_side_mediapipe_landmarks`, then
+        let ``Retargeter.retarget`` perform this transformation exactly once.
+        """
+        mediapipe_points = self.get_side_mediapipe_landmarks(side)
         transformed = np.asarray(
             apply_mediapipe_transformations(mediapipe_points, side),
             dtype=np.float64,
@@ -220,4 +257,5 @@ __all__ = [
     "PICO_TO_MEDIAPIPE",
     "PicoHandFrame",
     "PicoHandsInput",
+    "mediapipe_to_wuji2_wrist_frame",
 ]

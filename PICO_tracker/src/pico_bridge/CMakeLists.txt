@@ -211,6 +211,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_pico_m0_readiness test/test_pico_m0_readiness.py)
   ament_add_pytest_test(test_pico_m0_comparison_report test/test_pico_m0_comparison_report.py)
   ament_add_pytest_test(test_launch_integration test/test_launch_integration.py)
+  ament_add_pytest_test(test_adb_script test/test_adb_script.py)
   ament_add_pytest_test(
     test_tianji_mujoco_teleop_bridge_runtime
     test/test_tianji_mujoco_teleop_bridge_runtime.py

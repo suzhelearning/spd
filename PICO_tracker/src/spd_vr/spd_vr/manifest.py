@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,12 @@ import yaml
 
 class ManifestError(ValueError):
     """Raised when a model and manifest do not describe the same plant."""
+
+
+DEFAULT_ARM_HOME_RAD = {
+    "left": (0.9599310886, -1.1344640138, -1.2217304764, -1.0471975512, 1.0471975512, 0.0, 0.0),
+    "right": (-0.9599310886, -1.1344640138, 1.2217304764, -1.0471975512, -1.0471975512, 0.0, 0.0),
+}
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,18 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
     expected_arm_order = [entry["joint"] for entry in joints if entry.get("group") == "arm"]
     if arm_order != expected_arm_order or len(arm_order) != 14 or len(set(arm_order)) != 14:
         raise ManifestError("manifest arm_joint_order must exactly match the 14 arm joints")
+    arm_home = document.get("arm_home_rad", DEFAULT_ARM_HOME_RAD)
+    if not isinstance(arm_home, dict) or set(arm_home) != {"left", "right"}:
+        raise ManifestError("manifest arm_home_rad must contain left/right")
+    for side in ("left", "right"):
+        values = arm_home[side]
+        entries = [entry for entry in joints if entry.get("side") == side and entry.get("group") == "arm"]
+        if not isinstance(values, (list, tuple)) or len(values) != 7:
+            raise ManifestError(f"manifest {side} arm home must contain seven values")
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) for value in values):
+            raise ManifestError(f"manifest {side} arm home must be finite")
+        if any(not float(entry["range"][0]) <= float(value) <= float(entry["range"][1]) for entry, value in zip(entries, values)):
+            raise ManifestError(f"manifest {side} arm home exceeds a joint range")
     wrist = document.get("wrist_targets")
     if wrist != {
         "left_body": "l_wrist",
@@ -72,6 +91,23 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(outputs, dict) or not {"unified_plant.xml", "arm_ik.xml", "collision_manifest.yaml", "actuator_calibration.yaml"} <= set(outputs):
         raise ManifestError("manifest output hashes are incomplete")
     return document
+
+
+def arm_home_for_side(manifest: dict[str, Any], side: str) -> tuple[float, ...]:
+    if side not in {"left", "right"}:
+        raise ValueError(f"unknown arm side: {side}")
+    return tuple(float(value) for value in manifest.get("arm_home_rad", DEFAULT_ARM_HOME_RAD)[side])
+
+
+def resolve_home_positions(joints: list[ManifestJoint], manifest: dict[str, Any]) -> tuple[float, ...]:
+    arm_by_joint: dict[str, float] = {}
+    for side in ("left", "right"):
+        names = [entry["joint"] for entry in manifest["joints"] if entry.get("side") == side and entry.get("group") == "arm"]
+        arm_by_joint.update(zip(names, arm_home_for_side(manifest, side)))
+    home = [0.0] * len(joints)
+    for entry in joints:
+        home[entry.index] = arm_by_joint.get(entry.joint, (entry.range[0] + entry.range[1]) * 0.5)
+    return tuple(home)
 
 
 def resolve_model_addresses(
@@ -166,4 +202,13 @@ def validate_model_manifest(
     return resolve_model_addresses(model, manifest, allow_scene_dofs=allow_scene_dofs)
 
 
-__all__ = ["ManifestError", "ManifestJoint", "load_manifest", "resolve_model_addresses", "validate_model_manifest"]
+__all__ = [
+    "DEFAULT_ARM_HOME_RAD",
+    "ManifestError",
+    "ManifestJoint",
+    "arm_home_for_side",
+    "load_manifest",
+    "resolve_home_positions",
+    "resolve_model_addresses",
+    "validate_model_manifest",
+]

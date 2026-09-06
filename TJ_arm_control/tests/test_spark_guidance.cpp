@@ -8,6 +8,8 @@ namespace {
 
 constexpr const char* kModelPath =
     TIANJI_PROJECT_SOURCE_DIR "/models/marvin_m6_qp_test.xml";
+constexpr const char* kWuji2ModelPath =
+    TIANJI_PROJECT_SOURCE_DIR "/models/marvin_m6_wuji2.xml";
 constexpr const char* kUrdfPath =
     TIANJI_PROJECT_SOURCE_DIR "/models/marvin_m6_s_ccs_696_v4_local.urdf";
 
@@ -31,11 +33,21 @@ PicoTeleopFrame frameFromRobot(MujocoRobot& robot, const Vec7& left_q,
   frame.upper_limb_skeleton.valid = true;
   frame.upper_limb_skeleton.points = {
       left.shoulder_position, left.elbow_position, left.wrist_position,
-      left.end_effector_pose.position, right.shoulder_position, right.elbow_position,
-      right.wrist_position, right.end_effector_pose.position};
-  frame.left = left.end_effector_pose;
-  frame.right = right.end_effector_pose;
+      left.tcp_pose.position, right.shoulder_position, right.elbow_position,
+      right.wrist_position, right.tcp_pose.position};
+  frame.left = left.tcp_pose;
+  frame.right = right.tcp_pose;
   return frame;
+}
+
+SparkUpperArmTarget sparkTargetFromSample(const ArmKinematicSample& sample) {
+  SparkUpperArmTarget target;
+  target.palm = sample.tcp_pose;
+  target.shoulder = sample.shoulder_position;
+  target.elbow = sample.elbow_position;
+  target.wrist = sample.wrist_position;
+  target.hand = sample.tcp_pose.position;
+  return target;
 }
 
 TEST(SparkGuidance, ProducesCartesianTargetsAndSoftPostureWithoutCommandingRobot) {
@@ -78,10 +90,10 @@ TEST(SparkGuidance, ProducesCartesianTargetsAndSoftPostureWithoutCommandingRobot
   frame.upper_limb_skeleton.valid = true;
   frame.upper_limb_skeleton.points = {
       left.shoulder_position, left.elbow_position, left.wrist_position,
-      left.end_effector_pose.position, right.shoulder_position, right.elbow_position,
-      right.wrist_position, right.end_effector_pose.position};
-  frame.left = left.end_effector_pose;
-  frame.right = right.end_effector_pose;
+      left.tcp_pose.position, right.shoulder_position, right.elbow_position,
+      right.wrist_position, right.tcp_pose.position};
+  frame.left = left.tcp_pose;
+  frame.right = right.tcp_pose;
   ASSERT_TRUE(guidance.updatePicoFrame(frame).valid);
 
   const SparkGuidanceDiagnostics result = guidance.step(
@@ -111,6 +123,91 @@ TEST(SparkGuidance, ProducesCartesianTargetsAndSoftPostureWithoutCommandingRobot
       result.right.target.hand));
   EXPECT_TRUE(robot.armPosition(ArmSide::kLeft).isApprox(left_q));
   EXPECT_TRUE(robot.armPosition(ArmSide::kRight).isApprox(right_q));
+}
+
+TEST(SparkGuidance, UsesSelectedHandTcpForHand2PalmTarget) {
+  MujocoRobot robot(kWuji2ModelPath);
+  const Vec7 left_q = Vec7::Zero();
+  const Vec7 right_q = Vec7::Zero();
+
+  QpIkConfig config = loadConfig(
+      TIANJI_PROJECT_SOURCE_DIR "/config/qp_ik_pico_teleop.yaml");
+  config.spark_upper_qpoases.target_blend_seconds = 0.005;
+  DualArmSparkGuidance guidance(robot, config, kUrdfPath,
+                                SparkPostureGuideMode::kDisabled);
+
+  const SparkUpperTargets targets =
+      guidance.updatePicoFrame(frameFromRobot(robot, left_q, right_q));
+  ASSERT_TRUE(targets.valid) << targets.detail;
+
+  const ArmKinematicSample left =
+      robot.armKinematicsAt(ArmSide::kLeft, left_q);
+  const ArmKinematicSample right =
+      robot.armKinematicsAt(ArmSide::kRight, right_q);
+  constexpr double kTolerance = 1.0e-5;
+  EXPECT_TRUE(targets.left.hand.isApprox(left.tcp_pose.position, kTolerance));
+  EXPECT_TRUE(targets.right.hand.isApprox(right.tcp_pose.position,
+                                          kTolerance));
+  EXPECT_TRUE(targets.left.palm.position.isApprox(left.tcp_pose.position,
+                                                  kTolerance));
+  EXPECT_TRUE(targets.right.palm.position.isApprox(right.tcp_pose.position,
+                                                   kTolerance));
+  EXPECT_TRUE(targets.left.palm.rotation.isApprox(left.tcp_pose.rotation,
+                                                  kTolerance));
+  EXPECT_TRUE(targets.right.palm.rotation.isApprox(right.tcp_pose.rotation,
+                                                   kTolerance));
+}
+
+TEST(SparkGuidance, JointSpaceTakeoverUsesBoundedRuckigReference) {
+  MujocoRobot robot(kModelPath);
+  const ArmLimits& left_limits = robot.mapping(ArmSide::kLeft).limits;
+  const ArmLimits& right_limits = robot.mapping(ArmSide::kRight).limits;
+  const Vec7 left_q =
+      0.5 * (left_limits.lower_position + left_limits.upper_position);
+  const Vec7 right_q =
+      0.5 * (right_limits.lower_position + right_limits.upper_position);
+  Vec7 left_goal = left_q;
+  Vec7 right_goal = right_q;
+  left_goal[1] += 0.20;
+  right_goal[1] -= 0.20;
+
+  const ArmKinematicSample left_goal_sample =
+      robot.armKinematicsAt(ArmSide::kLeft, left_goal);
+  const ArmKinematicSample right_goal_sample =
+      robot.armKinematicsAt(ArmSide::kRight, right_goal);
+  SparkUpperTargets target;
+  target.valid = true;
+  target.left = sparkTargetFromSample(left_goal_sample);
+  target.right = sparkTargetFromSample(right_goal_sample);
+
+  QpIkConfig config = loadConfig(
+      TIANJI_PROJECT_SOURCE_DIR "/config/qp_ik_pico_teleop.yaml");
+  DualArmSparkGuidance guidance(robot, config, kUrdfPath);
+  ArmMotionState left_model;
+  left_model.q = left_q;
+  ArmMotionState right_model;
+  right_model.q = right_q;
+
+  ASSERT_TRUE(
+      guidance.startJointSpaceTakeover(target, left_model, right_model));
+  const SparkGuidanceDiagnostics first =
+      guidance.stepJointSpaceTakeover(left_model, right_model, 0.005);
+
+  ASSERT_TRUE(first.accepted) << first.detail;
+  EXPECT_TRUE(first.joint_takeover_active);
+  EXPECT_TRUE(first.left.ik.accepted);
+  EXPECT_TRUE(first.right.ik.accepted);
+  EXPECT_TRUE(first.cartesian_references_valid);
+  EXPECT_EQ(first.posture_tasks.left.source,
+            JointVelocityPostureSource::kSparkJointReference);
+  EXPECT_EQ(first.posture_tasks.right.source,
+            JointVelocityPostureSource::kSparkJointReference);
+  EXPECT_TRUE(first.left.reference.state.q.allFinite());
+  EXPECT_TRUE(first.right.reference.state.q.allFinite());
+  EXPECT_LT((first.left.reference.state.q - left_goal).norm(),
+            (left_q - left_goal).norm());
+  EXPECT_LT((first.right.reference.state.q - right_goal).norm(),
+            (right_q - right_goal).norm());
 }
 
 TEST(SparkGuidance, DirectModeBypassesRuckigAndEmitsBoundedSoftPosture) {
@@ -260,9 +357,9 @@ TEST(SparkGuidance,
   const ArmKinematicSample right_ik =
       robot.armKinematicsAt(ArmSide::kRight, result.right.q_ik);
   const Vec6 left_error = poseErrorWorld(
-      result.cartesian_references.left.pose, left_ik.end_effector_pose);
+      result.cartesian_references.left.pose, left_ik.tcp_pose);
   const Vec6 right_error = poseErrorWorld(
-      result.cartesian_references.right.pose, right_ik.end_effector_pose);
+      result.cartesian_references.right.pose, right_ik.tcp_pose);
   EXPECT_LT(left_error.head<3>().norm(),
             config.spark_upper_qpoases.otg_position_tolerance_m);
   EXPECT_LT(left_error.tail<3>().norm(),
@@ -787,9 +884,9 @@ TEST(SparkGuidance, HeadroomSettledHoldEntersImmediatelyWhenTargetIsStale) {
   EXPECT_EQ(held.left.settled_hold_reason, SparkSettledHoldReason::kStale);
   EXPECT_EQ(held.right.settled_hold_reason, SparkSettledHoldReason::kStale);
   const Pose left_tcp =
-      robot.armKinematicsAt(ArmSide::kLeft, left_model.q).end_effector_pose;
+      robot.armKinematicsAt(ArmSide::kLeft, left_model.q).tcp_pose;
   const Pose right_tcp =
-      robot.armKinematicsAt(ArmSide::kRight, right_model.q).end_effector_pose;
+      robot.armKinematicsAt(ArmSide::kRight, right_model.q).tcp_pose;
   EXPECT_TRUE(held.cartesian_references.left.pose.position.isApprox(
       left_tcp.position, 1.0e-12));
   EXPECT_TRUE(held.cartesian_references.left.pose.rotation.isApprox(

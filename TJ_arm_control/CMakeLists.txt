@@ -8,7 +8,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-
 find_package(mujoco CONFIG REQUIRED)
 find_package(Eigen3 3.4 CONFIG REQUIRED NO_MODULE)
 find_package(pinocchio CONFIG REQUIRED)
@@ -76,10 +75,8 @@ add_library(tianji_qp_ik STATIC
   src/osqp_solver.cpp
   src/pinocchio_arm_kinematics.cpp
   src/pico_teleop_protocol.cpp
-  src/arm_target_protocol.cpp
   src/pico_skeleton_overlay.cpp
   src/pico_teleop_session.cpp
-  src/pico_wrist_alignment.cpp
   src/pico_trace_recorder.cpp
   src/pico_udp_receiver.cpp
   src/qp_builder.cpp
@@ -98,6 +95,8 @@ add_library(tianji_qp_ik STATIC
   src/telemetry.cpp
   src/upper_arm_outward.cpp
   src/velocity_ik.cpp
+  src/wuji_hand_teleop_protocol.cpp
+  src/wuji_hand_udp_receiver.cpp
 )
 target_include_directories(tianji_qp_ik PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_include_directories(tianji_qp_ik SYSTEM PUBLIC "${ruckig_SOURCE_DIR}/include")
@@ -137,8 +136,6 @@ target_link_libraries(tianji_inspect_model PRIVATE mujoco::mujoco)
 tianji_enable_warnings(tianji_inspect_model)
 
 include(CTest)
-
-
 if(BUILD_TESTING)
   find_package(GTest CONFIG REQUIRED)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -209,7 +206,10 @@ if(BUILD_TESTING)
   tianji_add_test(test_mujoco_joint_plot tests/test_mujoco_joint_plot.cpp)
   target_link_libraries(test_mujoco_joint_plot PRIVATE mujoco::mujoco)
   tianji_add_test(test_pico_teleop_protocol tests/test_pico_teleop_protocol.cpp)
-  tianji_add_test(test_arm_target_protocol tests/test_arm_target_protocol.cpp)
+  tianji_add_test(test_wuji_hand_teleop_protocol
+                  tests/test_wuji_hand_teleop_protocol.cpp)
+  tianji_add_test(test_wuji_hand_udp_receiver
+                  tests/test_wuji_hand_udp_receiver.cpp)
   tianji_add_test(test_pico_skeleton_overlay tests/test_pico_skeleton_overlay.cpp)
   tianji_add_test(test_spark_upper_qpoases_ik
                   tests/test_spark_upper_qpoases_ik.cpp)
@@ -229,7 +229,6 @@ if(BUILD_TESTING)
   tianji_add_test(test_pico_udp_receiver tests/test_pico_udp_receiver.cpp)
   tianji_add_test(test_pico_trace_recorder tests/test_pico_trace_recorder.cpp)
   tianji_add_test(test_pico_teleop_session tests/test_pico_teleop_session.cpp)
-  tianji_add_test(test_pico_wrist_alignment tests/test_pico_wrist_alignment.cpp)
   tianji_add_test(test_interactive_marker tests/test_interactive_marker.cpp)
   tianji_add_test(test_mujoco_marker_adapter tests/test_mujoco_marker_adapter.cpp)
   target_link_libraries(test_mujoco_marker_adapter PRIVATE mujoco::mujoco)
@@ -271,6 +270,18 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_compare_spark_three_way_following.py
   )
+  add_test(
+    NAME wuji_hand_viewer_integration
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_wuji_hand_viewer.py
+  )
+  set_tests_properties(
+    wuji_hand_viewer_integration
+    PROPERTIES
+      RUN_SERIAL TRUE
+      TIMEOUT 15
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
   foreach(pico_control_level IN ITEMS velocity acceleration)
     add_test(
       NAME pico_viewer_integration_${pico_control_level}
@@ -289,6 +300,43 @@ if(BUILD_TESTING)
         TIMEOUT 15
     )
   endforeach()
+  add_test(
+    NAME pico_viewer_button_pause_resume
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pico_viewer_integration.py
+      --viewer $<TARGET_FILE:tianji_qp_ik_viewer>
+      --config ${CMAKE_CURRENT_SOURCE_DIR}/config/qp_ik_pico_teleop.yaml
+      --model ${CMAKE_CURRENT_SOURCE_DIR}/models/marvin_m6_qp_test.xml
+      --control-level velocity
+      --algorithm spark_upper_qpoases_headroom_feedforward_velocity_qp
+      --model-state-only
+      --button-state-test
+  )
+  set_tests_properties(
+    pico_viewer_button_pause_resume
+    PROPERTIES
+      RUN_SERIAL TRUE
+      TIMEOUT 20
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  add_test(
+    NAME pico_viewer_button_hand_pause
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pico_viewer_integration.py
+      --viewer $<TARGET_FILE:tianji_qp_ik_viewer>
+      --config ${CMAKE_CURRENT_SOURCE_DIR}/config/qp_ik_pico_teleop.yaml
+      --model ${CMAKE_CURRENT_SOURCE_DIR}/models/marvin_m6_wuji2.xml
+      --control-level velocity
+      --algorithm hierarchical_qp
+      --button-hand-pause-test
+  )
+  set_tests_properties(
+    pico_viewer_button_hand_pause
+    PROPERTIES
+      RUN_SERIAL TRUE
+      TIMEOUT 15
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
   add_test(
     NAME pico_viewer_native_trace_recording
     COMMAND ${Python3_EXECUTABLE}
@@ -311,6 +359,15 @@ if(BUILD_TESTING)
                                          cartesian_otg_velocity_qp
                                          feedforward_velocity_qp
                                          headroom_feedforward_velocity_qp)
+    set(spark_test_extra_args)
+    if(NOT spark_qpoases_variant STREQUAL "direct")
+      # The initial collision-safe joint-space takeover can legitimately take
+      # a little over three seconds before Cartesian OTG/feedforward motion
+      # begins.  Keep enough live input after takeover to exercise that path.
+      set(spark_test_extra_args
+          --viewer-duration 4.0
+          --send-duration 3.4)
+    endif()
     add_test(
       NAME pico_viewer_integration_spark_upper_qpoases_${spark_qpoases_variant}
       COMMAND ${Python3_EXECUTABLE}
@@ -321,6 +378,7 @@ if(BUILD_TESTING)
         --control-level velocity
         --algorithm spark_upper_qpoases_${spark_qpoases_variant}
         --model-state-only
+        ${spark_test_extra_args}
     )
     set_tests_properties(
       pico_viewer_integration_spark_upper_qpoases_${spark_qpoases_variant}

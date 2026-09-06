@@ -30,6 +30,15 @@ pinocchio::FrameIndex requireFrame(const pinocchio::Model& model,
   return model.getFrameId(name);
 }
 
+Pose legacyTcpRelativeToLink7() {
+  Pose result;
+  Eigen::Quaterniond tcp_quaternion(0.499998, 0.5, -0.5, 0.500002);
+  tcp_quaternion.normalize();
+  result.position = Eigen::Vector3d(0.0, -0.095, 0.0);
+  result.rotation = tcp_quaternion.toRotationMatrix();
+  return result;
+}
+
 }  // namespace
 
 struct PinocchioArmKinematics::Impl {
@@ -43,7 +52,13 @@ struct PinocchioArmKinematics::Impl {
     pinocchio::FrameIndex tcp_frame{0};
   };
 
-  explicit Impl(const std::string& urdf_path) {
+  explicit Impl(const std::string& urdf_path)
+      : Impl(urdf_path,
+             std::array<Pose, 2>{legacyTcpRelativeToLink7(),
+                                 legacyTcpRelativeToLink7()}) {}
+
+  Impl(const std::string& urdf_path,
+       const std::array<Pose, 2>& tcp_relative_to_link7) {
     try {
       pinocchio::urdf::buildModel(urdf_path, model);
     } catch (const std::exception& error) {
@@ -53,14 +68,14 @@ struct PinocchioArmKinematics::Impl {
     if (model.nq != kExpectedDualArmDof || model.nv != kExpectedDualArmDof) {
       throw std::runtime_error("Pinocchio Tianji model must have nq=nv=14");
     }
-    left = buildMapping(ArmSide::kLeft);
-    right = buildMapping(ArmSide::kRight);
+    left = buildMapping(ArmSide::kLeft, tcp_relative_to_link7[0]);
+    right = buildMapping(ArmSide::kRight, tcp_relative_to_link7[1]);
     data = std::make_unique<pinocchio::Data>(model);
     configuration = Eigen::VectorXd::Zero(model.nq);
     frame_jacobian = Eigen::MatrixXd::Zero(6, model.nv);
   }
 
-  ArmMapping buildMapping(ArmSide side) {
+  ArmMapping buildMapping(ArmSide side, const Pose& tcp_relative_to_link7) {
     ArmMapping mapping;
     const std::string side_suffix = suffix(side);
     for (int index = 0; index < kArmDof; ++index) {
@@ -86,10 +101,13 @@ struct PinocchioArmKinematics::Impl {
     const pinocchio::FrameIndex link7_frame =
         requireFrame(model, "Link7_" + side_suffix);
     const pinocchio::Frame& link7 = model.frames[link7_frame];
-    Eigen::Quaterniond tcp_quaternion(0.499998, 0.5, -0.5, 0.500002);
-    tcp_quaternion.normalize();
-    const pinocchio::SE3 tcp_relative(
-        tcp_quaternion.toRotationMatrix(), Eigen::Vector3d(0.0, -0.095, 0.0));
+    if (!tcp_relative_to_link7.position.allFinite() ||
+        !tcp_relative_to_link7.rotation.allFinite()) {
+      throw std::invalid_argument(
+          "Pinocchio TCP transform contains NaN or infinity");
+    }
+    const pinocchio::SE3 tcp_relative(tcp_relative_to_link7.rotation,
+                                      tcp_relative_to_link7.position);
     const std::string tcp_name = "tcp_" + side_suffix;
     mapping.tcp_frame = model.addFrame(
         pinocchio::Frame(tcp_name, link7.parentJoint, link7_frame,
@@ -140,9 +158,9 @@ struct PinocchioArmKinematics::Impl {
 
     ArmKinematicSample result;
     const pinocchio::SE3& tcp = data->oMf[arm.tcp_frame];
-    result.end_effector_pose.position = tcp.translation();
-    result.end_effector_pose.rotation = tcp.rotation();
-    result.end_effector_jacobian = frameJacobian(arm.tcp_frame, arm);
+    result.tcp_pose.position = tcp.translation();
+    result.tcp_pose.rotation = tcp.rotation();
+    result.tcp_jacobian = frameJacobian(arm.tcp_frame, arm);
     result.shoulder_position = framePosition(arm.shoulder_frame);
     result.elbow_position = framePosition(arm.elbow_frame);
     result.wrist_position = framePosition(arm.wrist_frame);
@@ -169,6 +187,11 @@ struct PinocchioArmKinematics::Impl {
 PinocchioArmKinematics::PinocchioArmKinematics(
     const std::string& urdf_path)
     : impl_(std::make_unique<Impl>(urdf_path)) {}
+
+PinocchioArmKinematics::PinocchioArmKinematics(
+    const std::string& urdf_path,
+    const std::array<Pose, 2>& tcp_relative_to_link7)
+    : impl_(std::make_unique<Impl>(urdf_path, tcp_relative_to_link7)) {}
 
 PinocchioArmKinematics::~PinocchioArmKinematics() = default;
 PinocchioArmKinematics::PinocchioArmKinematics(

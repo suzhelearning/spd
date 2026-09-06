@@ -1,0 +1,3580 @@
+actuator_order:
+- Joint1_L_position
+- Joint2_L_position
+- Joint3_L_position
+- Joint4_L_position
+- Joint5_L_position
+- Joint6_L_position
+- Joint7_L_position
+- l_thumb_cmc_flex_position
+- l_thumb_cmc_abd_position
+- l_thumb_mcp_position
+- l_thumb_ip_position
+- l_index_finger_mcp_flex_position
+- l_index_finger_mcp_abd_position
+- l_index_finger_pip_position
+- l_index_finger_dip_position
+- l_middle_finger_mcp_flex_position
+- l_middle_finger_mcp_abd_position
+- l_middle_finger_pip_position
+- l_middle_finger_dip_position
+- l_ring_finger_mcp_flex_position
+- l_ring_finger_mcp_abd_position
+- l_ring_finger_pip_position
+- l_ring_finger_dip_position
+- l_pinky_mcp_flex_position
+- l_pinky_mcp_abd_position
+- l_pinky_pip_position
+- l_pinky_dip_position
+- Joint1_R_position
+- Joint2_R_position
+- Joint3_R_position
+- Joint4_R_position
+- Joint5_R_position
+- Joint6_R_position
+- Joint7_R_position
+- r_thumb_cmc_flex_position
+- r_thumb_cmc_abd_position
+- r_thumb_mcp_position
+- r_thumb_ip_position
+- r_index_finger_mcp_flex_position
+- r_index_finger_mcp_abd_position
+- r_index_finger_pip_position
+- r_index_finger_dip_position
+- r_middle_finger_mcp_flex_position
+- r_middle_finger_mcp_abd_position
+- r_middle_finger_pip_position
+- r_middle_finger_dip_position
+- r_ring_finger_mcp_flex_position
+- r_ring_finger_mcp_abd_position
+- r_ring_finger_pip_position
+- r_ring_finger_dip_position
+- r_pinky_mcp_flex_position
+- r_pinky_mcp_abd_position
+- r_pinky_pip_position
+- r_pinky_dip_position
+arm_home_rad:
+  left:
+  - 0.9599310886
+  - -1.1344640138
+  - -1.2217304764
+  - -1.0471975512
+  - 1.0471975512
+  - 0.0
+  - 0.0
+  right:
+  - -0.9599310886
+  - -1.1344640138
+  - 1.2217304764
+  - -1.0471975512
+  - -1.0471975512
+  - 0.0
+  - 0.0
+arm_joint_order:
+- Joint1_L
+- Joint2_L
+- Joint3_L
+- Joint4_L
+- Joint5_L
+- Joint6_L
+- Joint7_L
+- Joint1_R
+- Joint2_R
+- Joint3_R
+- Joint4_R
+- Joint5_R
+- Joint6_R
+- Joint7_R
+axis_visuals:
+- link: TCP_Link_L
+  name: TCP_Link_L_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.025
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: TCP_Link_L
+  name: TCP_Link_L_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.025
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: TCP_Link_L
+  name: TCP_Link_L_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.025
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: TCP_Link_R
+  name: TCP_Link_R_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.025
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: TCP_Link_R
+  name: TCP_Link_R_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.025
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: TCP_Link_R
+  name: TCP_Link_R_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.025
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: l_mount
+  name: l_mount_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.03
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: l_mount
+  name: l_mount_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.03
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: l_mount
+  name: l_mount_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.03
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: l_wrist
+  name: l_wrist_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.045
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: l_wrist
+  name: l_wrist_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.045
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: l_wrist
+  name: l_wrist_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.045
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: marker_mocap_l
+  name: marker_mocap_l_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.035
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: marker_mocap_l
+  name: marker_mocap_l_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.035
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: marker_mocap_l
+  name: marker_mocap_l_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.035
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: marker_mocap_r
+  name: marker_mocap_r_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.035
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: marker_mocap_r
+  name: marker_mocap_r_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.035
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: marker_mocap_r
+  name: marker_mocap_r_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.035
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: r_mount
+  name: r_mount_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.03
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: r_mount
+  name: r_mount_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.03
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: r_mount
+  name: r_mount_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.03
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: r_wrist
+  name: r_wrist_axis_0
+  omitted_from_scene: true
+  origin:
+  - 0.045
+  - 0.0
+  - 0.0
+  rpy:
+  - 0.0
+  - 1.5707963267948966
+  - 0.0
+  type: cylinder
+- link: r_wrist
+  name: r_wrist_axis_1
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.045
+  - 0.0
+  rpy:
+  - 1.5707963267948966
+  - 0.0
+  - 0.0
+  type: cylinder
+- link: r_wrist
+  name: r_wrist_axis_2
+  omitted_from_scene: true
+  origin:
+  - 0.0
+  - 0.0
+  - 0.045
+  rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  type: cylinder
+collision:
+  adjacent_excludes:
+  - - Link_Base
+    - Link_Stand
+  - - Link_Stand
+    - Base_L
+  - - Base_L
+    - Link1_L
+  - - Link1_L
+    - Link2_L
+  - - Link2_L
+    - Link3_L
+  - - Link3_L
+    - Link4_L
+  - - Link4_L
+    - Link5_L
+  - - Link5_L
+    - Link6_L
+  - - Link6_L
+    - Link7_L
+  - - Link7_L
+    - TCP_Link_L
+  - - TCP_Link_L
+    - marker_tianji_l
+  - - marker_tianji_l
+    - marker_mocap_l
+  - - marker_mocap_l
+    - marker_wuji2_l
+  - - marker_wuji2_l
+    - l_mount
+  - - l_mount
+    - l_wrist
+  - - l_wrist
+    - l_thumb_proximal
+  - - l_thumb_proximal
+    - l_thumb_proximal_abd
+  - - l_thumb_proximal_abd
+    - l_thumb_middle
+  - - l_thumb_middle
+    - l_thumb_distal
+  - - l_thumb_distal
+    - l_thumb_tip
+  - - l_wrist
+    - l_index_finger_proximal
+  - - l_index_finger_proximal
+    - l_index_finger_proximal_abd
+  - - l_index_finger_proximal_abd
+    - l_index_finger_middle
+  - - l_index_finger_middle
+    - l_index_finger_distal
+  - - l_index_finger_distal
+    - l_index_finger_tip
+  - - l_wrist
+    - l_middle_finger_proximal
+  - - l_middle_finger_proximal
+    - l_middle_finger_proximal_abd
+  - - l_middle_finger_proximal_abd
+    - l_middle_finger_middle
+  - - l_middle_finger_middle
+    - l_middle_finger_distal
+  - - l_middle_finger_distal
+    - l_middle_finger_tip
+  - - l_wrist
+    - l_ring_finger_proximal
+  - - l_ring_finger_proximal
+    - l_ring_finger_proximal_abd
+  - - l_ring_finger_proximal_abd
+    - l_ring_finger_middle
+  - - l_ring_finger_middle
+    - l_ring_finger_distal
+  - - l_ring_finger_distal
+    - l_ring_finger_tip
+  - - l_wrist
+    - l_pinky_proximal
+  - - l_pinky_proximal
+    - l_pinky_proximal_abd
+  - - l_pinky_proximal_abd
+    - l_pinky_middle
+  - - l_pinky_middle
+    - l_pinky_distal
+  - - l_pinky_distal
+    - l_pinky_tip
+  - - Link_Stand
+    - Base_R
+  - - Base_R
+    - Link1_R
+  - - Link1_R
+    - Link2_R
+  - - Link2_R
+    - Link3_R
+  - - Link3_R
+    - Link4_R
+  - - Link4_R
+    - Link5_R
+  - - Link5_R
+    - Link6_R
+  - - Link6_R
+    - Link7_R
+  - - Link7_R
+    - TCP_Link_R
+  - - TCP_Link_R
+    - marker_tianji_r
+  - - marker_tianji_r
+    - marker_mocap_r
+  - - marker_mocap_r
+    - marker_wuji2_r
+  - - marker_wuji2_r
+    - r_mount
+  - - r_mount
+    - r_wrist
+  - - r_wrist
+    - r_thumb_proximal
+  - - r_thumb_proximal
+    - r_thumb_proximal_abd
+  - - r_thumb_proximal_abd
+    - r_thumb_middle
+  - - r_thumb_middle
+    - r_thumb_distal
+  - - r_thumb_distal
+    - r_thumb_tip
+  - - r_wrist
+    - r_index_finger_proximal
+  - - r_index_finger_proximal
+    - r_index_finger_proximal_abd
+  - - r_index_finger_proximal_abd
+    - r_index_finger_middle
+  - - r_index_finger_middle
+    - r_index_finger_distal
+  - - r_index_finger_distal
+    - r_index_finger_tip
+  - - r_wrist
+    - r_middle_finger_proximal
+  - - r_middle_finger_proximal
+    - r_middle_finger_proximal_abd
+  - - r_middle_finger_proximal_abd
+    - r_middle_finger_middle
+  - - r_middle_finger_middle
+    - r_middle_finger_distal
+  - - r_middle_finger_distal
+    - r_middle_finger_tip
+  - - r_wrist
+    - r_ring_finger_proximal
+  - - r_ring_finger_proximal
+    - r_ring_finger_proximal_abd
+  - - r_ring_finger_proximal_abd
+    - r_ring_finger_middle
+  - - r_ring_finger_middle
+    - r_ring_finger_distal
+  - - r_ring_finger_distal
+    - r_ring_finger_tip
+  - - r_wrist
+    - r_pinky_proximal
+  - - r_pinky_proximal
+    - r_pinky_proximal_abd
+  - - r_pinky_proximal_abd
+    - r_pinky_middle
+  - - r_pinky_middle
+    - r_pinky_distal
+  - - r_pinky_distal
+    - r_pinky_tip
+  manifest: collision_manifest.yaml
+  records: 62
+  settings:
+    mode: raw
+compiler: spd-urdf-first-mjcf-1
+default_damping: 0.1
+dof: 54
+files:
+- unified_plant.xml
+- arm_ik.xml
+- model_manifest.yaml
+- collision_manifest.yaml
+- actuator_calibration.yaml
+hand_joint_order:
+  left:
+  - l_thumb_cmc_flex
+  - l_thumb_cmc_abd
+  - l_thumb_mcp
+  - l_thumb_ip
+  - l_index_finger_mcp_flex
+  - l_index_finger_mcp_abd
+  - l_index_finger_pip
+  - l_index_finger_dip
+  - l_middle_finger_mcp_flex
+  - l_middle_finger_mcp_abd
+  - l_middle_finger_pip
+  - l_middle_finger_dip
+  - l_ring_finger_mcp_flex
+  - l_ring_finger_mcp_abd
+  - l_ring_finger_pip
+  - l_ring_finger_dip
+  - l_pinky_mcp_flex
+  - l_pinky_mcp_abd
+  - l_pinky_pip
+  - l_pinky_dip
+  right:
+  - r_thumb_cmc_flex
+  - r_thumb_cmc_abd
+  - r_thumb_mcp
+  - r_thumb_ip
+  - r_index_finger_mcp_flex
+  - r_index_finger_mcp_abd
+  - r_index_finger_pip
+  - r_index_finger_dip
+  - r_middle_finger_mcp_flex
+  - r_middle_finger_mcp_abd
+  - r_middle_finger_pip
+  - r_middle_finger_dip
+  - r_ring_finger_mcp_flex
+  - r_ring_finger_mcp_abd
+  - r_ring_finger_pip
+  - r_ring_finger_dip
+  - r_pinky_mcp_flex
+  - r_pinky_mcp_abd
+  - r_pinky_pip
+  - r_pinky_dip
+joint_order:
+- Joint1_L
+- Joint2_L
+- Joint3_L
+- Joint4_L
+- Joint5_L
+- Joint6_L
+- Joint7_L
+- l_thumb_cmc_flex
+- l_thumb_cmc_abd
+- l_thumb_mcp
+- l_thumb_ip
+- l_index_finger_mcp_flex
+- l_index_finger_mcp_abd
+- l_index_finger_pip
+- l_index_finger_dip
+- l_middle_finger_mcp_flex
+- l_middle_finger_mcp_abd
+- l_middle_finger_pip
+- l_middle_finger_dip
+- l_ring_finger_mcp_flex
+- l_ring_finger_mcp_abd
+- l_ring_finger_pip
+- l_ring_finger_dip
+- l_pinky_mcp_flex
+- l_pinky_mcp_abd
+- l_pinky_pip
+- l_pinky_dip
+- Joint1_R
+- Joint2_R
+- Joint3_R
+- Joint4_R
+- Joint5_R
+- Joint6_R
+- Joint7_R
+- r_thumb_cmc_flex
+- r_thumb_cmc_abd
+- r_thumb_mcp
+- r_thumb_ip
+- r_index_finger_mcp_flex
+- r_index_finger_mcp_abd
+- r_index_finger_pip
+- r_index_finger_dip
+- r_middle_finger_mcp_flex
+- r_middle_finger_mcp_abd
+- r_middle_finger_pip
+- r_middle_finger_dip
+- r_ring_finger_mcp_flex
+- r_ring_finger_mcp_abd
+- r_ring_finger_pip
+- r_ring_finger_dip
+- r_pinky_mcp_flex
+- r_pinky_mcp_abd
+- r_pinky_pip
+- r_pinky_dip
+joints:
+- actuator: Joint1_L_position
+  dof_address: 0
+  group: arm
+  index: 0
+  joint: Joint1_L
+  qpos_address: 0
+  range:
+  - -3.1067
+  - 3.1067
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint2_L_position
+  dof_address: 1
+  group: arm
+  index: 1
+  joint: Joint2_L
+  qpos_address: 1
+  range:
+  - -2.0944
+  - 2.0944
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint3_L_position
+  dof_address: 2
+  group: arm
+  index: 2
+  joint: Joint3_L
+  qpos_address: 2
+  range:
+  - -3.1067
+  - 3.1067
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint4_L_position
+  dof_address: 3
+  group: arm
+  index: 3
+  joint: Joint4_L
+  qpos_address: 3
+  range:
+  - -2.5307
+  - 1.0472
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint5_L_position
+  dof_address: 4
+  group: arm
+  index: 4
+  joint: Joint5_L
+  qpos_address: 4
+  range:
+  - -3.1067
+  - 3.1067
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint6_L_position
+  dof_address: 5
+  group: arm
+  index: 5
+  joint: Joint6_L
+  qpos_address: 5
+  range:
+  - -1.0472
+  - 1.0472
+  side: left
+  velocity_limit: 3.1416
+- actuator: Joint7_L_position
+  dof_address: 6
+  group: arm
+  index: 6
+  joint: Joint7_L
+  qpos_address: 6
+  range:
+  - -1.5708
+  - 1.5708
+  side: left
+  velocity_limit: 3.1416
+- actuator: l_thumb_cmc_flex_position
+  dof_address: 7
+  group: hand
+  index: 7
+  joint: l_thumb_cmc_flex
+  qpos_address: 7
+  range:
+  - -1.187
+  - 1.291
+  side: left
+  velocity_limit: 8.587
+- actuator: l_thumb_cmc_abd_position
+  dof_address: 8
+  group: hand
+  index: 8
+  joint: l_thumb_cmc_abd
+  qpos_address: 8
+  range:
+  - -1.484
+  - 0.698
+  side: left
+  velocity_limit: 11.1
+- actuator: l_thumb_mcp_position
+  dof_address: 9
+  group: hand
+  index: 9
+  joint: l_thumb_mcp
+  qpos_address: 9
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 12.86
+- actuator: l_thumb_ip_position
+  dof_address: 10
+  group: hand
+  index: 10
+  joint: l_thumb_ip
+  qpos_address: 10
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 13.5
+- actuator: l_index_finger_mcp_flex_position
+  dof_address: 11
+  group: hand
+  index: 11
+  joint: l_index_finger_mcp_flex
+  qpos_address: 11
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 8.203
+- actuator: l_index_finger_mcp_abd_position
+  dof_address: 12
+  group: hand
+  index: 12
+  joint: l_index_finger_mcp_abd
+  qpos_address: 12
+  range:
+  - -0.698
+  - 0.698
+  side: left
+  velocity_limit: 8.11
+- actuator: l_index_finger_pip_position
+  dof_address: 13
+  group: hand
+  index: 13
+  joint: l_index_finger_pip
+  qpos_address: 13
+  range:
+  - -1.047
+  - 2.094
+  side: left
+  velocity_limit: 12.86
+- actuator: l_index_finger_dip_position
+  dof_address: 14
+  group: hand
+  index: 14
+  joint: l_index_finger_dip
+  qpos_address: 14
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 13.5
+- actuator: l_middle_finger_mcp_flex_position
+  dof_address: 15
+  group: hand
+  index: 15
+  joint: l_middle_finger_mcp_flex
+  qpos_address: 15
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 8.203
+- actuator: l_middle_finger_mcp_abd_position
+  dof_address: 16
+  group: hand
+  index: 16
+  joint: l_middle_finger_mcp_abd
+  qpos_address: 16
+  range:
+  - -0.698
+  - 0.698
+  side: left
+  velocity_limit: 8.11
+- actuator: l_middle_finger_pip_position
+  dof_address: 17
+  group: hand
+  index: 17
+  joint: l_middle_finger_pip
+  qpos_address: 17
+  range:
+  - -1.047
+  - 2.094
+  side: left
+  velocity_limit: 12.86
+- actuator: l_middle_finger_dip_position
+  dof_address: 18
+  group: hand
+  index: 18
+  joint: l_middle_finger_dip
+  qpos_address: 18
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 13.5
+- actuator: l_ring_finger_mcp_flex_position
+  dof_address: 19
+  group: hand
+  index: 19
+  joint: l_ring_finger_mcp_flex
+  qpos_address: 19
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 8.203
+- actuator: l_ring_finger_mcp_abd_position
+  dof_address: 20
+  group: hand
+  index: 20
+  joint: l_ring_finger_mcp_abd
+  qpos_address: 20
+  range:
+  - -0.698
+  - 0.698
+  side: left
+  velocity_limit: 8.11
+- actuator: l_ring_finger_pip_position
+  dof_address: 21
+  group: hand
+  index: 21
+  joint: l_ring_finger_pip
+  qpos_address: 21
+  range:
+  - -1.047
+  - 2.094
+  side: left
+  velocity_limit: 12.86
+- actuator: l_ring_finger_dip_position
+  dof_address: 22
+  group: hand
+  index: 22
+  joint: l_ring_finger_dip
+  qpos_address: 22
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 13.5
+- actuator: l_pinky_mcp_flex_position
+  dof_address: 23
+  group: hand
+  index: 23
+  joint: l_pinky_mcp_flex
+  qpos_address: 23
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 8.203
+- actuator: l_pinky_mcp_abd_position
+  dof_address: 24
+  group: hand
+  index: 24
+  joint: l_pinky_mcp_abd
+  qpos_address: 24
+  range:
+  - -0.698
+  - 0.698
+  side: left
+  velocity_limit: 8.11
+- actuator: l_pinky_pip_position
+  dof_address: 25
+  group: hand
+  index: 25
+  joint: l_pinky_pip
+  qpos_address: 25
+  range:
+  - -1.047
+  - 2.094
+  side: left
+  velocity_limit: 12.86
+- actuator: l_pinky_dip_position
+  dof_address: 26
+  group: hand
+  index: 26
+  joint: l_pinky_dip
+  qpos_address: 26
+  range:
+  - -1.047
+  - 1.57
+  side: left
+  velocity_limit: 13.5
+- actuator: Joint1_R_position
+  dof_address: 27
+  group: arm
+  index: 27
+  joint: Joint1_R
+  qpos_address: 27
+  range:
+  - -3.1067
+  - 3.1067
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint2_R_position
+  dof_address: 28
+  group: arm
+  index: 28
+  joint: Joint2_R
+  qpos_address: 28
+  range:
+  - -2.0944
+  - 2.0944
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint3_R_position
+  dof_address: 29
+  group: arm
+  index: 29
+  joint: Joint3_R
+  qpos_address: 29
+  range:
+  - -3.1067
+  - 3.1067
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint4_R_position
+  dof_address: 30
+  group: arm
+  index: 30
+  joint: Joint4_R
+  qpos_address: 30
+  range:
+  - -2.5307
+  - 1.0472
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint5_R_position
+  dof_address: 31
+  group: arm
+  index: 31
+  joint: Joint5_R
+  qpos_address: 31
+  range:
+  - -3.1067
+  - 3.1067
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint6_R_position
+  dof_address: 32
+  group: arm
+  index: 32
+  joint: Joint6_R
+  qpos_address: 32
+  range:
+  - -1.0472
+  - 1.0472
+  side: right
+  velocity_limit: 3.1416
+- actuator: Joint7_R_position
+  dof_address: 33
+  group: arm
+  index: 33
+  joint: Joint7_R
+  qpos_address: 33
+  range:
+  - -1.5708
+  - 1.5708
+  side: right
+  velocity_limit: 3.1416
+- actuator: r_thumb_cmc_flex_position
+  dof_address: 34
+  group: hand
+  index: 34
+  joint: r_thumb_cmc_flex
+  qpos_address: 34
+  range:
+  - -1.187
+  - 1.291
+  side: right
+  velocity_limit: 8.587
+- actuator: r_thumb_cmc_abd_position
+  dof_address: 35
+  group: hand
+  index: 35
+  joint: r_thumb_cmc_abd
+  qpos_address: 35
+  range:
+  - -1.484
+  - 0.698
+  side: right
+  velocity_limit: 11.1
+- actuator: r_thumb_mcp_position
+  dof_address: 36
+  group: hand
+  index: 36
+  joint: r_thumb_mcp
+  qpos_address: 36
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 12.86
+- actuator: r_thumb_ip_position
+  dof_address: 37
+  group: hand
+  index: 37
+  joint: r_thumb_ip
+  qpos_address: 37
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 13.5
+- actuator: r_index_finger_mcp_flex_position
+  dof_address: 38
+  group: hand
+  index: 38
+  joint: r_index_finger_mcp_flex
+  qpos_address: 38
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 8.203
+- actuator: r_index_finger_mcp_abd_position
+  dof_address: 39
+  group: hand
+  index: 39
+  joint: r_index_finger_mcp_abd
+  qpos_address: 39
+  range:
+  - -0.698
+  - 0.698
+  side: right
+  velocity_limit: 8.11
+- actuator: r_index_finger_pip_position
+  dof_address: 40
+  group: hand
+  index: 40
+  joint: r_index_finger_pip
+  qpos_address: 40
+  range:
+  - -1.047
+  - 2.094
+  side: right
+  velocity_limit: 12.86
+- actuator: r_index_finger_dip_position
+  dof_address: 41
+  group: hand
+  index: 41
+  joint: r_index_finger_dip
+  qpos_address: 41
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 13.5
+- actuator: r_middle_finger_mcp_flex_position
+  dof_address: 42
+  group: hand
+  index: 42
+  joint: r_middle_finger_mcp_flex
+  qpos_address: 42
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 8.203
+- actuator: r_middle_finger_mcp_abd_position
+  dof_address: 43
+  group: hand
+  index: 43
+  joint: r_middle_finger_mcp_abd
+  qpos_address: 43
+  range:
+  - -0.698
+  - 0.698
+  side: right
+  velocity_limit: 8.11
+- actuator: r_middle_finger_pip_position
+  dof_address: 44
+  group: hand
+  index: 44
+  joint: r_middle_finger_pip
+  qpos_address: 44
+  range:
+  - -1.047
+  - 2.094
+  side: right
+  velocity_limit: 12.86
+- actuator: r_middle_finger_dip_position
+  dof_address: 45
+  group: hand
+  index: 45
+  joint: r_middle_finger_dip
+  qpos_address: 45
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 13.5
+- actuator: r_ring_finger_mcp_flex_position
+  dof_address: 46
+  group: hand
+  index: 46
+  joint: r_ring_finger_mcp_flex
+  qpos_address: 46
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 8.203
+- actuator: r_ring_finger_mcp_abd_position
+  dof_address: 47
+  group: hand
+  index: 47
+  joint: r_ring_finger_mcp_abd
+  qpos_address: 47
+  range:
+  - -0.698
+  - 0.698
+  side: right
+  velocity_limit: 8.11
+- actuator: r_ring_finger_pip_position
+  dof_address: 48
+  group: hand
+  index: 48
+  joint: r_ring_finger_pip
+  qpos_address: 48
+  range:
+  - -1.047
+  - 2.094
+  side: right
+  velocity_limit: 12.86
+- actuator: r_ring_finger_dip_position
+  dof_address: 49
+  group: hand
+  index: 49
+  joint: r_ring_finger_dip
+  qpos_address: 49
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 13.5
+- actuator: r_pinky_mcp_flex_position
+  dof_address: 50
+  group: hand
+  index: 50
+  joint: r_pinky_mcp_flex
+  qpos_address: 50
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 8.203
+- actuator: r_pinky_mcp_abd_position
+  dof_address: 51
+  group: hand
+  index: 51
+  joint: r_pinky_mcp_abd
+  qpos_address: 51
+  range:
+  - -0.698
+  - 0.698
+  side: right
+  velocity_limit: 8.11
+- actuator: r_pinky_pip_position
+  dof_address: 52
+  group: hand
+  index: 52
+  joint: r_pinky_pip
+  qpos_address: 52
+  range:
+  - -1.047
+  - 2.094
+  side: right
+  velocity_limit: 12.86
+- actuator: r_pinky_dip_position
+  dof_address: 53
+  group: hand
+  index: 53
+  joint: r_pinky_dip
+  qpos_address: 53
+  range:
+  - -1.047
+  - 1.57
+  side: right
+  velocity_limit: 13.5
+manifest_sha256: 6a17403c22149685cadd24dea14a4411d2489a895e6095531ed889b5b96d0376
+models:
+  arm:
+    njnt: 14
+    nq: 14
+    nu: 14
+    nv: 14
+  full:
+    njnt: 54
+    nq: 54
+    nu: 54
+    nv: 54
+outputs:
+  actuator_calibration.yaml: cffbd7874b171cea319b96ae7577bc1b2cff71fbfc3e806cc099829698676489
+  arm_ik.xml: 7d4cfbe4705b373def0d9c02d1187df9adcc811b9b207a87ebdfa61817814ccc
+  collision_manifest.yaml: 401ff34b5f38b430bd524465bfc95c708f1e51196e792aa9b1c7a1ef9cf8b415
+  unified_plant.xml: c015a91c1af3758edfa5f9475a00337743b1a89f6feaeaf53c2b2a93fa32df3a
+source:
+  meshes:
+    meshes/Base_L.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+    meshes/Base_R.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+    meshes/Link1_L.STL: d00097eec49600a4111ee5a124d6636f50ea09a7a1dc8486d98f4370dde7a932
+    meshes/Link1_R.STL: fdb1075fe0b41e5c2cb7c2fe13c9d2e62ff4dd6eb540ea841b8603db28369dd0
+    meshes/Link2_L.STL: 4776a6a2086ddc61b1643aff93386e545baccef2751db29d863fe027a76f325e
+    meshes/Link2_R.STL: 53eb9fc69c939d2ebd4f32c1df341c1c42bc3d9d0911db0c9fcee70aa2701b34
+    meshes/Link3_L.STL: d58f1039bd3eb2ccc1a1959b89d2de7ae714344ad8cb8b78ef97b92dcd317d26
+    meshes/Link3_R.STL: 122456d8fc3e81694f352fc1f29d0bc19066f7f3d7572857a1be1e7c030dec9c
+    meshes/Link4_L.STL: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+    meshes/Link4_R.STL: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+    meshes/Link5_L.STL: 573f15ee62b0a9b2d62aceeb756800fd86969a685535e91416b73d51f1c57613
+    meshes/Link5_R.STL: 2de51a340695c89b2fd58b1171dfacc4d85aa4e6cd50879e021a2d0bde8599a8
+    meshes/Link6_L.STL: b6b7570d8ebf1d2acb01baf8941b892f5a5f72aaa05503ab8340da8a2a7b2c13
+    meshes/Link6_R.STL: 49722d14b9ac34a84a41c95f49bd0b2a8859d4a05f66b247822bf36b0a703cd5
+    meshes/Link7_L.STL: 126cc7d41c37049ce34d2636bfe2d460c21e3429ed080877d1c5e983109ef798
+    meshes/Link7_R.STL: 6eb75b059ff383e90a153be840bcce84b23d8f8afd074b1bc9dfec1b18c2351f
+    meshes/Link_Base.STL: 95b3f71bb8c0c1236a62dd622a2973252be0817880d13bdda1daabc6e1e11433
+    meshes/Link_Stand.STL: 5b550a122b8f819a5237fff1bba3568ccf4a56ce19305de0e897fbdb72148113
+    meshes/TCP_Link_L.STL: 131ee3817f88b2f8e72f7f4831b8779f4dfae2afabaf170a7a0a7306a2e2e309
+    meshes/TCP_Link_R.STL: 131ee3817f88b2f8e72f7f4831b8779f4dfae2afabaf170a7a0a7306a2e2e309
+    meshes/marker_mocap.STL: 88b81edcc9a098ab020041c1b6ad54cdbc3ba278a874145b4ea33b62b037d625
+    meshes/wuji2_l_index_finger_distal.STL: 88073f1d4223a746dea7aa271abe3a33db72baeb7bcc3c69fe5e67496898b603
+    meshes/wuji2_l_index_finger_middle.STL: c7f8ca28f2fa973d4279acd49b07322053eb6dd8404a8f503f43ba8ee1a30c03
+    meshes/wuji2_l_index_finger_proximal.STL: bf935ef489598daa56b49cb0ac6aeb5c9b2827ce8476803332f427eecee64c7a
+    meshes/wuji2_l_index_finger_proximal_abd.STL: 49e25d1cf82ae9585cc0473783ed6a1c3253ac01b0c001c9d237c19980fe030e
+    meshes/wuji2_l_middle_finger_distal.STL: e9fbb382b15a11b8f47ad7992722c387e2b917636a154623eb6717d210848ae3
+    meshes/wuji2_l_middle_finger_middle.STL: 1bbeb7aed7685f8cb37f94996bfb53d611f6db7ff3c8cc13e83a7f8d9d6048ab
+    meshes/wuji2_l_middle_finger_proximal.STL: 8094b18da5c57109c90179116dc780c1ee984a957e0ef88cb09e50faa87bb931
+    meshes/wuji2_l_middle_finger_proximal_abd.STL: 9c27f542865f96d5ca0b00e01e8004ecba0860040d8abbd10dc72c980f433a61
+    meshes/wuji2_l_mount.STL: 175491889134d13e4b468c32e80cc93e14d6eed3f287c52ed7e0cb8273920aae
+    meshes/wuji2_l_pinky_distal.STL: cdaaf5601c0d8b3ac94da35e6e1ddc5ea21e1593e9a1d7e2988dd97d9a040745
+    meshes/wuji2_l_pinky_middle.STL: c19b3b46d170a87e08beb309307fcbcc11b89fc52061f6d8ad63a6692c0c33d5
+    meshes/wuji2_l_pinky_proximal.STL: df5bbe36bbd592c8913ea3c6c31af5cda0011f801de184815672b2fbe4f429b1
+    meshes/wuji2_l_pinky_proximal_abd.STL: af1e1a26483fac1b030b3bec7fe6a96b1705c8b1f1410095ecb6fb09751ad641
+    meshes/wuji2_l_ring_finger_distal.STL: 9a6d8d6ff2baa590fce40ad8e29f3d133bb8ef718ef4cfbeb24c71c39512b49e
+    meshes/wuji2_l_ring_finger_middle.STL: 48f08ce36e752b1b8c922b93dfc2df9a30270250b8a9aeb62bad890d7f177a37
+    meshes/wuji2_l_ring_finger_proximal.STL: 6379c0f29351b3a59fbc80cdab021a441710050bfc000aa83d315f91884a5204
+    meshes/wuji2_l_ring_finger_proximal_abd.STL: 6190e180e0f58f745b709eb9feb6dd822affb69827a9f9ad9791d2fbf57b1534
+    meshes/wuji2_l_thumb_distal.STL: fc9ca88a403dedbe2afa8fd25fe1c622d986bc290cab2803cfd6806198e00e75
+    meshes/wuji2_l_thumb_middle.STL: 33cafea989a21445ceb51fee5bc6777b23c6ded88183ad2103946108efdbc292
+    meshes/wuji2_l_thumb_proximal.STL: 115227446584dd51e3ae77113063f97dc9e88cf4ce5db201eef2b81c17dd939c
+    meshes/wuji2_l_thumb_proximal_abd.STL: 3528478e63b18ee73b4170d03b6cf2df5bbf00f31bca2c1b03eccdfde0f5caa4
+    meshes/wuji2_l_wrist.STL: b37d7bbcb3c8888e7179f27e8c87e436358adad9cf30d7cb86bc46ee696a7ee8
+    meshes/wuji2_r_index_finger_distal.STL: 778ca04891678c9d124817cb66d74c5deb0d00bff78d927f15fa26a8a2585a1b
+    meshes/wuji2_r_index_finger_middle.STL: dc42d5c512f1d124fe7160f78e72c11161053e794036a80963a8f4a4492f01cf
+    meshes/wuji2_r_index_finger_proximal.STL: 0f924f11cf7ce9a431ca3f2395762e65cc44a036128a2ccb80638996b64c8a06
+    meshes/wuji2_r_index_finger_proximal_abd.STL: f46cf96ed29ab98143a43eb4aee0cc727a739b8f2e104e54896f8d2c5570927c
+    meshes/wuji2_r_middle_finger_distal.STL: e3097f0b48ccc87ea371b71a4fca9a94f09f84aff25a3fd0f757699eaeacf787
+    meshes/wuji2_r_middle_finger_middle.STL: f9294d81a3795fd63a55abf0c00ca43326a09b8e43b8308fc92135e0ae9fdb07
+    meshes/wuji2_r_middle_finger_proximal.STL: 9b552c22b645272ed0f2a3728cbf3fd5c2cb9541c2d6970521e94394cf17bc29
+    meshes/wuji2_r_middle_finger_proximal_abd.STL: ff459d71637c3a5fddac62f85f86c485f273ab079092233a9a29d0affb9db502
+    meshes/wuji2_r_mount.STL: fd30d30dbfd254e317e957588dd5863c46405f719e255fe79104ece93a08e416
+    meshes/wuji2_r_pinky_distal.STL: 1ffc4d7591623a895d81de76c0db30af2199d64e4506371dd561829989461390
+    meshes/wuji2_r_pinky_middle.STL: 12466b870cf8cc47aacdc02a535474d65bce3bf128840a8e471c4fede43d57ee
+    meshes/wuji2_r_pinky_proximal.STL: 6a5696573c69e37467e3ba3b722d92ecd0078f0e18ae8e1e2c49ad118800ea8b
+    meshes/wuji2_r_pinky_proximal_abd.STL: 321e9e615166eab4cd87ad4bc8609a7c19944fd7200f957d11bb020fa255bb72
+    meshes/wuji2_r_ring_finger_distal.STL: 8659910ddc8b5275576363946a337f13cd60cde3abdda091adf58a7948547be3
+    meshes/wuji2_r_ring_finger_middle.STL: c7cbabcc9dfe6eba74af3255554757b4d18d49566711eb6717f7e656ac882002
+    meshes/wuji2_r_ring_finger_proximal.STL: 650b7aac177e26a2d42cc7f14aee79d3e4a9d344e8de688e2b6fb18ba5bdf50b
+    meshes/wuji2_r_ring_finger_proximal_abd.STL: 1a90fcaa2aae3569d8343d4be31a489d630d302f3a0feebc531fc60a9dd2a2fb
+    meshes/wuji2_r_thumb_distal.STL: f19c6077ca17e52f2801593880684c0347370669e9661d47c163f0b56eea99e4
+    meshes/wuji2_r_thumb_middle.STL: a3e9851cd3aed770fb0ed2b05b2ceca86980af1bfef2fbc8e1925e9a6110f56f
+    meshes/wuji2_r_thumb_proximal.STL: e5f4c7dbffeddf626e5d6c7883e10a6c1de0e2d8213a9122dba5ee29a488345f
+    meshes/wuji2_r_thumb_proximal_abd.STL: d9e28b15b054ede554f23524c32f430fefa3622eb9fa10016c39fec10a2638e8
+    meshes/wuji2_r_wrist.STL: 748cf6a16bc5bfedf9c7e2ee489459f726740680db1449221133be570f9ee505
+  urdf: tianji_wuji2.urdf
+  urdf_sha256: 434cf62e87ff8c3dd487d5c99c231b7e315ccf27bd29ea9ce2871e23e6b599b9
+version: 1
+visual_meshes:
+- filename: meshes/Base_L.STL
+  output_file: meshes/Base_L.STL
+  path: meshes/Base_L.STL
+  sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  uses:
+  - index: 0
+    kind: visual
+    link: Base_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Base_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Base_R.STL
+  output_file: meshes/Base_R.STL
+  path: meshes/Base_R.STL
+  sha256: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
+  uses:
+  - index: 0
+    kind: visual
+    link: Base_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Base_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link1_L.STL
+  output_file: meshes/Link1_L.STL
+  path: meshes/Link1_L.STL
+  sha256: d00097eec49600a4111ee5a124d6636f50ea09a7a1dc8486d98f4370dde7a932
+  uses:
+  - index: 0
+    kind: visual
+    link: Link1_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link1_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link1_R.STL
+  output_file: meshes/Link1_R.STL
+  path: meshes/Link1_R.STL
+  sha256: fdb1075fe0b41e5c2cb7c2fe13c9d2e62ff4dd6eb540ea841b8603db28369dd0
+  uses:
+  - index: 0
+    kind: visual
+    link: Link1_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link1_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link2_L.STL
+  output_file: meshes/Link2_L.STL
+  path: meshes/Link2_L.STL
+  sha256: 4776a6a2086ddc61b1643aff93386e545baccef2751db29d863fe027a76f325e
+  uses:
+  - index: 0
+    kind: visual
+    link: Link2_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link2_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link2_R.STL
+  output_file: meshes/Link2_R.STL
+  path: meshes/Link2_R.STL
+  sha256: 53eb9fc69c939d2ebd4f32c1df341c1c42bc3d9d0911db0c9fcee70aa2701b34
+  uses:
+  - index: 0
+    kind: visual
+    link: Link2_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link2_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link3_L.STL
+  output_file: meshes/Link3_L.STL
+  path: meshes/Link3_L.STL
+  sha256: d58f1039bd3eb2ccc1a1959b89d2de7ae714344ad8cb8b78ef97b92dcd317d26
+  uses:
+  - index: 0
+    kind: visual
+    link: Link3_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link3_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link3_R.STL
+  output_file: meshes/Link3_R.STL
+  path: meshes/Link3_R.STL
+  sha256: 122456d8fc3e81694f352fc1f29d0bc19066f7f3d7572857a1be1e7c030dec9c
+  uses:
+  - index: 0
+    kind: visual
+    link: Link3_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link3_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link4_L.STL
+  output_file: meshes/Link4_L.STL
+  path: meshes/Link4_L.STL
+  sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  uses:
+  - index: 0
+    kind: visual
+    link: Link4_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link4_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link4_R.STL
+  output_file: meshes/Link4_R.STL
+  path: meshes/Link4_R.STL
+  sha256: 77f18566339f38acac1785fae517b05ff1e5247b95404ce26536d215bbed9cd7
+  uses:
+  - index: 0
+    kind: visual
+    link: Link4_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link4_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link5_L.STL
+  output_file: meshes/Link5_L.STL
+  path: meshes/Link5_L.STL
+  sha256: 573f15ee62b0a9b2d62aceeb756800fd86969a685535e91416b73d51f1c57613
+  uses:
+  - index: 0
+    kind: visual
+    link: Link5_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link5_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link5_R.STL
+  output_file: meshes/Link5_R.STL
+  path: meshes/Link5_R.STL
+  sha256: 2de51a340695c89b2fd58b1171dfacc4d85aa4e6cd50879e021a2d0bde8599a8
+  uses:
+  - index: 0
+    kind: visual
+    link: Link5_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link5_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link6_L.STL
+  output_file: meshes/Link6_L.STL
+  path: meshes/Link6_L.STL
+  sha256: b6b7570d8ebf1d2acb01baf8941b892f5a5f72aaa05503ab8340da8a2a7b2c13
+  uses:
+  - index: 0
+    kind: visual
+    link: Link6_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link6_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link6_R.STL
+  output_file: meshes/Link6_R.STL
+  path: meshes/Link6_R.STL
+  sha256: 49722d14b9ac34a84a41c95f49bd0b2a8859d4a05f66b247822bf36b0a703cd5
+  uses:
+  - index: 0
+    kind: visual
+    link: Link6_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link6_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link7_L.STL
+  output_file: meshes/Link7_L.STL
+  path: meshes/Link7_L.STL
+  sha256: 126cc7d41c37049ce34d2636bfe2d460c21e3429ed080877d1c5e983109ef798
+  uses:
+  - index: 0
+    kind: visual
+    link: Link7_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link7_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link7_R.STL
+  output_file: meshes/Link7_R.STL
+  path: meshes/Link7_R.STL
+  sha256: 6eb75b059ff383e90a153be840bcce84b23d8f8afd074b1bc9dfec1b18c2351f
+  uses:
+  - index: 0
+    kind: visual
+    link: Link7_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link7_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link_Base.STL
+  output_file: meshes/Link_Base.STL
+  path: meshes/Link_Base.STL
+  sha256: 95b3f71bb8c0c1236a62dd622a2973252be0817880d13bdda1daabc6e1e11433
+  uses:
+  - index: 0
+    kind: visual
+    link: Link_Base
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link_Base
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/Link_Stand.STL
+  output_file: meshes/Link_Stand.STL
+  path: meshes/Link_Stand.STL
+  sha256: 5b550a122b8f819a5237fff1bba3568ccf4a56ce19305de0e897fbdb72148113
+  uses:
+  - index: 0
+    kind: visual
+    link: Link_Stand
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: Link_Stand
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/TCP_Link_L.STL
+  output_file: meshes/TCP_Link_L.STL
+  path: meshes/TCP_Link_L.STL
+  sha256: 131ee3817f88b2f8e72f7f4831b8779f4dfae2afabaf170a7a0a7306a2e2e309
+  uses:
+  - index: 0
+    kind: visual
+    link: TCP_Link_L
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/TCP_Link_R.STL
+  output_file: meshes/TCP_Link_R.STL
+  path: meshes/TCP_Link_R.STL
+  sha256: 131ee3817f88b2f8e72f7f4831b8779f4dfae2afabaf170a7a0a7306a2e2e309
+  uses:
+  - index: 0
+    kind: visual
+    link: TCP_Link_R
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/marker_mocap.STL
+  output_file: meshes/marker_mocap.STL
+  path: meshes/marker_mocap.STL
+  sha256: 88b81edcc9a098ab020041c1b6ad54cdbc3ba278a874145b4ea33b62b037d625
+  uses:
+  - index: 0
+    kind: visual
+    link: marker_mocap_l
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: visual
+    link: marker_mocap_r
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_index_finger_distal.STL
+  output_file: meshes/wuji2_l_index_finger_distal.STL
+  path: meshes/wuji2_l_index_finger_distal.STL
+  sha256: 88073f1d4223a746dea7aa271abe3a33db72baeb7bcc3c69fe5e67496898b603
+  uses:
+  - index: 0
+    kind: visual
+    link: l_index_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_index_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_index_finger_middle.STL
+  output_file: meshes/wuji2_l_index_finger_middle.STL
+  path: meshes/wuji2_l_index_finger_middle.STL
+  sha256: c7f8ca28f2fa973d4279acd49b07322053eb6dd8404a8f503f43ba8ee1a30c03
+  uses:
+  - index: 0
+    kind: visual
+    link: l_index_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_index_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_index_finger_proximal.STL
+  output_file: meshes/wuji2_l_index_finger_proximal.STL
+  path: meshes/wuji2_l_index_finger_proximal.STL
+  sha256: bf935ef489598daa56b49cb0ac6aeb5c9b2827ce8476803332f427eecee64c7a
+  uses:
+  - index: 0
+    kind: visual
+    link: l_index_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_index_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_index_finger_proximal_abd.STL
+  output_file: meshes/wuji2_l_index_finger_proximal_abd.STL
+  path: meshes/wuji2_l_index_finger_proximal_abd.STL
+  sha256: 49e25d1cf82ae9585cc0473783ed6a1c3253ac01b0c001c9d237c19980fe030e
+  uses:
+  - index: 0
+    kind: visual
+    link: l_index_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_index_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_middle_finger_distal.STL
+  output_file: meshes/wuji2_l_middle_finger_distal.STL
+  path: meshes/wuji2_l_middle_finger_distal.STL
+  sha256: e9fbb382b15a11b8f47ad7992722c387e2b917636a154623eb6717d210848ae3
+  uses:
+  - index: 0
+    kind: visual
+    link: l_middle_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_middle_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_middle_finger_middle.STL
+  output_file: meshes/wuji2_l_middle_finger_middle.STL
+  path: meshes/wuji2_l_middle_finger_middle.STL
+  sha256: 1bbeb7aed7685f8cb37f94996bfb53d611f6db7ff3c8cc13e83a7f8d9d6048ab
+  uses:
+  - index: 0
+    kind: visual
+    link: l_middle_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_middle_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_middle_finger_proximal.STL
+  output_file: meshes/wuji2_l_middle_finger_proximal.STL
+  path: meshes/wuji2_l_middle_finger_proximal.STL
+  sha256: 8094b18da5c57109c90179116dc780c1ee984a957e0ef88cb09e50faa87bb931
+  uses:
+  - index: 0
+    kind: visual
+    link: l_middle_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_middle_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_middle_finger_proximal_abd.STL
+  output_file: meshes/wuji2_l_middle_finger_proximal_abd.STL
+  path: meshes/wuji2_l_middle_finger_proximal_abd.STL
+  sha256: 9c27f542865f96d5ca0b00e01e8004ecba0860040d8abbd10dc72c980f433a61
+  uses:
+  - index: 0
+    kind: visual
+    link: l_middle_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_middle_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_mount.STL
+  output_file: meshes/wuji2_l_mount.STL
+  path: meshes/wuji2_l_mount.STL
+  sha256: 175491889134d13e4b468c32e80cc93e14d6eed3f287c52ed7e0cb8273920aae
+  uses:
+  - index: 0
+    kind: visual
+    link: l_mount
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_mount
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_pinky_distal.STL
+  output_file: meshes/wuji2_l_pinky_distal.STL
+  path: meshes/wuji2_l_pinky_distal.STL
+  sha256: cdaaf5601c0d8b3ac94da35e6e1ddc5ea21e1593e9a1d7e2988dd97d9a040745
+  uses:
+  - index: 0
+    kind: visual
+    link: l_pinky_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_pinky_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_pinky_middle.STL
+  output_file: meshes/wuji2_l_pinky_middle.STL
+  path: meshes/wuji2_l_pinky_middle.STL
+  sha256: c19b3b46d170a87e08beb309307fcbcc11b89fc52061f6d8ad63a6692c0c33d5
+  uses:
+  - index: 0
+    kind: visual
+    link: l_pinky_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_pinky_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_pinky_proximal.STL
+  output_file: meshes/wuji2_l_pinky_proximal.STL
+  path: meshes/wuji2_l_pinky_proximal.STL
+  sha256: df5bbe36bbd592c8913ea3c6c31af5cda0011f801de184815672b2fbe4f429b1
+  uses:
+  - index: 0
+    kind: visual
+    link: l_pinky_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_pinky_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_pinky_proximal_abd.STL
+  output_file: meshes/wuji2_l_pinky_proximal_abd.STL
+  path: meshes/wuji2_l_pinky_proximal_abd.STL
+  sha256: af1e1a26483fac1b030b3bec7fe6a96b1705c8b1f1410095ecb6fb09751ad641
+  uses:
+  - index: 0
+    kind: visual
+    link: l_pinky_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_pinky_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_ring_finger_distal.STL
+  output_file: meshes/wuji2_l_ring_finger_distal.STL
+  path: meshes/wuji2_l_ring_finger_distal.STL
+  sha256: 9a6d8d6ff2baa590fce40ad8e29f3d133bb8ef718ef4cfbeb24c71c39512b49e
+  uses:
+  - index: 0
+    kind: visual
+    link: l_ring_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_ring_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_ring_finger_middle.STL
+  output_file: meshes/wuji2_l_ring_finger_middle.STL
+  path: meshes/wuji2_l_ring_finger_middle.STL
+  sha256: 48f08ce36e752b1b8c922b93dfc2df9a30270250b8a9aeb62bad890d7f177a37
+  uses:
+  - index: 0
+    kind: visual
+    link: l_ring_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_ring_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_ring_finger_proximal.STL
+  output_file: meshes/wuji2_l_ring_finger_proximal.STL
+  path: meshes/wuji2_l_ring_finger_proximal.STL
+  sha256: 6379c0f29351b3a59fbc80cdab021a441710050bfc000aa83d315f91884a5204
+  uses:
+  - index: 0
+    kind: visual
+    link: l_ring_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_ring_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_ring_finger_proximal_abd.STL
+  output_file: meshes/wuji2_l_ring_finger_proximal_abd.STL
+  path: meshes/wuji2_l_ring_finger_proximal_abd.STL
+  sha256: 6190e180e0f58f745b709eb9feb6dd822affb69827a9f9ad9791d2fbf57b1534
+  uses:
+  - index: 0
+    kind: visual
+    link: l_ring_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_ring_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_thumb_distal.STL
+  output_file: meshes/wuji2_l_thumb_distal.STL
+  path: meshes/wuji2_l_thumb_distal.STL
+  sha256: fc9ca88a403dedbe2afa8fd25fe1c622d986bc290cab2803cfd6806198e00e75
+  uses:
+  - index: 0
+    kind: visual
+    link: l_thumb_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_thumb_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_thumb_middle.STL
+  output_file: meshes/wuji2_l_thumb_middle.STL
+  path: meshes/wuji2_l_thumb_middle.STL
+  sha256: 33cafea989a21445ceb51fee5bc6777b23c6ded88183ad2103946108efdbc292
+  uses:
+  - index: 0
+    kind: visual
+    link: l_thumb_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_thumb_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_thumb_proximal.STL
+  output_file: meshes/wuji2_l_thumb_proximal.STL
+  path: meshes/wuji2_l_thumb_proximal.STL
+  sha256: 115227446584dd51e3ae77113063f97dc9e88cf4ce5db201eef2b81c17dd939c
+  uses:
+  - index: 0
+    kind: visual
+    link: l_thumb_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_thumb_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_thumb_proximal_abd.STL
+  output_file: meshes/wuji2_l_thumb_proximal_abd.STL
+  path: meshes/wuji2_l_thumb_proximal_abd.STL
+  sha256: 3528478e63b18ee73b4170d03b6cf2df5bbf00f31bca2c1b03eccdfde0f5caa4
+  uses:
+  - index: 0
+    kind: visual
+    link: l_thumb_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_thumb_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_l_wrist.STL
+  output_file: meshes/wuji2_l_wrist.STL
+  path: meshes/wuji2_l_wrist.STL
+  sha256: b37d7bbcb3c8888e7179f27e8c87e436358adad9cf30d7cb86bc46ee696a7ee8
+  uses:
+  - index: 0
+    kind: visual
+    link: l_wrist
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: l_wrist
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_index_finger_distal.STL
+  output_file: meshes/wuji2_r_index_finger_distal.STL
+  path: meshes/wuji2_r_index_finger_distal.STL
+  sha256: 778ca04891678c9d124817cb66d74c5deb0d00bff78d927f15fa26a8a2585a1b
+  uses:
+  - index: 0
+    kind: visual
+    link: r_index_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_index_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_index_finger_middle.STL
+  output_file: meshes/wuji2_r_index_finger_middle.STL
+  path: meshes/wuji2_r_index_finger_middle.STL
+  sha256: dc42d5c512f1d124fe7160f78e72c11161053e794036a80963a8f4a4492f01cf
+  uses:
+  - index: 0
+    kind: visual
+    link: r_index_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_index_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_index_finger_proximal.STL
+  output_file: meshes/wuji2_r_index_finger_proximal.STL
+  path: meshes/wuji2_r_index_finger_proximal.STL
+  sha256: 0f924f11cf7ce9a431ca3f2395762e65cc44a036128a2ccb80638996b64c8a06
+  uses:
+  - index: 0
+    kind: visual
+    link: r_index_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_index_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_index_finger_proximal_abd.STL
+  output_file: meshes/wuji2_r_index_finger_proximal_abd.STL
+  path: meshes/wuji2_r_index_finger_proximal_abd.STL
+  sha256: f46cf96ed29ab98143a43eb4aee0cc727a739b8f2e104e54896f8d2c5570927c
+  uses:
+  - index: 0
+    kind: visual
+    link: r_index_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_index_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_middle_finger_distal.STL
+  output_file: meshes/wuji2_r_middle_finger_distal.STL
+  path: meshes/wuji2_r_middle_finger_distal.STL
+  sha256: e3097f0b48ccc87ea371b71a4fca9a94f09f84aff25a3fd0f757699eaeacf787
+  uses:
+  - index: 0
+    kind: visual
+    link: r_middle_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_middle_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_middle_finger_middle.STL
+  output_file: meshes/wuji2_r_middle_finger_middle.STL
+  path: meshes/wuji2_r_middle_finger_middle.STL
+  sha256: f9294d81a3795fd63a55abf0c00ca43326a09b8e43b8308fc92135e0ae9fdb07
+  uses:
+  - index: 0
+    kind: visual
+    link: r_middle_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_middle_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_middle_finger_proximal.STL
+  output_file: meshes/wuji2_r_middle_finger_proximal.STL
+  path: meshes/wuji2_r_middle_finger_proximal.STL
+  sha256: 9b552c22b645272ed0f2a3728cbf3fd5c2cb9541c2d6970521e94394cf17bc29
+  uses:
+  - index: 0
+    kind: visual
+    link: r_middle_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_middle_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_middle_finger_proximal_abd.STL
+  output_file: meshes/wuji2_r_middle_finger_proximal_abd.STL
+  path: meshes/wuji2_r_middle_finger_proximal_abd.STL
+  sha256: ff459d71637c3a5fddac62f85f86c485f273ab079092233a9a29d0affb9db502
+  uses:
+  - index: 0
+    kind: visual
+    link: r_middle_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_middle_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_mount.STL
+  output_file: meshes/wuji2_r_mount.STL
+  path: meshes/wuji2_r_mount.STL
+  sha256: fd30d30dbfd254e317e957588dd5863c46405f719e255fe79104ece93a08e416
+  uses:
+  - index: 0
+    kind: visual
+    link: r_mount
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_mount
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_pinky_distal.STL
+  output_file: meshes/wuji2_r_pinky_distal.STL
+  path: meshes/wuji2_r_pinky_distal.STL
+  sha256: 1ffc4d7591623a895d81de76c0db30af2199d64e4506371dd561829989461390
+  uses:
+  - index: 0
+    kind: visual
+    link: r_pinky_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_pinky_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_pinky_middle.STL
+  output_file: meshes/wuji2_r_pinky_middle.STL
+  path: meshes/wuji2_r_pinky_middle.STL
+  sha256: 12466b870cf8cc47aacdc02a535474d65bce3bf128840a8e471c4fede43d57ee
+  uses:
+  - index: 0
+    kind: visual
+    link: r_pinky_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_pinky_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_pinky_proximal.STL
+  output_file: meshes/wuji2_r_pinky_proximal.STL
+  path: meshes/wuji2_r_pinky_proximal.STL
+  sha256: 6a5696573c69e37467e3ba3b722d92ecd0078f0e18ae8e1e2c49ad118800ea8b
+  uses:
+  - index: 0
+    kind: visual
+    link: r_pinky_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_pinky_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_pinky_proximal_abd.STL
+  output_file: meshes/wuji2_r_pinky_proximal_abd.STL
+  path: meshes/wuji2_r_pinky_proximal_abd.STL
+  sha256: 321e9e615166eab4cd87ad4bc8609a7c19944fd7200f957d11bb020fa255bb72
+  uses:
+  - index: 0
+    kind: visual
+    link: r_pinky_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_pinky_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_ring_finger_distal.STL
+  output_file: meshes/wuji2_r_ring_finger_distal.STL
+  path: meshes/wuji2_r_ring_finger_distal.STL
+  sha256: 8659910ddc8b5275576363946a337f13cd60cde3abdda091adf58a7948547be3
+  uses:
+  - index: 0
+    kind: visual
+    link: r_ring_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_ring_finger_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_ring_finger_middle.STL
+  output_file: meshes/wuji2_r_ring_finger_middle.STL
+  path: meshes/wuji2_r_ring_finger_middle.STL
+  sha256: c7cbabcc9dfe6eba74af3255554757b4d18d49566711eb6717f7e656ac882002
+  uses:
+  - index: 0
+    kind: visual
+    link: r_ring_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_ring_finger_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_ring_finger_proximal.STL
+  output_file: meshes/wuji2_r_ring_finger_proximal.STL
+  path: meshes/wuji2_r_ring_finger_proximal.STL
+  sha256: 650b7aac177e26a2d42cc7f14aee79d3e4a9d344e8de688e2b6fb18ba5bdf50b
+  uses:
+  - index: 0
+    kind: visual
+    link: r_ring_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_ring_finger_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_ring_finger_proximal_abd.STL
+  output_file: meshes/wuji2_r_ring_finger_proximal_abd.STL
+  path: meshes/wuji2_r_ring_finger_proximal_abd.STL
+  sha256: 1a90fcaa2aae3569d8343d4be31a489d630d302f3a0feebc531fc60a9dd2a2fb
+  uses:
+  - index: 0
+    kind: visual
+    link: r_ring_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_ring_finger_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_thumb_distal.STL
+  output_file: meshes/wuji2_r_thumb_distal.STL
+  path: meshes/wuji2_r_thumb_distal.STL
+  sha256: f19c6077ca17e52f2801593880684c0347370669e9661d47c163f0b56eea99e4
+  uses:
+  - index: 0
+    kind: visual
+    link: r_thumb_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_thumb_distal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_thumb_middle.STL
+  output_file: meshes/wuji2_r_thumb_middle.STL
+  path: meshes/wuji2_r_thumb_middle.STL
+  sha256: a3e9851cd3aed770fb0ed2b05b2ceca86980af1bfef2fbc8e1925e9a6110f56f
+  uses:
+  - index: 0
+    kind: visual
+    link: r_thumb_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_thumb_middle
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_thumb_proximal.STL
+  output_file: meshes/wuji2_r_thumb_proximal.STL
+  path: meshes/wuji2_r_thumb_proximal.STL
+  sha256: e5f4c7dbffeddf626e5d6c7883e10a6c1de0e2d8213a9122dba5ee29a488345f
+  uses:
+  - index: 0
+    kind: visual
+    link: r_thumb_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_thumb_proximal
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_thumb_proximal_abd.STL
+  output_file: meshes/wuji2_r_thumb_proximal_abd.STL
+  path: meshes/wuji2_r_thumb_proximal_abd.STL
+  sha256: d9e28b15b054ede554f23524c32f430fefa3622eb9fa10016c39fec10a2638e8
+  uses:
+  - index: 0
+    kind: visual
+    link: r_thumb_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_thumb_proximal_abd
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+- filename: meshes/wuji2_r_wrist.STL
+  output_file: meshes/wuji2_r_wrist.STL
+  path: meshes/wuji2_r_wrist.STL
+  sha256: 748cf6a16bc5bfedf9c7e2ee489459f726740680db1449221133be570f9ee505
+  uses:
+  - index: 0
+    kind: visual
+    link: r_wrist
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+  - index: 0
+    kind: collision
+    link: r_wrist
+    origin:
+    - 0.0
+    - 0.0
+    - 0.0
+    rpy:
+    - 0.0
+    - 0.0
+    - 0.0
+    scale:
+    - 1.0
+    - 1.0
+    - 1.0
+wrist_targets:
+  left_body: l_wrist
+  left_site: l_wrist_target
+  right_body: r_wrist
+  right_site: r_wrist_target

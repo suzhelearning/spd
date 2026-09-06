@@ -2,7 +2,7 @@
 set -euo pipefail
 
 session_name="spd-teleop"
-endpoint="tcp/127.0.0.1:7447"
+endpoint="${SPD_VR_ZENOH_ENDPOINT:-tcp/127.0.0.1:8888}"
 dry_run=0
 endpoint_override=0
 metadata_path="${XDG_RUNTIME_DIR:-/tmp}/spd-vr/${session_name}.metadata"

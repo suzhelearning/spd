@@ -436,8 +436,8 @@ Metrics runScenario(const Options& options, QpIkConfig config,
         side, initialPosition(side, robot.mapping(side).limits, scenario));
   }
   robot.forward();
-  const DualArmTargets base{robot.endEffectorPose(ArmSide::kLeft),
-                            robot.endEffectorPose(ArmSide::kRight)};
+  const DualArmTargets base{robot.tcpPose(ArmSide::kLeft),
+                            robot.tcpPose(ArmSide::kRight)};
   const ArmKinematicSample left_initial = robot.armKinematicsAt(
       ArmSide::kLeft, robot.armPosition(ArmSide::kLeft));
   const ArmKinematicSample right_initial = robot.armKinematicsAt(
@@ -628,8 +628,8 @@ Metrics runScenario(const Options& options, QpIkConfig config,
     }
 
     robot.forward();
-    const Pose left_pose = robot.endEffectorPose(ArmSide::kLeft);
-    const Pose right_pose = robot.endEffectorPose(ArmSide::kRight);
+    const Pose left_pose = robot.tcpPose(ArmSide::kLeft);
+    const Pose right_pose = robot.tcpPose(ArmSide::kRight);
     const double position_error = std::max(
         (sampled.left.position - left_pose.position).norm(),
         (sampled.right.position - right_pose.position).norm());

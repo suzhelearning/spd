@@ -20,7 +20,7 @@ pixi run build
 ctest --test-dir build --output-on-failure
 ```
 
-完整测试当前为 81 项，包含配置、SPARK、Headroom、Velocity QP、PICO UDP、TJVR 录制以及 Viewer 集成测试。
+完整测试包含配置、SPARK、Headroom、Velocity QP、PICO UDP、Wuji Hand 2 UDP、TJVR 录制以及 Viewer 集成测试。
 
 ## PICO 实时遥操
 
@@ -48,13 +48,61 @@ OMP_WAIT_POLICY=ACTIVE OMP_PROC_BIND=close OMP_PLACES=cores \
 |---|---|
 | 算法 | `spark_upper_qpoases_headroom_feedforward_velocity_qp` |
 | 配置 | `config/qp_ik_pico_teleop.yaml` |
-| 模型 | `models/marvin_m6_qp_pico_fast.xml` |
+| 模型 | `models/marvin_m6_wuji2.xml` |
 | 控制层 | `velocity`，200 Hz |
 | 控制状态源 | `model_reference` |
 | PICO UDP | `127.0.0.1:15000` |
 | 骨架 Overlay | 启用 |
 
 没有 PICO 数据时控制器进入 stale/hold，不回退到脚本轨迹。若端口 15000 已被占用，请先关闭其他 Viewer 或显式指定另一端口。
+
+## PICO + Manus + Wuji Hand 2
+
+当前分支的联合遥操由三个独立进程组成：PICO 继续通过原有 TJVR v4/QP 流程控制双臂；Manus 通过语义节点映射生成 ROS2 `/hand_input`；官方
+`wuji-retargeting` 的 Hand 2 配置将 21 点转换为 20 个二代手关节，再通过 `TJH2`
+UDP 帧写入 `models/marvin_m6_wuji2.xml`。
+
+首次使用官方 Hand 2 retargeter 时，在 `wuji-retargeting` 工程目录初始化资产子模块：
+
+```bash
+cd <wuji-retargeting目录>
+git submodule update --init --recursive
+```
+
+终端 1：在 `manus` 工程目录启动 Manus raw 骨架采集器和语义 ROS2 输入节点。运行前需要 source 一个同时提供
+`rclpy` 与 `std_msgs` 的 ROS2 环境：
+
+```bash
+cd <manus目录>
+./rawviz.out | python3 manus_hand_input.py
+```
+
+终端 2：在 `wuji-retargeting` 工程目录启动官方 Hand 2 retargeter 桥。默认单手 63 点按右手解释，双手时 `/hand_input`
+为右手 63 点加左手 63 点：
+
+```bash
+cd <wuji-retargeting目录>
+python3 example/tj_wuji2_hand_bridge.py \
+  --repository-root "$PWD" \
+  --single-hand-side right \
+  --host 127.0.0.1 \
+  --port 16000
+```
+
+终端 3：使用集成模型启动当前 Viewer。PICO 端口仍为 15000，Hand2 命令端口为 16000：
+
+```bash
+cd <TJ_arm_control目录>
+OMP_WAIT_POLICY=ACTIVE OMP_PROC_BIND=close OMP_PLACES=cores \
+  ./build/tianji_qp_ik_viewer \
+  --model models/marvin_m6_wuji2.xml \
+  --pico-teleop --hand-teleop \
+  --pico-port 15000 --hand-port 16000
+```
+
+`--hand-teleop` 默认关闭；未收到或已超时的手部数据保持最后一个合法关节状态，不会清零或
+覆盖机械臂关节。`TJH2` 的 20 个关节顺序与官方 Hand2 URDF 一致，左右手均通过 XML
+关节名解析。
 
 ## 主算法
 
@@ -98,7 +146,7 @@ mkdir -p benchmark_results/pico_live/traces
 OMP_WAIT_POLICY=ACTIVE OMP_PROC_BIND=close OMP_PLACES=cores \
   ./build/tianji_qp_ik_viewer \
   --config config/qp_ik_pico_teleop.yaml \
-  --model models/marvin_m6_qp_pico_fast.xml \
+  --model models/marvin_m6_wuji2.xml \
   --pico-teleop \
   --pico-skeleton-overlay \
   --pico-bind 127.0.0.1 \

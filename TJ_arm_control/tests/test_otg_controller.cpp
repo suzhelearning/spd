@@ -58,8 +58,8 @@ class CapturingIk final : public IArmVelocityIk {
 DualArmReferences referencesAtRobot(MujocoRobot& robot) {
   robot.forward();
   DualArmReferences references;
-  references.left.pose = robot.endEffectorPose(ArmSide::kLeft);
-  references.right.pose = robot.endEffectorPose(ArmSide::kRight);
+  references.left.pose = robot.tcpPose(ArmSide::kLeft);
+  references.right.pose = robot.tcpPose(ArmSide::kRight);
   return references;
 }
 
@@ -130,7 +130,7 @@ TEST(OtgController, GeneratedReferenceRunsThroughUnchangedQp) {
         << "step=" << step;
   }
   robot.forward();
-  EXPECT_GT((robot.endEffectorPose(ArmSide::kLeft).position - left_start).norm(),
+  EXPECT_GT((robot.tcpPose(ArmSide::kLeft).position - left_start).norm(),
             0.005);
 }
 

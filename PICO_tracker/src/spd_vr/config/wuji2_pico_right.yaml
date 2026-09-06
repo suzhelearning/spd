@@ -48,7 +48,9 @@ retarget:
   soft_min: 0.0
   w_couple: 0.1
   couple_ratio: 0.7
-  lp_alpha: 0.2
+  # 0.5 reaches 97% of a new gesture in five source frames; 0.2 took about
+  # 230 ms at 60 Hz before the MuJoCo hand dynamics were even applied.
+  lp_alpha: 0.5
   segment_scaling:
     thumb: [1.0, 1.0, 1.0]
     index: [1.0, 1.0, 1.0]
@@ -60,6 +62,7 @@ retarget:
     middle: {d1: 2.0, d2: 4.0}
     ring: {d1: 2.0, d2: 4.0}
     pinky: {d1: 2.0, d2: 4.0}
-  mediapipe_rotation: {x: 0.0, y: 0.0, z: 0.0}
+  # Preserve Wuji Hand 2's tuned MANO -> right wrist-frame rotation.
+  mediapipe_rotation: {x: 0.0, y: 180.0, z: -90.0}
   wrist_offset_cm: [0.0, 0.0, 0.0]
   thumb_offset_cm: [0.0, 0.0, 0.0]

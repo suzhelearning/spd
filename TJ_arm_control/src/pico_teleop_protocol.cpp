@@ -21,7 +21,9 @@ constexpr std::uint32_t kUpperLimbRotationsValid =
     kPicoTeleopUpperLimbRotationsValid;
 constexpr std::uint32_t kV2KnownFlags = 0x3fU;
 constexpr std::uint32_t kV3KnownFlags = 0x7fU;
-constexpr std::uint32_t kV4KnownFlags = 0xffU;
+constexpr std::uint32_t kUserButtonPressed =
+    kPicoTeleopUserButtonPressedFlag;
+constexpr std::uint32_t kV4KnownFlags = 0x1ffU;
 constexpr double kQuaternionNormTolerance = 1e-3;
 constexpr double kDirectionEpsilon = 1e-9;
 constexpr std::size_t kDiscontinuityConfirmationFrames = 3;
@@ -211,6 +213,8 @@ PicoPacketDecodeResult decodePicoTeleopPacket(const std::uint8_t* bytes,
     result.error = PicoPacketError::kInvalidMetadata;
     return result;
   }
+  frame.user_button_pressed =
+      is_v4 && (flags & kUserButtonPressed) != 0U;
   if (!decodePose(bytes + 44, &frame.left, &result.error) ||
       !decodePose(bytes + 100, &frame.right, &result.error)) {
     return result;

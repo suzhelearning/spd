@@ -79,6 +79,8 @@ def test_peer_config_uses_only_the_explicit_endpoint_for_each_role():
 
     assert listener.get_json("scouting/multicast/enabled") == "false"
     assert connector.get_json("scouting/multicast/enabled") == "false"
+    assert json.loads(listener.get_json("mode")) == "router"
+    assert json.loads(connector.get_json("mode")) == "client"
     assert json.loads(listener.get_json("listen/endpoints")) == [endpoint]
     assert json.loads(connector.get_json("connect/endpoints")) == [endpoint]
     assert str(listener).count("7447") == 1
@@ -116,6 +118,24 @@ def test_two_real_peers_decode_into_latest_slot_and_stop_after_close():
     finally:
         receiver.close()
         sender.close()
+
+
+def test_listener_routes_between_two_connectors():
+    endpoint = free_tcp_endpoint()
+    mailbox = LatestSample[bytes]()
+    router = ZenohNode(peer_config(listen=True, endpoint=endpoint))
+    receiver = ZenohNode(peer_config(listen=False, endpoint=endpoint))
+    sender = ZenohNode(peer_config(listen=False, endpoint=endpoint))
+    try:
+        receiver.declare_latest_subscriber("spd/test/routed", bytes, mailbox)
+        publisher = sender.declare_publisher("spd/test/routed")
+        wait_for_publisher_match(publisher)
+        publisher.put(b"routed")
+        assert wait_for_value(mailbox, b"routed")[1] == b"routed"
+    finally:
+        sender.close()
+        receiver.close()
+        router.close()
 
 
 class FakeMatchingStatus:

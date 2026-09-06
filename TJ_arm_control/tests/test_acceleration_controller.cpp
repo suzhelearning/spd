@@ -68,8 +68,8 @@ void initializeRedundant(MujocoRobot& robot) {
 DualArmReferences references(MujocoRobot& robot) {
   DualArmReferences result;
   robot.forward();
-  result.left.pose = robot.endEffectorPose(ArmSide::kLeft);
-  result.right.pose = robot.endEffectorPose(ArmSide::kRight);
+  result.left.pose = robot.tcpPose(ArmSide::kLeft);
+  result.right.pose = robot.tcpPose(ArmSide::kRight);
   return result;
 }
 
@@ -474,13 +474,13 @@ TEST(AccelerationController,
   const ArmKinematicSample model_sample =
       robot.armKinematicsAt(ArmSide::kLeft, q_model);
   const Vec6 model_jdot_qdot =
-      robot.endEffectorJacobianDotTimesVelocityWorld(ArmSide::kLeft, q_model,
+      robot.tcpJacobianDotTimesVelocityWorld(ArmSide::kLeft, q_model,
                                              qdot_model);
   DualArmReferences model_target = references(robot);
   robot.setArmState(ArmSide::kLeft, initial_left, Vec7::Zero());
   robot.forward();
-  const Mat67 actual_jacobian = robot.endEffectorJacobianWorld(ArmSide::kLeft);
-  ASSERT_GT((model_sample.end_effector_jacobian - actual_jacobian).norm(), 1e-4);
+  const Mat67 actual_jacobian = robot.tcpJacobianWorld(ArmSide::kLeft);
+  ASSERT_GT((model_sample.tcp_jacobian - actual_jacobian).norm(), 1e-4);
 
   const AccelerationControllerDiagnostics result =
       controller.step(model_target, kDt);
@@ -488,18 +488,18 @@ TEST(AccelerationController,
   ASSERT_TRUE(result.left.accepted) << toString(result.left.hold_reason);
   ASSERT_FALSE(left_observer->problems.empty());
   EXPECT_TRUE(result.left.current.position.isApprox(
-      model_sample.end_effector_pose.position, 1e-12));
+      model_sample.tcp_pose.position, 1e-12));
   EXPECT_TRUE(result.left.current.rotation.isApprox(
-      model_sample.end_effector_pose.rotation, 1e-12));
+      model_sample.tcp_pose.rotation, 1e-12));
   EXPECT_LT(result.left.pose_error.norm(), 1e-10);
   EXPECT_GT(result.left.actual_pose_error.norm(), 1e-4);
   EXPECT_TRUE(result.left.q_actual.isApprox(initial_left, 1e-12));
   EXPECT_TRUE(result.left.qdot_actual.isZero(1e-12));
   EXPECT_TRUE(result.left.model_twist.isApprox(
-      model_sample.end_effector_jacobian * qdot_model, 1e-11));
+      model_sample.tcp_jacobian * qdot_model, 1e-11));
   EXPECT_TRUE(result.left.jdot_qdot.isApprox(model_jdot_qdot, 1e-9));
   EXPECT_TRUE(left_observer->problems.back().A.leftCols<kArmDof>().isApprox(
-      model_sample.end_effector_jacobian, 1e-12));
+      model_sample.tcp_jacobian, 1e-12));
 }
 
 TEST(AccelerationController, SynchronizesBothReferencesToSafeActualState) {

@@ -35,7 +35,7 @@ void initializeAtMidpoint(MujocoRobot& robot) {
 
 DualArmTargets currentTargets(MujocoRobot& robot) {
   robot.forward();
-  return {robot.endEffectorPose(ArmSide::kLeft), robot.endEffectorPose(ArmSide::kRight)};
+  return {robot.tcpPose(ArmSide::kLeft), robot.tcpPose(ArmSide::kRight)};
 }
 
 class SequenceIk final : public IArmVelocityIk {
@@ -258,7 +258,7 @@ TEST(HierarchicalController, IntegratesReferenceRatherThanReconstructingIt) {
   robot.forward();
   const ArmKinematicSample expected_model = robot.armKinematicsAt(
       ArmSide::kLeft, command_model_before_second_step);
-  const Pose expected_actual = robot.endEffectorPose(ArmSide::kLeft);
+  const Pose expected_actual = robot.tcpPose(ArmSide::kLeft);
   const ControllerDiagnostics second = controller.step(targets, 0.005);
   ASSERT_TRUE(second.accepted);
 
@@ -269,11 +269,11 @@ TEST(HierarchicalController, IntegratesReferenceRatherThanReconstructingIt) {
   EXPECT_TRUE(left_observer->last_input.q_measured.isApprox(
       command_model_before_second_step, 1e-12));
   EXPECT_TRUE(left_observer->last_input.jacobian.isApprox(
-      expected_model.end_effector_jacobian, 1e-12));
+      expected_model.tcp_jacobian, 1e-12));
   EXPECT_TRUE(second.left.current.position.isApprox(
-      expected_model.end_effector_pose.position, 1e-12));
+      expected_model.tcp_pose.position, 1e-12));
   EXPECT_TRUE(second.left.current.rotation.isApprox(
-      expected_model.end_effector_pose.rotation, 1e-12));
+      expected_model.tcp_pose.rotation, 1e-12));
   EXPECT_TRUE(second.left.q_actual.isApprox(start, 1e-12));
   EXPECT_TRUE(second.left.tcp_actual.position.isApprox(
       expected_actual.position, 1e-12));

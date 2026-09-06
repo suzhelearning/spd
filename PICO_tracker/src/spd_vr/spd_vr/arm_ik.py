@@ -19,7 +19,9 @@ try:
 except ImportError:  # pragma: no cover
     mujoco = None  # type: ignore[assignment]
 
-from .alignment import AlignedPose, SideAlignment, _pose_matrix
+from .alignment import AlignedPose, PICO_TO_ROBOT_ROTATION, SideAlignment, _pose_matrix
+from .defaults import DEFAULT_ZENOH_ENDPOINT
+from .manifest import arm_home_for_side
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
 from .qp_arm import ArmQPSolver
 from .wire import (
@@ -127,6 +129,7 @@ class DualArmController:
         self._tracking_gate = TrackingStreamGate()
         self._control_gate = ControlSequenceGate()
         self._tracking: TrackingFrame | None = None
+        self._last_target: ArmTargetFrame | None = None
         self._paused = False
         self._running = True
         self._sequence = 0
@@ -145,6 +148,7 @@ class DualArmController:
     def _status(self, state: str | None = None) -> dict[str, Any]:
         if state is None:
             state = "shutdown" if not self._running else ("paused" if self._paused else "running")
+        target = self._last_target
         return {
             "status": state,
             "ready": state != "shutdown",
@@ -152,6 +156,11 @@ class DualArmController:
             "paused": state != "shutdown" and self._paused,
             "tick_count": self.tick_count,
             "sequence": self._control_gate.last_sequence,
+            "target_sequence": None if target is None else target.sequence,
+            "tracking_epoch": None if target is None else target.tracking_epoch,
+            "left_hold_reason": None if target is None else target.left_hold_reason.name.lower(),
+            "right_hold_reason": None if target is None else target.right_hold_reason.name.lower(),
+            "finite": bool(np.all(np.isfinite(self.left_q)) and np.all(np.isfinite(self.right_q))),
         }
 
     def _publish_status(self, state: str | None = None) -> None:
@@ -313,6 +322,7 @@ class DualArmController:
             left_qdot=tuple(self._left_qdot),
             right_qdot=tuple(self._right_qdot),
         )
+        self._last_target = frame
         if self.publisher is not None:
             self.publisher.put(encode_arm_target(frame))
         self.tick_count += 1
@@ -449,6 +459,9 @@ def _production_controller(model: Any, verified: Any) -> DualArmController:
         joint_ids = tuple(int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)) for name in names)
         if any(index < 0 for index in joint_ids):
             raise ArtifactError(f"manifest {side} arm joint is missing from arm_ik.xml")
+        home = arm_home_for_side(manifest, side)
+        data.qpos[[int(model.jnt_qposadr[index]) for index in joint_ids]] = home
+        mujoco.mj_forward(model, data)
         velocity_limits = tuple(float(item["velocity_limit"] or 2.0) for item in items)
         site_name = str(wrist_targets[f"{side}_site"])
         neutral = _site_pose(model, data, site_name)
@@ -459,8 +472,12 @@ def _production_controller(model: Any, verified: Any) -> DualArmController:
             site_name=site_name,
             joint_ids=joint_ids,
             velocity_limits=velocity_limits,
+            home=home,
         )
-        alignments[side] = SideAlignment(neutral_robot=neutral)
+        alignments[side] = SideAlignment(
+            neutral_robot=neutral,
+            pico_to_robot_rotation=PICO_TO_ROBOT_ROTATION,
+        )
     return DualArmController(
         left_solver=solvers["left"],
         right_solver=solvers["right"],
@@ -504,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--urdf", type=Path, default=None)
-    parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
+    parser.add_argument("--endpoint", default=DEFAULT_ZENOH_ENDPOINT)
     args = parser.parse_args(argv)
     if args.self_test:
         if args.ticks <= 0:

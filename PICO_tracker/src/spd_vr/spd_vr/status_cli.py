@@ -9,11 +9,12 @@ import time
 from collections.abc import Mapping
 from typing import Any, Callable
 
+from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .wire import STATUS_BRIDGE_KEY, STATUS_IK_KEY, STATUS_VIEWER_KEY
 from .zenoh_transport import LatestSample, ZenohNode, peer_config
 
 
-DEFAULT_ENDPOINT = "tcp/127.0.0.1:7447"
+DEFAULT_ENDPOINT = DEFAULT_ZENOH_ENDPOINT
 STATUS_KEYS = {
     "bridge": STATUS_BRIDGE_KEY,
     "ik": STATUS_IK_KEY,

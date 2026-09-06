@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
-#include <string_view>
 #include <vector>
 
 namespace tianji_qp_ik {
@@ -195,12 +194,6 @@ struct TelemetrySample {
   double pico_frame_age_ms{0.0};
   double pico_receive_to_control_us{0.0};
   double pico_bridge_to_control_us{0.0};
-  std::size_t left_wrist_alignment_count{0U};
-  std::size_t right_wrist_alignment_count{0U};
-  bool left_wrist_aligned{false};
-  bool right_wrist_aligned{false};
-  std::string_view left_wrist_hold_reason;
-  std::string_view right_wrist_hold_reason;
   Pose left_target_pose;
   Pose left_reference_pose;
   Pose left_actual_pose;
@@ -215,6 +208,8 @@ struct ViewerSnapshot {
   double control_time_seconds{0.0};
   Vec7 left_q{Vec7::Zero()};
   Vec7 right_q{Vec7::Zero()};
+  Vec20 left_hand_q{Vec20::Zero()};
+  Vec20 right_hand_q{Vec20::Zero()};
   DualArmTargets targets;
   IkAlgorithm algorithm{IkAlgorithm::kHierarchicalQp};
   ControlLevel control_level{ControlLevel::kVelocity};
@@ -227,6 +222,15 @@ struct ViewerSnapshot {
   bool left_target_stale{false};
   bool right_target_stale{false};
   bool otg_enabled{false};
+  bool hand_configured{false};
+  bool hand_live{false};
+  bool hand_stale{true};
+  std::uint64_t hand_sequence{0U};
+  std::uint64_t hand_datagrams{0U};
+  std::uint64_t hand_accepted{0U};
+  std::uint64_t hand_malformed{0U};
+  std::uint64_t hand_crc_failures{0U};
+  std::uint64_t hand_reordered{0U};
   double left_position_error{0.0};
   double left_orientation_error{0.0};
   double right_position_error{0.0};
@@ -269,12 +273,6 @@ struct ViewerSnapshot {
   double pico_frame_age_ms{0.0};
   double pico_receive_to_control_us{0.0};
   double pico_bridge_to_control_us{0.0};
-  std::size_t left_wrist_alignment_count{0U};
-  std::size_t right_wrist_alignment_count{0U};
-  bool left_wrist_aligned{false};
-  bool right_wrist_aligned{false};
-  std::string_view left_wrist_hold_reason{""};
-  std::string_view right_wrist_hold_reason{""};
   PicoUpperLimbSkeleton pico_upper_limb_skeleton;
   PicoUpperLimbSkeleton spark_upper_limb_skeleton;
 };

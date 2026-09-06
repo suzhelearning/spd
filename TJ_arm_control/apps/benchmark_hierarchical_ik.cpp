@@ -207,8 +207,8 @@ Metrics runScenario(const Options& options, const QpIkConfig& base_config,
         side, initialPosition(side, robot.mapping(side).limits, scenario));
   }
   robot.forward();
-  const DualArmTargets base{robot.endEffectorPose(ArmSide::kLeft),
-                            robot.endEffectorPose(ArmSide::kRight)};
+  const DualArmTargets base{robot.tcpPose(ArmSide::kLeft),
+                            robot.tcpPose(ArmSide::kRight)};
   DualArmController controller(robot, config);
 
   Metrics metrics;
@@ -318,8 +318,8 @@ Metrics runScenario(const Options& options, const QpIkConfig& base_config,
   robot.forward();
   const DualArmTargets final_target = targetAt(
       base, scenario, static_cast<double>(options.steps - 1) * dt);
-  const Pose final_left = robot.endEffectorPose(ArmSide::kLeft);
-  const Pose final_right = robot.endEffectorPose(ArmSide::kRight);
+  const Pose final_left = robot.tcpPose(ArmSide::kLeft);
+  const Pose final_right = robot.tcpPose(ArmSide::kRight);
   metrics.final_position_error_m = std::max(
       (final_target.left.position - final_left.position).norm(),
       (final_target.right.position - final_right.position).norm());

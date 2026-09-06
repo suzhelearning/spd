@@ -12,6 +12,33 @@ import numpy as np
 from .urdf_model import UrdfJoint, UrdfLink, UrdfModel
 
 
+# Wuji Hand 2 beta2's official MuJoCo position-servo calibration.  Both hands
+# use the same gains; only the ``l_``/``r_`` joint prefix differs.  Keep these
+# values exact instead of replacing them with one generic hand gain.
+_WUJI2_HAND_GAINS: dict[str, tuple[float, float]] = {
+    "thumb_cmc_flex": (0.40844710645048043, 0.020882010257063675),
+    "thumb_cmc_abd": (0.6858601063643346, 0.030610939996373314),
+    "thumb_mcp": (0.2391112196099482, 0.010181475050560962),
+    "thumb_ip": (0.20736128319711747, 0.00909698844675045),
+    "index_finger_mcp_flex": (0.37352218155860073, 0.01882274330029718),
+    "index_finger_mcp_abd": (0.45592448909027794, 0.019798167597016643),
+    "index_finger_pip": (0.24368366649522863, 0.010477031953162727),
+    "index_finger_dip": (0.18026971340925335, 0.008240212147903584),
+    "middle_finger_mcp_flex": (0.3687093483646485, 0.01848622487024593),
+    "middle_finger_mcp_abd": (0.4164253443634641, 0.018032947229953678),
+    "middle_finger_pip": (0.22218607502059182, 0.009592200014076666),
+    "middle_finger_dip": (0.19427606072023446, 0.009152994605972402),
+    "ring_finger_mcp_flex": (0.35718151495111794, 0.018376606800780005),
+    "ring_finger_mcp_abd": (0.42977315313086895, 0.01867700966212433),
+    "ring_finger_pip": (0.24930151196247122, 0.01059512121009555),
+    "ring_finger_dip": (0.2285032688178066, 0.009917602877441107),
+    "pinky_mcp_flex": (0.3655325975433942, 0.018616960278988272),
+    "pinky_mcp_abd": (0.41393113081120425, 0.018732177029667153),
+    "pinky_pip": (0.22729367621965954, 0.00951005441616486),
+    "pinky_dip": (0.1964723550341816, 0.009017295241756363),
+}
+
+
 def _fmt(values: Sequence[float]) -> str:
     return " ".join(f"{float(value):.17g}" for value in values)
 
@@ -185,7 +212,10 @@ def render_mjcf(
         if tuple(scale) != (1.0, 1.0, 1.0):
             attributes["scale"] = _fmt(scale)
         ET.SubElement(asset_element, "mesh", inertia="shell", **attributes)
-    collision_names = sorted({piece for pieces in collision_assets.values() for piece in pieces})
+    source_mesh_names = {asset_name for asset_name, _, _ in mesh_assets.values()}
+    collision_names = sorted(
+        {piece for pieces in collision_assets.values() for piece in pieces} - source_mesh_names
+    )
     for piece_name in collision_names:
         ET.SubElement(asset_element, "mesh", name=piece_name, file=f"collision/{piece_name}.stl", inertia="shell")
 
@@ -205,6 +235,7 @@ def render_mjcf(
         if parent_joint is not None and parent_joint.type == "revolute":
             if parent_joint.limit is None:
                 raise ValueError(f"revolute joint {parent_joint.name!r} has no limit")
+            is_arm = parent_joint.name.startswith("Joint")
             ET.SubElement(
                 body,
                 "joint",
@@ -213,7 +244,10 @@ def render_mjcf(
                 axis=_fmt(parent_joint.axis),
                 range=_fmt(parent_joint.limit),
                 limited="true",
-                damping="0.1",
+                # The official Hand 2 servo calibration uses actuator ``kv``
+                # with zero passive joint damping.  Keeping the arm damping is
+                # intentional and independent from the hand calibration.
+                damping="0.1" if is_arm else "0",
             )
             joint_order.append(parent_joint.name)
         _add_geometry(body, link, mesh_assets, collision_assets)
@@ -235,14 +269,31 @@ def render_mjcf(
     joint_by_name = {joint.name: joint for joint in model.joints}
     for name in joint_order:
         joint = joint_by_name[name]
+        is_arm = name.startswith("Joint")
         effort = abs(float(joint.effort)) if joint.effort is not None and abs(float(joint.effort)) > 0 else 1.0
+        if is_arm:
+            kp = 500.0
+            kv = None
+        else:
+            hand_joint_name = name[2:] if name.startswith(("l_", "r_")) else name
+            try:
+                kp, kv = _WUJI2_HAND_GAINS[hand_joint_name]
+            except KeyError as exc:
+                raise ValueError(
+                    f"missing official Wuji Hand 2 gains for {name!r}"
+                ) from exc
         attributes = {
             "name": f"{name}_position",
             "joint": name,
-            "kp": "25" if name.startswith("Joint") else "1",
+            "kp": f"{kp:.17g}",
             "forcerange": f"{-effort:.17g} {effort:.17g}",
             "forcelimited": "true",
         }
+        if is_arm:
+            attributes["dampratio"] = "1"
+        else:
+            assert kv is not None
+            attributes["kv"] = f"{kv:.17g}"
         if joint.limit is not None:
             attributes.update(ctrlrange=_fmt(joint.limit), ctrllimited="true")
         ET.SubElement(actuator, "position", **attributes)

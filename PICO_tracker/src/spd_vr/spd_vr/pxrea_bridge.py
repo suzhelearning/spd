@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import signal
 import sys
 import threading
@@ -14,6 +15,7 @@ from numbers import Integral
 from pathlib import Path
 from typing import Any
 
+from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .pico_frames import (
     FRAME_TYPE_WORLD_RESET,
     HandPairer,
@@ -28,6 +30,7 @@ from .pxrea_sdk import (
     PXREA_DEVICE_CONNECT,
     PXREA_DEVICE_FIND,
     PXREA_DEVICE_MISSING,
+    PXREA_DEVICE_STATE_JSON,
     PXREA_SERVER_CONNECT,
     PXREA_SERVER_DISCONNECT,
 )
@@ -147,6 +150,40 @@ class BridgeCore:
                 self._ambiguous = True
         if self._ambiguous or device_id != self.selected_device_id:
             return []
+        if event_type == PXREA_DEVICE_STATE_JSON:
+            try:
+                (
+                    timestamp_ns,
+                    left_active,
+                    right_active,
+                    left_scale,
+                    right_scale,
+                    left_hand,
+                    right_hand,
+                ) = _decode_xrobotoolkit_state(raw)
+            except (TypeError, ValueError):
+                self._invalid_payloads += 1
+                return []
+            self._sequence += 1
+            tracking = TrackingFrame(
+                sequence=self._sequence,
+                tracking_epoch=self._epoch,
+                source_timestamp_ns=timestamp_ns,
+                bridge_monotonic_ns=max(1, int(self._clock_ns())),
+                left_active=left_active,
+                right_active=right_active,
+                head_valid=False,
+                left_scale=left_scale,
+                right_scale=right_scale,
+                head_pose=_identity_head(),
+                left_hand=left_hand,
+                right_hand=right_hand,
+            )
+            self._published += 1
+            return [encode_tracking(tracking)]
+        if event_type != PXREA_DEVICE_CUSTOM:
+            self._invalid_payloads += 1
+            return []
         if not raw or (not self._decoder._buffer and raw[0] != 0xAB):
             self._invalid_payloads += 1
             self._decoder.reset()
@@ -210,6 +247,87 @@ class BridgeCore:
 
 def _identity_head() -> tuple[float, ...]:
     return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _identity_hand() -> tuple[tuple[float, ...], ...]:
+    return tuple(_identity_head() for _ in range(26))
+
+
+def _decode_xrobotoolkit_side(
+    hand: Mapping[str, Any], side_name: str
+) -> tuple[bool, float, tuple[tuple[float, ...], ...]]:
+    side = hand.get(side_name)
+    if not isinstance(side, Mapping):
+        return False, 1.0, _identity_hand()
+    scale = side.get("scale")
+    active = side.get("isActive")
+    joints = side.get("HandJointLocations")
+    if (
+        isinstance(scale, bool)
+        or not isinstance(scale, (int, float))
+        or not math.isfinite(scale)
+        or scale <= 0.0
+        or type(active) not in (bool, int)
+        or active not in (0, 1)
+        or not isinstance(joints, list)
+        or len(joints) != 26
+    ):
+        return False, 1.0, _identity_hand()
+    decoded = []
+    for joint in joints:
+        if not isinstance(joint, Mapping) or not isinstance(joint.get("p"), str):
+            return False, 1.0, _identity_hand()
+        try:
+            pose = [float(token) for token in joint["p"].replace(",", " ").split()]
+        except ValueError:
+            return False, 1.0, _identity_hand()
+        if len(pose) != 7 or not all(math.isfinite(value) for value in pose):
+            return False, 1.0, _identity_hand()
+        norm = math.sqrt(sum(value * value for value in pose[3:]))
+        if not math.isfinite(norm) or norm <= 0.0:
+            return False, 1.0, _identity_hand()
+        decoded.append(tuple(pose[:3] + [value / norm for value in pose[3:]]))
+    return bool(active), float(scale), tuple(decoded)
+
+
+def _decode_xrobotoolkit_state(
+    raw: bytes,
+) -> tuple[
+    int,
+    bool,
+    bool,
+    float,
+    float,
+    tuple[tuple[float, ...], ...],
+    tuple[tuple[float, ...], ...],
+]:
+    outer = json.loads(raw)
+    if not isinstance(outer, Mapping) or not isinstance(outer.get("value"), str):
+        raise ValueError("invalid outer XRoboToolkit JSON")
+    nested = json.loads(outer["value"])
+    if not isinstance(nested, Mapping):
+        raise ValueError("invalid nested XRoboToolkit JSON")
+    timestamp_ns = nested.get("timeStampNs")
+    hand = nested.get("Hand")
+    if (
+        isinstance(timestamp_ns, bool)
+        or not isinstance(timestamp_ns, int)
+        or timestamp_ns <= 0
+        or not isinstance(hand, Mapping)
+        or not ("leftHand" in hand or "rightHand" in hand)
+    ):
+        raise ValueError("invalid XRoboToolkit hand snapshot")
+    left_active, left_scale, left_hand = _decode_xrobotoolkit_side(hand, "leftHand")
+    right_active, right_scale, right_hand = _decode_xrobotoolkit_side(hand, "rightHand")
+    return (
+        timestamp_ns,
+        left_active,
+        right_active,
+        left_scale,
+        right_scale,
+        left_hand,
+        right_hand,
+    )
 
 
 def _install_signal_handlers(stop: threading.Event) -> dict[int, Any]:
@@ -311,7 +429,7 @@ def _run_fake_source(
     status_publisher: Callable[[bytes], None] | None = None,
     *,
     listen: bool = False,
-    endpoint: str = "tcp/127.0.0.1:7447",
+    endpoint: str = DEFAULT_ZENOH_ENDPOINT,
     key: str = TRACKING_KEY,
     wait_for_shutdown: bool = False,
 ) -> int:
@@ -383,7 +501,7 @@ def _run_sdk(args: argparse.Namespace) -> int:
     if not args.sdk_library:
         print("--sdk-library is required without --fake-source-jsonl", file=sys.stderr)
         return 2
-    queue = BoundedCallbackQueue()
+    queue = BoundedCallbackQueue(max_bytes=16352)
     core = BridgeCore(selected_device_id=args.device_id)
     stop = threading.Event()
     node = None
@@ -463,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sdk-library")
     parser.add_argument("--device-id")
     parser.add_argument("--key", default=TRACKING_KEY)
-    parser.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
+    parser.add_argument("--endpoint", default=DEFAULT_ZENOH_ENDPOINT)
     parser.add_argument("--listen", action="store_true")
     parser.add_argument("--wait-for-shutdown", action="store_true")
     args = parser.parse_args(argv)

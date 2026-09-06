@@ -139,10 +139,10 @@ AccelerationControllerDiagnostics DualArmAccelerationController::step(
     const Vec7 qdot_actual = robot_.armVelocity(side);
     arm_diagnostics.q_actual = q_actual;
     arm_diagnostics.qdot_actual = qdot_actual;
-    arm_diagnostics.tcp_actual = robot_.endEffectorPose(side);
+    arm_diagnostics.tcp_actual = robot_.tcpPose(side);
     const ArmKinematicSample model =
         robot_.armKinematicsAt(side, arm_state.q_ref);
-    arm_diagnostics.current = model.end_effector_pose;
+    arm_diagnostics.current = model.tcp_pose;
     ArmAngleTaskBuilder& arm_angle_builder =
         side == ArmSide::kLeft ? left_arm_angle_ : right_arm_angle_;
     arm_diagnostics.arm_angle =
@@ -195,7 +195,7 @@ AccelerationControllerDiagnostics DualArmAccelerationController::step(
     input.q_model = arm_state.q_ref;
     input.qdot_model = arm_state.qdot_ref;
     input.qddot_previous = arm_state.qddot_previous;
-    input.jacobian = model.end_effector_jacobian;
+    input.jacobian = model.tcp_jacobian;
     arm_diagnostics.arm_angle_current_rate =
         arm_diagnostics.arm_angle.jacobian.dot(arm_state.qdot_ref);
     const bool continuity_mode =
@@ -325,7 +325,8 @@ AccelerationControllerDiagnostics DualArmAccelerationController::step(
     arm_diagnostics.arm_angle_task_active = input.arm_angle_task.active;
     arm_diagnostics.arm_angle_requested_acceleration =
         input.arm_angle_task.active ? requested_arm_angle_acceleration : 0.0;
-    input.jdot_qdot = robot_.endEffectorJacobianDotTimesVelocityWorld(side, arm_state.q_ref, arm_state.qdot_ref);
+    input.jdot_qdot = robot_.tcpJacobianDotTimesVelocityWorld(
+        side, arm_state.q_ref, arm_state.qdot_ref);
     arm_diagnostics.model_twist = input.jacobian * arm_state.qdot_ref;
     input.desired_acceleration = cartesianAccelerationCommand(
         config_.cartesian_acceleration, reference, arm_diagnostics.current,

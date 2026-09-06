@@ -138,15 +138,15 @@ ArmDirectionReference withTargetShoulderWristAxis(
   if (!reference.valid ||
       reference.source != ArmDirectionReferenceSource::kPico ||
       !target.position.allFinite() || !target.rotation.allFinite() ||
-      !current.end_effector_pose.position.allFinite() ||
-      !current.end_effector_pose.rotation.allFinite() ||
+      !current.tcp_pose.position.allFinite() ||
+      !current.tcp_pose.rotation.allFinite() ||
       !current.wrist_position.allFinite() ||
       !current.shoulder_position.allFinite()) {
     return result;
   }
   const Eigen::Vector3d wrist_offset_tcp =
-      current.end_effector_pose.rotation.transpose() *
-      (current.wrist_position - current.end_effector_pose.position);
+      current.tcp_pose.rotation.transpose() *
+      (current.wrist_position - current.tcp_pose.position);
   const Eigen::Vector3d target_wrist =
       target.position + target.rotation * wrist_offset_tcp;
   const Eigen::Vector3d target_axis =
@@ -412,14 +412,14 @@ ControllerDiagnostics DualArmController::stepImpl(
     return diagnostics;
   }
   robot_.forward();
-  diagnostics.left.tcp_actual = robot_.endEffectorPose(ArmSide::kLeft);
-  diagnostics.right.tcp_actual = robot_.endEffectorPose(ArmSide::kRight);
+  diagnostics.left.tcp_actual = robot_.tcpPose(ArmSide::kLeft);
+  diagnostics.right.tcp_actual = robot_.tcpPose(ArmSide::kRight);
   const ArmKinematicSample left_model =
       robot_.armKinematicsAt(ArmSide::kLeft, left_state_.q_ref);
   const ArmKinematicSample right_model =
       robot_.armKinematicsAt(ArmSide::kRight, right_state_.q_ref);
-  diagnostics.left.current = left_model.end_effector_pose;
-  diagnostics.right.current = right_model.end_effector_pose;
+  diagnostics.left.current = left_model.tcp_pose;
+  diagnostics.right.current = right_model.tcp_pose;
   const ArmDirectionReference left_arm_direction =
       withTargetShoulderWristAxis(arm_directions.left, left_model,
                                   diagnostics.left.reference.pose);
@@ -478,7 +478,7 @@ ControllerDiagnostics DualArmController::stepImpl(
   left_input.qdot_prev = left_state_.qdot_prev;
   left_input.qddot_prev = left_state_.qddot_prev;
   left_input.slack_prev = left_state_.slack_prev;
-  left_input.jacobian = left_model.end_effector_jacobian;
+  left_input.jacobian = left_model.tcp_jacobian;
   left_input.arm_angle_task = usesOutwardArmBarrier(arm_angle_reference_mode_)
       ? velocityArmAngleContinuityTask(diagnostics.left.arm_angle,
                                        config_.arm_angle)
@@ -606,7 +606,7 @@ ControllerDiagnostics DualArmController::stepImpl(
   right_input.qdot_prev = right_state_.qdot_prev;
   right_input.qddot_prev = right_state_.qddot_prev;
   right_input.slack_prev = right_state_.slack_prev;
-  right_input.jacobian = right_model.end_effector_jacobian;
+  right_input.jacobian = right_model.tcp_jacobian;
   right_input.arm_angle_task = usesOutwardArmBarrier(arm_angle_reference_mode_)
       ? velocityArmAngleContinuityTask(diagnostics.right.arm_angle,
                                        config_.arm_angle)

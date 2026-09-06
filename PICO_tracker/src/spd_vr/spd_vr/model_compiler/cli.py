@@ -13,13 +13,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--urdf", type=Path, required=True, help="authoritative URDF")
     parser.add_argument("--output", type=Path, required=True, help="published generated artifact directory")
     parser.add_argument("--cache", type=Path, help="CoACD cache directory")
+    parser.add_argument("--raw-collisions", action="store_true", help="reuse source meshes without CoACD")
     parser.add_argument("--verify", action="store_true", help="verify an existing output instead of compiling")
     args = parser.parse_args(argv)
     if args.verify:
         verified = verify_artifacts(args.output / "model_manifest.yaml", args.urdf)
         print(f"verified {verified.full_model} and {verified.arm_model}")
     else:
-        manifest = compile_models(args.urdf, args.output, args.cache)
+        manifest = compile_models(args.urdf, args.output, args.cache, raw_collisions=args.raw_collisions)
         print(f"generated {manifest.output_dir / 'unified_plant.xml'}")
         print(f"generated {manifest.output_dir / 'arm_ik.xml'}")
         print(f"generated {manifest.path}")

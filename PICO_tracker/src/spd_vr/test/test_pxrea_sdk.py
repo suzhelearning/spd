@@ -9,10 +9,12 @@ from spd_vr.pxrea_sdk import (
     CallbackEvent,
     PXREAClient,
     PXREADevCustomMessage,
+    PXREADevStateJson,
     PXREAError,
     PXREA_CALLBACK_MASK,
     PXREA_DEVICE_CONNECT,
     PXREA_DEVICE_CUSTOM,
+    PXREA_DEVICE_STATE_JSON,
 )
 
 
@@ -40,11 +42,18 @@ def test_custom_message_matches_sdk_abi():
     assert ctypes.sizeof(PXREADevCustomMessage) == 48
 
 
+def test_state_json_matches_sdk_abi():
+    assert PXREADevStateJson.devID.offset == 0
+    assert PXREADevStateJson.stateJson.offset == 32
+    assert ctypes.sizeof(PXREADevStateJson) == 16384
+
+
 def test_init_uses_custom_and_lifecycle_callback_mask():
     lib = FakeLibrary()
     client = PXREAClient(lib)
     assert client.flags == PXREA_CALLBACK_MASK
     assert PXREA_CALLBACK_MASK & PXREA_DEVICE_CUSTOM
+    assert PXREA_CALLBACK_MASK & PXREA_DEVICE_STATE_JSON
     with client:
         assert lib.PXREAInit.calls[0][2] == PXREA_CALLBACK_MASK
 
@@ -86,6 +95,19 @@ def test_callback_copies_only_bounded_payload():
     lifecycle = queue.get()
     assert lifecycle is not None
     assert lifecycle.event_type == PXREA_DEVICE_CONNECT
+
+
+def test_callback_copies_state_json():
+    queue = BoundedCallbackQueue(max_bytes=16352)
+    client = PXREAClient(FakeLibrary(), queue=queue)
+    message = PXREADevStateJson(b"FAKE", b'{"value":"{}"}')
+    client._callback(None, PXREA_DEVICE_STATE_JSON, 0, ctypes.byref(message))
+    event = queue.get()
+    assert event == CallbackEvent(
+        "FAKE", b'{"value":"{}"}', PXREA_DEVICE_STATE_JSON
+    )
+
+
 def test_queue_drops_oldest_on_64_slot_overflow():
     queue = BoundedCallbackQueue(max_items=64, max_bytes=2048)
     for index in range(65):

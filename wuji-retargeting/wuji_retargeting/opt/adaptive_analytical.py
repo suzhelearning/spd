@@ -217,17 +217,24 @@ class AdaptiveOptimizerAnalytical(BaseOptimizer):
         if self._enable_timing:
             t_fk_start = time.perf_counter()
 
+        wrist_link_id = self.computed_link_indices[self.origin_indices[0]]
         self.robot.compute_forward_kinematics(qpos)
-        positions = np.array([
-            self.robot.get_link_pose(idx)[:3, 3] for idx in self.computed_link_indices
-        ], dtype=np.float64) * M_TO_CM
+        positions = self.robot.get_link_positions_in_frame(
+            self.computed_link_indices,
+            wrist_link_id,
+        ) * M_TO_CM
 
         if self._enable_timing:
             self._timing.fk_ms += (time.perf_counter() - t_fk_start) * 1000
             t_jac_start = time.perf_counter()
 
-        # Get Jacobians (num_links, 3, nq) - already in world frame
-        Js = self.robot.compute_all_jacobians_batch(qpos, self.computed_link_indices) * M_TO_CM
+        # Targets are wrist-local, so FK positions and Jacobians must use the
+        # same frame even when the hand is reduced from a complete arm URDF.
+        Js = self.robot.compute_all_jacobians_batch(
+            qpos,
+            self.computed_link_indices,
+            reference_link_id=wrist_link_id,
+        ) * M_TO_CM
 
         if self._enable_timing:
             self._timing.jacobian_ms += (time.perf_counter() - t_jac_start) * 1000

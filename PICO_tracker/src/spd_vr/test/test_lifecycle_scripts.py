@@ -2,10 +2,15 @@ from pathlib import Path
 import re
 import subprocess
 
+from spd_vr.control_cli import DEFAULT_ENDPOINT as CONTROL_ENDPOINT
+from spd_vr.preflight import DEFAULT_ENDPOINT as PREFLIGHT_ENDPOINT
+from spd_vr.status_cli import DEFAULT_ENDPOINT as STATUS_ENDPOINT
+
 
 ROOT = Path(__file__).resolve().parents[3]
 START = ROOT / "scripts" / "start_spd_vr.sh"
 STOP = ROOT / "scripts" / "stop_spd_vr.sh"
+ZENOH_ENDPOINT = "tcp/127.0.0.1:8888"
 
 
 def test_start_script_dry_run_lists_exact_python_runtime_graph():
@@ -17,10 +22,24 @@ def test_start_script_dry_run_lists_exact_python_runtime_graph():
     assert "optical_inner" not in result.stdout
 
 
-def test_start_script_consumes_serial_and_passes_it_to_bridge():
+def test_start_script_does_not_confuse_adb_serial_with_pxrea_device_id():
     result = subprocess.run([str(START), "--dry-run", "--serial", "TEST"], text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stderr
-    assert "--device-id TEST" in result.stdout
+    assert "--device-id" not in result.stdout
+
+
+def test_all_lifecycle_defaults_use_zenoh_8888():
+    start = subprocess.run(
+        [str(START), "--dry-run"], text=True, capture_output=True, check=False
+    )
+    stop = subprocess.run(
+        [str(STOP), "--dry-run"], text=True, capture_output=True, check=False
+    )
+
+    assert start.returncode == stop.returncode == 0
+    assert start.stdout.count(f"--endpoint {ZENOH_ENDPOINT}") == 3
+    assert f"spd-control shutdown --endpoint {ZENOH_ENDPOINT}" in stop.stdout
+    assert CONTROL_ENDPOINT == PREFLIGHT_ENDPOINT == STATUS_ENDPOINT == ZENOH_ENDPOINT
 
 def test_start_script_rejects_option_as_missing_serial_value():
     result = subprocess.run([str(START), "--serial", "--dry-run"], text=True, capture_output=True, check=False)

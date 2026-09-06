@@ -1,16 +1,23 @@
 #include "tianji_qp_ik/spark_guidance.hpp"
 
 #include "tianji_qp_ik/spark_qpoases_diagnostic.hpp"
+#include "tianji_qp_ik/so3.hpp"
 
 #include <Eigen/Geometry>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <utility>
 
 namespace tianji_qp_ik {
 namespace {
+
+std::array<Pose, 2> tcpRelativeFrames(const MujocoRobot& robot) {
+  return {robot.tcpRelativeToLink7(ArmSide::kLeft),
+          robot.tcpRelativeToLink7(ArmSide::kRight)};
+}
 
 SparkUpperRobotGeometry geometryFromKinematics(
     PinocchioArmKinematics& kinematics) {
@@ -26,13 +33,13 @@ SparkUpperRobotGeometry geometryFromKinematics(
   geometry.left_forearm_local = left.elbow_rotation.transpose() *
       (left.wrist_position - left.elbow_position);
   geometry.left_wrist_to_palm_local = left.wrist_rotation.transpose() *
-      (left.end_effector_pose.position - left.wrist_position);
+      (left.tcp_pose.position - left.wrist_position);
   geometry.right_upper_arm_local = right.shoulder_rotation.transpose() *
       (right.elbow_position - right.shoulder_position);
   geometry.right_forearm_local = right.elbow_rotation.transpose() *
       (right.wrist_position - right.elbow_position);
   geometry.right_wrist_to_palm_local = right.wrist_rotation.transpose() *
-      (right.end_effector_pose.position - right.wrist_position);
+      (right.tcp_pose.position - right.wrist_position);
   return geometry;
 }
 
@@ -110,11 +117,11 @@ SparkUpperArmTarget blendTarget(const SparkUpperArmTarget& start,
 SparkUpperArmTarget targetFromSample(const ArmKinematicSample& sample,
                                      const SparkUpperArmTarget& metadata) {
   SparkUpperArmTarget target = metadata;
-  target.palm = sample.end_effector_pose;
+  target.palm = sample.tcp_pose;
   target.shoulder = sample.shoulder_position;
   target.elbow = sample.elbow_position;
   target.wrist = sample.wrist_position;
-  target.hand = sample.end_effector_pose.position;
+  target.hand = sample.tcp_pose.position;
   return target;
 }
 
@@ -143,7 +150,7 @@ DualArmSparkGuidance::DualArmSparkGuidance(
     : robot_(robot),
       config_(config),
       posture_mode_(posture_mode),
-      kinematics_(urdf_path),
+      kinematics_(urdf_path, tcpRelativeFrames(robot)),
       scaler_(geometryFromKinematics(kinematics_),
               config_.spark_upper_qpoases),
       left_(ArmSide::kLeft, kinematics_, config_,
@@ -185,9 +192,9 @@ bool DualArmSparkGuidance::reset(const ArmMotionState& left_model,
   left_.last_valid_q_ik = left_model.q;
   right_.last_valid_q_ik = right_model.q;
   left_.otg.reset(
-      kinematics_.sample(ArmSide::kLeft, left_model.q).end_effector_pose);
+      kinematics_.sample(ArmSide::kLeft, left_model.q).tcp_pose);
   right_.otg.reset(
-      kinematics_.sample(ArmSide::kRight, right_model.q).end_effector_pose);
+      kinematics_.sample(ArmSide::kRight, right_model.q).tcp_pose);
   left_.feedforward.reset(left_model, 0U);
   right_.feedforward.reset(right_model, 0U);
   left_.palm_twist.reset();
@@ -240,6 +247,163 @@ SparkUpperTargets DualArmSparkGuidance::updatePicoFrame(
     blend_restart_pending_ = true;
   }
   return raw_targets_;
+}
+
+bool DualArmSparkGuidance::startJointSpaceTakeover(
+    const SparkUpperTargets& targets, const ArmMotionState& left_model,
+    const ArmMotionState& right_model) {
+  if (joint_takeover_active_ || !targets.valid || !left_model.q.allFinite() ||
+      !right_model.q.allFinite()) {
+    return false;
+  }
+
+  const auto deadline =
+      std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+          std::chrono::duration<double>(
+              config_.spark_upper_qpoases.ik_cycle_budget_seconds));
+  const SparkUpperIkResult left_goal =
+      left_.ik.solve(targets.left, left_model.q, deadline);
+  const SparkUpperIkResult right_goal =
+      right_.ik.solve(targets.right, right_model.q, deadline);
+  if (!left_goal.accepted || !right_goal.accepted) {
+    return false;
+  }
+
+  ArmMotionState left_start = left_model;
+  ArmMotionState right_start = right_model;
+  left_start.qdot.setZero();
+  left_start.qddot.setZero();
+  right_start.qdot.setZero();
+  right_start.qddot.setZero();
+  if (!left_.reference.reset(left_start) ||
+      !right_.reference.reset(right_start)) {
+    return false;
+  }
+
+  joint_takeover_left_goal_ = left_goal.q;
+  joint_takeover_right_goal_ = right_goal.q;
+  left_.last_valid_q_ik = left_goal.q;
+  right_.last_valid_q_ik = right_goal.q;
+  joint_takeover_active_ = true;
+  return true;
+}
+
+SparkGuidanceDiagnostics DualArmSparkGuidance::stepJointSpaceTakeover(
+    const ArmMotionState& left_model, const ArmMotionState& right_model,
+    double dt) {
+  const auto start = std::chrono::steady_clock::now();
+  SparkGuidanceDiagnostics result;
+  result.joint_takeover_active = joint_takeover_active_;
+  if (!joint_takeover_active_ || !left_model.q.allFinite() ||
+      !right_model.q.allFinite() || !std::isfinite(dt) || dt <= 0.0) {
+    result.detail = "invalid_joint_takeover_input";
+    return result;
+  }
+
+  const SparkPostureReferenceResult left_reference = left_.reference.update(
+      joint_takeover_left_goal_, left_model.q, dt);
+  const SparkPostureReferenceResult right_reference = right_.reference.update(
+      joint_takeover_right_goal_, right_model.q, dt);
+  if (!left_reference.accepted || !right_reference.accepted) {
+    result.detail = !left_reference.accepted ? left_reference.detail
+                                             : right_reference.detail;
+    joint_takeover_active_ = false;
+    return result;
+  }
+
+  const ArmKinematicSample left_trajectory = robot_.armKinematicsAt(
+      ArmSide::kLeft, left_reference.state.q);
+  const ArmKinematicSample right_trajectory = robot_.armKinematicsAt(
+      ArmSide::kRight, right_reference.state.q);
+  const ArmKinematicSample left_current =
+      robot_.armKinematicsAt(ArmSide::kLeft, left_model.q);
+  const ArmKinematicSample right_current =
+      robot_.armKinematicsAt(ArmSide::kRight, right_model.q);
+
+  result.left.reference = left_reference;
+  result.right.reference = right_reference;
+  result.left.q_ik = joint_takeover_left_goal_;
+  result.right.q_ik = joint_takeover_right_goal_;
+  const auto fill_takeover_ik = [](const SparkUpperArmTarget& target,
+                                  const ArmKinematicSample& sample,
+                                  const Vec7& goal,
+                                  SparkUpperIkResult& ik) {
+    const Vec6 error = poseErrorWorld(target.palm, sample.tcp_pose);
+    ik.accepted = true;
+    ik.status = SolverStatus::kSolved;
+    ik.q = goal;
+    ik.stage1_q = goal;
+    ik.palm_position_error = error.head<3>().norm();
+    ik.palm_orientation_error = error.tail<3>().norm();
+    ik.detail = "spark_joint_takeover_trajectory";
+  };
+  fill_takeover_ik(raw_targets_.left, left_trajectory,
+                   joint_takeover_left_goal_, result.left.ik);
+  fill_takeover_ik(raw_targets_.right, right_trajectory,
+                   joint_takeover_right_goal_, result.right.ik);
+  result.left.target = targetFromSample(left_trajectory, raw_targets_.left);
+  result.right.target = targetFromSample(right_trajectory, raw_targets_.right);
+  result.cartesian_targets.left = left_trajectory.tcp_pose;
+  result.cartesian_targets.right = right_trajectory.tcp_pose;
+  result.cartesian_targets.left_twist =
+      left_trajectory.tcp_jacobian * left_reference.state.qdot;
+  result.cartesian_targets.right_twist =
+      right_trajectory.tcp_jacobian * right_reference.state.qdot;
+  result.cartesian_references.left.pose = left_current.tcp_pose;
+  result.cartesian_references.right.pose = right_current.tcp_pose;
+  result.cartesian_references.left.twist.setZero();
+  result.cartesian_references.right.twist.setZero();
+  result.cartesian_references.left.acceleration.setZero();
+  result.cartesian_references.right.acceleration.setZero();
+  result.cartesian_references.left.stale = false;
+  result.cartesian_references.right.stale = false;
+  result.cartesian_references.left.valid = true;
+  result.cartesian_references.right.valid = true;
+  result.cartesian_targets.left_stale = false;
+  result.cartesian_targets.right_stale = false;
+
+  const auto fill_posture = [this](const SparkPostureReferenceResult& reference,
+                                   JointVelocityPostureTask& task) {
+    task.active = true;
+    task.source = JointVelocityPostureSource::kSparkJointReference;
+    task.target = reference.posture_velocity;
+    task.activation = 1.0;
+    task.weight = config_.spark_upper_qpoases.joint_reference_weight;
+    task.smoothness_weight =
+        config_.spark_upper_qpoases.joint_reference_smoothness_weight;
+    task.jerk_smoothness_weight = 0.0;
+  };
+  fill_posture(left_reference, result.posture_tasks.left);
+  fill_posture(right_reference, result.posture_tasks.right);
+
+  result.left.accepted = true;
+  result.right.accepted = true;
+  result.accepted = true;
+  result.target_valid = true;
+  result.cartesian_references_valid = true;
+  result.compute_time_us = std::chrono::duration<double, std::micro>(
+                               std::chrono::steady_clock::now() - start)
+                               .count();
+  result.joint_takeover_finished =
+      left_reference.detail == "joint_trajectory_finished" &&
+      right_reference.detail == "joint_trajectory_finished";
+  result.detail = result.joint_takeover_finished
+                      ? "spark_joint_takeover_finished"
+                      : "spark_joint_takeover_active";
+  if (result.joint_takeover_finished) {
+    joint_takeover_active_ = false;
+    latest_targets_ = raw_targets_;
+    blend_start_targets_ = raw_targets_;
+    blend_elapsed_seconds_ = config_.spark_upper_qpoases.target_blend_seconds;
+    blend_restart_pending_ = false;
+  }
+  result.joint_takeover_active = !result.joint_takeover_finished;
+  return result;
+}
+
+void DualArmSparkGuidance::cancelJointSpaceTakeover() noexcept {
+  joint_takeover_active_ = false;
 }
 
 void DualArmSparkGuidance::restartBlend(
@@ -663,7 +827,7 @@ SparkGuidanceDiagnostics DualArmSparkGuidance::step(
       if (!state.settled_hold_active && !released_this_cycle) {
         return;
       }
-      const Pose model_tcp = robot_.armKinematicsAt(side, model.q).end_effector_pose;
+      const Pose model_tcp = robot_.armKinematicsAt(side, model.q).tcp_pose;
       arm.target.palm = model_tcp;
       cartesian_target = model_tcp;
       cartesian_target_twist.setZero();
