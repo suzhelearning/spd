@@ -1,0 +1,12 @@
+.pixi/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+recordings/
+pc_stream_records/
+.env
+.env.*
+*.log
+.DS_Store

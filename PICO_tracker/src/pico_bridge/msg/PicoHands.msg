@@ -1,9 +1,0 @@
-std_msgs/Header header
-uint64 tracking_epoch
-uint64 sequence_id
-bool left_active
-bool right_active
-float32 left_scale
-float32 right_scale
-geometry_msgs/Pose[26] left_joints
-geometry_msgs/Pose[26] right_joints

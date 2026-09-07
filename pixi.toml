@@ -1,0 +1,40 @@
+[workspace]
+name = "spd-sim"
+version = "0.1.0"
+description = "PICO_2-driven Tianji arm and Wuji Hand 2 simulation demonstration collection"
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.11.*"
+setuptools = ">=61,<80"
+pytest = "*"
+h5py = "*"
+numpy = "*"
+pyyaml = "*"
+mujoco = "3.12.*"
+nlopt = "*"
+pinocchio = ">=3.6,<4"
+scipy = ">=1.11.0"
+osqp = ">=1,<2"
+trimesh = ">=4.8,<5"
+tmux = ">=3.7b,<4"
+
+[pypi-dependencies]
+wuji-retargeting = { path = "packages/wuji-retargeting", editable = true }
+spd-vr = { path = "packages/spd-vr", editable = true }
+spd-envs = { path = "packages/spd-envs", editable = true }
+pico-hand-tracking = { path = "packages/pico-hand-tracking", editable = true }
+eclipse-zenoh = "==1.10.0"
+coacd = "==1.0.14"
+
+[tasks]
+test = "python -m pytest packages/spd-vr/test"
+spd-envs-check = "validate_scenes"
+pico2-hand = "pico-hand-tracking --print"
+pico2-bridge = "spd-pico2-bridge"
+spd-model = "python -m spd_vr.model_compiler.cli --urdf assets/tianji_wuji2/tianji_wuji2.urdf --output packages/spd-vr/generated --cache packages/spd-vr/collision_cache --raw-collisions"
+spd-teleop = "bash scripts/start_spd_vr.sh"
+spd-teleop-status = "spd-status"
+spd-teleop-stop = "bash scripts/stop_spd_vr.sh"
+spd-teleop-e2e = "python scripts/test_spd_teleop_e2e.py --json /tmp/spd-teleop-e2e.json"

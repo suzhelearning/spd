@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pico-hand-tracking"
+version = "0.1.0"
+description = "PICO_2 type-0x40 hand-tracking subscriber"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+pico-hand-tracking = "pico_hand_tracking.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pico_hand_tracking*"]

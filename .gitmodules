@@ -1,6 +1,6 @@
 [submodule "wuji-retargeting/wuji_retargeting/wuji-description"]
-	path = wuji-retargeting/wuji_retargeting/wuji-description
+	path = packages/wuji-retargeting/wuji_retargeting/wuji-description
 	url = https://github.com/wuji-technology/wuji-description.git
 [submodule "wuji-retargeting/example/utils/mujoco-sim"]
-	path = wuji-retargeting/example/utils/mujoco-sim
+	path = packages/wuji-retargeting/example/utils/mujoco-sim
 	url = https://github.com/wuji-technology/mujoco-sim.git

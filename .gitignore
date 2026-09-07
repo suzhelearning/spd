@@ -26,13 +26,10 @@ MUJOCO_LOG.TXT
 .DS_Store
 Thumbs.db
 
-# Local robotics captures and generated recordings
-PICO_tracker/recordings/
-PICO_tracker/local_data/
-PICO_tracker/data/
-PICO_tracker/**/*.h5
-PICO_tracker/**/*.hdf5
-PICO_tracker/**/*.mp4
+# Local collection outputs
+data/**/*.h5
+data/**/*.hdf5
+data/**/*.mp4
 data/spd_vr/episodes/
 data/spd_vr/checkpoints/
 
@@ -45,7 +42,7 @@ data/pico_hand_samples/raw/*
 **/calibration_local/
 **/benchmark_results/
 **/checkpoints/
-PICO_tracker/src/spd_vr/collision_cache/
+packages/spd-vr/collision_cache/
 
 # Future long-duration collection
 **/*75h*/
