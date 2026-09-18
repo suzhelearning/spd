@@ -186,6 +186,9 @@ class EpisodeController:
 
     def _pause(self) -> str:
         if self.state == EpisodeState.RECORDING:
+            abort = getattr(self.recorder, "abort_episode", None)
+            if abort is not None:
+                abort("paused")
             set_paused = getattr(self.simulator, "set_paused", None)
             if set_paused is not None:
                 set_paused(True)
@@ -221,7 +224,7 @@ class EpisodeController:
             set_paused = getattr(self.simulator, "set_paused", None)
             if set_paused is not None:
                 set_paused(False)
-        if self.recorder is not None:
+        if self.recorder is not None and getattr(self.recorder, "is_recording", True):
             self.recorder.finish_episode()
         self.state = EpisodeState.IDLE
         self.state_epoch += 1

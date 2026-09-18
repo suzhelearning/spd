@@ -1,13 +1,14 @@
 from pathlib import Path
 
+from spd_vr.recorder import validate_episode_path
 from spd_vr.runtime import _LiveTickPacer, run_runtime
 
 
-def test_hardware_free_runtime_writes_episode(tmp_path):
+def test_hardware_free_runtime_writes_schema_v1_episode(tmp_path):
     episode = run_runtime(output=tmp_path, duration_s=0.1, mock=True)
-    assert episode == tmp_path / "episodes" / "1"
-    assert (episode / "episode.hdf5").is_file()
-    assert (episode / "manifest.json").is_file()
+    assert episode == tmp_path / "episode_000001.h5"
+    assert (tmp_path / "dataset_config.json").is_file()
+    assert validate_episode_path(episode)["valid"] is True
 
 
 def test_runtime_rejects_non_mock_live_mode(tmp_path):

@@ -17,6 +17,7 @@ import zenoh
 from .arm_target_protocol import ArmTargetFrame, ArmTargetHoldReason, LEFT_VALID, RIGHT_VALID, decode_packet
 from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .manifest import ManifestError, ManifestJoint, load_manifest, resolve_home_positions, resolve_model_addresses
+from .ros_joint_command import JOINT_NAME_TUPLE, VALID_READY_MASK
 from .viewer_window import ViewerWindow
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
 from .model_builder import workspace_root
@@ -172,12 +173,15 @@ class PlantController:
         hand_retargeter: Any | None = None,
         strict_artifacts: bool | None = None,
         urdf_path: str | Path | None = None,
+        command_only: bool = False,
+        camera_config_path: str | Path | None = None,
     ) -> None:
         try:
             import mujoco
         except ImportError as exc:  # pragma: no cover - package dependency
             raise ImportError("mujoco is required for PlantController") from exc
         self._mujoco = mujoco
+        self.command_only = bool(command_only)
         production_model = model is None
         verified = None
         self.synthetic = False
@@ -195,7 +199,12 @@ class PlantController:
                 verified = verify_artifacts(manifest_path, urdf_path)
                 if Path(model_path).resolve() != verified.full_model.resolve():
                     raise ArtifactError("viewer must load manifest unified_plant.xml")
-            model = mujoco.MjModel.from_xml_path(str(model_path))
+            if camera_config_path is None:
+                model = mujoco.MjModel.from_xml_path(str(model_path))
+            else:
+                from .camera import load_camera_model
+
+                model = load_camera_model(model_path, camera_config_path)
         if data is None:
             data = mujoco.MjData(model)
         self.model = model
@@ -211,8 +220,9 @@ class PlantController:
             self.synthetic = True
         else:
             raise ManifestError("full plant requires a verified 54-DoF manifest")
-        if len(self.joints) != 54 or int(model.nq) != 54 or int(model.nv) != 54:
-            raise ManifestError("full plant must expose exactly 54 qpos/qvel entries")
+        if len(self.joints) != 54:
+            raise ManifestError("full plant must expose exactly 54 robot joints")
+        self.joints.sort(key=lambda entry: entry.index)
         self._actuator_ids = {
             entry.actuator: int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, entry.actuator))
             for entry in self.joints
@@ -225,7 +235,7 @@ class PlantController:
             else [(entry.range[0] + entry.range[1]) * 0.5 for entry in self.joints],
             dtype=np.float64,
         )
-        if hand_retargeter is None and production_model:
+        if hand_retargeter is None and production_model and not self.command_only:
             if verified is None or urdf_path is None:
                 raise ArtifactError("production viewer requires verified model artifacts")
             from .retarget_pair import WujiRetargetPair
@@ -237,7 +247,7 @@ class PlantController:
                 verified.manifest_path,
                 urdf_path,
             )
-        self._hand_retargeter = hand_retargeter
+        self._hand_retargeter = None if self.command_only else hand_retargeter
         self._arm_lock = threading.Lock()
         self._tracking_lock = threading.Lock()
         self._arm_mailbox: _ArmMailbox | None = None
@@ -253,6 +263,10 @@ class PlantController:
         self._last_tracking_sequence: tuple[int, int] | None = None
         self._arm_values = {"left": self._home[:7].copy(), "right": self._home[27:34].copy()}
         self._hand_values = {"left": self._home[7:27].copy(), "right": self._home[34:54].copy()}
+        self._command_groups = ()
+        self._command_qpos = None
+        if self.command_only or {entry.joint for entry in self.joints} == set(JOINT_NAME_TUPLE):
+            self._prepare_joint_commands()
         self._mediapipe_points: dict[str, np.ndarray | None] = {
             "left": None,
             "right": None,
@@ -322,6 +336,8 @@ class PlantController:
         return plant
     def connect(self, node: Any, control_callback: Callable[[ControlFrame], Any] | None = None) -> None:
         """Attach canonical Zenoh inputs; callbacks only fill bounded mailboxes."""
+        if self.command_only:
+            raise RuntimeError("joint-command-only plants cannot connect legacy inputs")
         if self._node is not None:
             raise RuntimeError("plant is already connected")
         self._node = node
@@ -363,13 +379,16 @@ class PlantController:
         return cls.synthetic_fixture()
 
     def _set_home_state(self) -> None:
-        self.data.qpos[:] = 0.0
+        self.data.qpos[:] = self.model.qpos0
         self.data.qvel[:] = 0.0
         self.data.ctrl[:] = 0.0
         for entry in self.joints:
             value = self._home[entry.index]
             self.data.qpos[entry.qpos_address] = value
             self.data.ctrl[self._actuator_ids[entry.actuator]] = value
+        if self._command_qpos is not None:
+            self._command_targets[:] = self._command_home
+            self.data.qpos[self._command_qpos] = self._command_home
         if getattr(self.data, "act", None) is not None:
             self.data.act[:] = 0.0
         self.data.time = 0.0
@@ -435,6 +454,107 @@ class PlantController:
     def set_paused(self, paused: bool) -> None:
         self.paused = bool(paused)
 
+    def _prepare_joint_commands(self) -> None:
+        """Resolve the wire contract by names, independently of scene DOFs."""
+        by_name = {entry.joint: entry for entry in self.joints}
+        if len(by_name) != 54 or set(by_name) != set(JOINT_NAME_TUPLE):
+            raise ManifestError("joint command manifest must contain the canonical robot names")
+        entries = [by_name[name] for name in JOINT_NAME_TUPLE]
+        joint_ids = np.asarray([
+            self._mujoco.mj_name2id(self.model, self._mujoco.mjtObj.mjOBJ_JOINT, name)
+            for name in JOINT_NAME_TUPLE
+        ])
+        if np.any(joint_ids < 0) or np.any(
+            self.model.jnt_type[joint_ids] != self._mujoco.mjtJoint.mjJNT_HINGE
+        ):
+            raise ManifestError("joint commands require named hinge joints")
+        self._command_qpos = self.model.jnt_qposadr[joint_ids].copy()
+        self._command_actuators = np.asarray([self._actuator_ids[e.actuator] for e in entries])
+        self._command_home = np.asarray([self._home[e.index] for e in entries], dtype=np.float64)
+        self._command_targets = self._command_home.copy()
+        self._command_limits = np.asarray([e.range for e in entries], dtype=np.float64)
+        for wire_index, actuator_id in enumerate(self._command_actuators):
+            if self.model.actuator_ctrllimited[actuator_id]:
+                low, high = self.model.actuator_ctrlrange[actuator_id]
+                self._command_limits[wire_index, 0] = max(self._command_limits[wire_index, 0], low)
+                self._command_limits[wire_index, 1] = min(self._command_limits[wire_index, 1], high)
+        groups = []
+        for side, group, bit in (
+            ("left", "arm", 1), ("right", "arm", 1),
+            ("left", "hand", 4), ("right", "hand", 2),
+        ):
+            wire = np.asarray([i for i, entry in enumerate(entries) if entry.side == side and entry.group == group])
+            slots = np.asarray([
+                entries[i].index - (27 if side == "right" else 0) - (7 if group == "hand" else 0)
+                for i in wire
+            ])
+            size = 7 if group == "arm" else 20
+            if len(wire) != size or set(slots) != set(range(size)):
+                raise ManifestError("invalid joint command target group")
+            groups.append((side, group, bit, wire, slots))
+        self._command_groups = tuple(groups)
+
+    def joint_command_positions(self) -> np.ndarray:
+        """Return simulated joint positions in canonical wire order."""
+        if self._command_qpos is None:
+            raise ManifestError("model has no canonical joint command mapping")
+        return self.data.qpos[self._command_qpos]
+
+    def joint_command_targets(self) -> np.ndarray:
+        """Return the complete retained targets in canonical wire order."""
+        if self._command_qpos is None:
+            raise ManifestError("model has no canonical joint command mapping")
+        if self.command_only:
+            return self._command_targets.copy()
+        result = np.empty(54, dtype=np.float64)
+        for side, group, _bit, wire, slots in self._command_groups:
+            targets = self._arm_values if group == "arm" else self._hand_values
+            result[wire] = targets[side][slots]
+        return result
+
+    def validate_joint_command(self, snapshot: Any) -> np.ndarray:
+        """Validate every ready group before any target or freshness mutation."""
+        snapshot.validate()
+        if self._command_qpos is None:
+            raise ManifestError("model has no canonical joint command mapping")
+        values = np.asarray(snapshot.position_rad, dtype=np.float64)
+        for side, group, bit, wire, _slots in self._command_groups:
+            if snapshot.ready_mask & bit and np.any(
+                (values[wire] < self._command_limits[wire, 0])
+                | (values[wire] > self._command_limits[wire, 1])
+            ):
+                raise ValueError(f"{side} {group} command is outside the manifest/actuator limits")
+        return values
+
+    def set_joint_command_hold(self, hold_mask: int) -> None:
+        """Update status only; retained targets remain untouched (physics thread)."""
+        for side, group, bit, _wire, _slots in self._command_groups:
+            valid = not bool(hold_mask & bit)
+            if group == "arm":
+                self._arm_valid[side] = valid
+                self._arm_reason[side] = ArmTargetHoldReason.NONE if valid else ArmTargetHoldReason.INPUT_STALE
+            else:
+                self._hand_valid[side] = valid
+                self._hand_reason[side] = "none" if valid else "hold"
+
+    def submit_joint_command(self, snapshot: Any, *, now_ns: int | None = None,
+                             hold_mask: int = 0) -> None:
+        """Apply an atomic command at the physics boundary; never run IK."""
+        values = self.validate_joint_command(snapshot)
+        arrival_ns = int(time.monotonic_ns() if now_ns is None else now_ns)
+        effective_hold = (VALID_READY_MASK ^ snapshot.ready_mask) | hold_mask
+        for side, group, bit, wire, slots in self._command_groups:
+            if effective_hold & bit:
+                continue
+            targets = self._arm_values if group == "arm" else self._hand_values
+            arrivals = self._arm_arrival if group == "arm" else self._hand_arrival
+            targets[side][slots] = values[wire]
+            self._command_targets[wire] = values[wire]
+            arrivals[side] = arrival_ns
+        self.set_joint_command_hold(effective_hold)
+        self._alignment_ready = {"left": True, "right": True}
+        self._fresh_alignment_required = False
+
     @staticmethod
     def _finite_vector(values: Any, size: int, name: str) -> np.ndarray:
         result = np.asarray(values, dtype=np.float64).reshape(-1)
@@ -443,6 +563,8 @@ class PlantController:
         return result
 
     def submit_arm_target(self, frame: ArmTargetFrame | Mapping[str, Any], *, now_ns: int | None = None) -> int:
+        if self.command_only:
+            raise RuntimeError("legacy arm input is disabled in joint-command-only mode")
         if isinstance(frame, Mapping):
             frame = ArmTargetFrame(
                 sequence=int(frame["sequence"]),
@@ -479,6 +601,8 @@ class PlantController:
     on_arm_target_packet = submit_arm_packet
 
     def submit_tracking(self, frame: Any, *, now_ns: int | None = None) -> int:
+        if self.command_only:
+            raise RuntimeError("legacy tracking input is disabled in joint-command-only mode")
         if isinstance(frame, Mapping):
             epoch = int(frame.get("tracking_epoch", 0))
             sequence = int(frame.get("sequence", frame.get("sequence_id", 0)))
@@ -706,6 +830,11 @@ class PlantController:
             return self._step_snapshot()
         if self.paused:
             return self._step_snapshot()
+        if self.command_only:
+            self.data.ctrl[self._command_actuators] = self._command_targets
+            self._mujoco.mj_step(self.model, self.data)
+            self.tick += 1
+            return self._step_snapshot()
         with self._tracking_lock:
             tracking_mailbox = self._tracking_mailbox
         if tracking_mailbox is not None and tracking_mailbox.generation != self._applied_tracking_generation:
@@ -811,6 +940,7 @@ class ViewerRuntime:
         window: ViewerWindow | Any | None = None,
         headless: bool = False,
         session: SessionController | None = None,
+        recording_control: Callable[[str], None] | None = None,
         clock_ns: Callable[[], int] | None = None,
         sleep: Callable[[float], None] | None = None,
         sequence_file: str | Path | None = None,
@@ -837,6 +967,7 @@ class ViewerRuntime:
                 headless=self.headless,
                 shutdown=self._shutdown_from_window,
                 control=self.send_control,
+                recording_control=recording_control,
                 state=lambda: self.session.state.value,
                 pose_markers=getattr(plant, "desired_wrist_poses", None),
                 hand_keypoints=getattr(plant, "mediapipe_keypoints_world", None),

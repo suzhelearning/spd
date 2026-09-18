@@ -168,7 +168,7 @@ def resolve_model_addresses(
             raise ManifestError(f"actuator does not target manifest joint: {entry['actuator']}")
         qpos = int(model.jnt_qposadr[joint_id])
         dof = int(model.jnt_dofadr[joint_id])
-        if qpos != int(entry["qpos_address"]) or dof != int(entry["dof_address"]):
+        if not allow_scene_dofs and (qpos != int(entry["qpos_address"]) or dof != int(entry["dof_address"])):
             raise ManifestError(
                 f"address mismatch for {entry['joint']}: "
                 f"model={qpos}/{dof}, manifest={entry['qpos_address']}/{entry['dof_address']}"

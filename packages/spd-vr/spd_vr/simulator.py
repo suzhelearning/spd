@@ -32,8 +32,9 @@ if TYPE_CHECKING:
     from .pico_hands import PicoHandFrame
 PHYSICS_HZ = 480
 ARM_TARGET_HZ = 200
-HAND_TARGET_HZ = 60
+HAND_TARGET_HZ = 120
 CAMERA_HZ = 30
+RECORDER_HZ = 120
 TIMESTEP_NS = 1_000_000_000 / PHYSICS_HZ
 INPUT_STALE_NS = 50_000_000
 
@@ -215,11 +216,11 @@ class UnifiedSimulator:
         self._arm_snapshot = self._initial_arm_snapshot()
         self._hand_snapshot = self._initial_hand_snapshot()
         self._applied_arm = self._arm_snapshot
-        self._applied_hand = self._hand_snapshot
         self._last_arm_epoch: int | None = None
         self._last_arm_sequence: int | None = None
         self._last_hand_epoch: int | None = None
         self._last_hand_sequence: int | None = None
+        self._last_recorded_hand_key: tuple[int, int] | None = None
         self._arm_last_arrival_ns: dict[str, int | None] = {"left": None, "right": None}
         self._hand_last_arrival_ns: dict[str, int | None] = {"left": None, "right": None}
         self._arm_callback_count = 0
@@ -751,8 +752,7 @@ class UnifiedSimulator:
             self._camera_drop_count += 1
             return False
 
-    def _start_recorder_worker(self, recorder: Any) -> None:
-        self._recorder_queue = queue.Queue(maxsize=8)
+        self._recorder_queue = queue.Queue(maxsize=256)
         self._recorder_stop = threading.Event()
         queue_ref = self._recorder_queue
         stop_ref = self._recorder_stop
@@ -774,7 +774,20 @@ class UnifiedSimulator:
                 if item is None:
                     time.sleep(0.001)
                     continue
-                recorder.submit(**item)
+                try:
+                    if "arm_qpos" in item:
+                        recorder.append_arm_qpos(item["timestamp_ns"], item["arm_qpos"])
+                        if item.get("hand_qpos") is not None:
+                            recorder.append_hand_qpos(
+                                item["timestamp_ns"],
+                                item["hand_qpos"],
+                                both_fresh=True,
+                            )
+                    else:
+                        recorder.submit(**item)
+                except RuntimeError:
+                    if getattr(recorder, "is_recording", False):
+                        raise
 
         self._recorder_thread = threading.Thread(target=worker, name="spd-vr-recorder", daemon=True)
         self._recorder_thread.start()
@@ -843,27 +856,43 @@ class UnifiedSimulator:
         self._mujoco.mj_step(self.model, self.data)
         step_duration_ns = time.perf_counter_ns() - step_start
         camera_enqueued = self._enqueue_camera(sim_time_ns) if camera_due else False
-        if self._recorder_queue is not None and (self.tick % 8 == 0):
+        recording = bool(
+            self._recorder is not None
+            and getattr(self._recorder, "is_recording", False)
+        )
+        if self._recorder_queue is not None and recording and (
+            self.tick % max(1, PHYSICS_HZ // RECORDER_HZ) == 0
+        ):
+            arrival_ns = time.monotonic_ns()
+            robot_qpos = self._manifest_qpos()
+            hand_qpos = None
+            hand_key = (self._applied_hand.tracking_epoch, self._applied_hand.sequence_id)
+            if (
+                self._applied_hand.left_valid
+                and self._applied_hand.right_valid
+                and hand_key != self._last_recorded_hand_key
+            ):
+                hand_qpos = np.concatenate((robot_qpos[7:27], robot_qpos[34:54]))
+                self._last_recorded_hand_key = hand_key
             item = {
-                "sim_time_ns": sim_time_ns,
-                "qpos": self._manifest_qpos(),
-                "qvel": self._manifest_qvel(),
-                "qpos_target": self._manifest_ctrl(),
-                "step_duration_ns": step_duration_ns,
-                "arm_valid_mask": self._applied_arm.valid_mask,
-                "hand_valid_mask": (
-                    (1 if self._applied_hand.left_valid else 0)
-                    | (2 if self._applied_hand.right_valid else 0)
-                ),
+                "timestamp_ns": arrival_ns,
+                "arm_qpos": np.concatenate((robot_qpos[:7], robot_qpos[27:34])),
+                "hand_qpos": hand_qpos,
             }
             try:
                 self._recorder_queue.put_nowait(item)
-            except queue.Full:
-                pass
+            except queue.Full as exc:
+                raise RuntimeError("recorder queue overflow; ending current episode") from exc
         if self._camera_worker is not None:
             error = self._camera_worker.poll_error()
             if error is not None:
                 raise CameraError(str(error)) from error
+        if recording:
+            for frames in self.drain_camera_results():
+                self._recorder.append_cameras(
+                    frames,
+                    available_timestamp_ns=time.monotonic_ns(),
+                )
         return SimulationStep(
             tick=self.tick,
             sim_time_ns=sim_time_ns,
@@ -934,11 +963,11 @@ class UnifiedSimulator:
             self._applied_arm = self._arm_snapshot
         with self._hand_lock:
             self._hand_snapshot = self._initial_hand_snapshot()
-            self._applied_hand = self._hand_snapshot
         self._last_arm_epoch = None
         self._last_arm_sequence = None
         self._last_hand_epoch = None
         self._last_hand_sequence = None
+        self._last_recorded_hand_key = None
         self._arm_last_arrival_ns = {"left": None, "right": None}
         self._hand_last_arrival_ns = {"left": None, "right": None}
         self._resume_gate_mask = 0
@@ -968,17 +997,28 @@ class UnifiedSimulator:
             "camera_drops": self._camera_drop_count,
         }
 
+    def abort_recording(self, reason: str = "interrupted") -> None:
+        if self._recorder is None:
+            return
+        abort = getattr(self._recorder, "abort_episode", None)
+        if abort is not None and getattr(self._recorder, "is_recording", False):
+            abort(reason)
+
     def close(self) -> None:
         if self._closed:
             return
         self._worker_pause.clear()
         self._closed = True
-        if self._camera_worker is not None:
-            self._camera_worker.stop()
         if self._recorder_stop is not None:
             self._recorder_stop.set()
         if self._recorder_thread is not None:
             self._recorder_thread.join(timeout=2.0)
+        if self._recorder is not None:
+            abort = getattr(self._recorder, "abort_episode", None)
+            if abort is not None and getattr(self._recorder, "is_recording", False):
+                abort("simulator_closed")
+        if self._camera_worker is not None:
+            self._camera_worker.stop()
 
     def __enter__(self) -> "UnifiedSimulator":
         return self

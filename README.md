@@ -1,6 +1,6 @@
 # SPD Simulation Collection — Tianji + Wuji Hand 2
 
-本项目仅面向《Pre-training Visual Dexterity in Simulation》的仿真示范采集，目标机器人为双侧 **tianji_arm + wuji-hand2**，操作者输入为 **PICO_2**。论文原文见 [docs/papers/2608.15917v1.pdf](docs/papers/2608.15917v1.pdf)。不包含实机控制、ROS 2 传感器采集、脚部 IMU、鱼眼相机或 Odin。
+本项目面向《Pre-training Visual Dexterity in Simulation》的仿真示范采集，目标机器人为双侧 **tianji_arm + wuji-hand2**。ROS 2 入口仅接收外部 `tianji_teleop` 生成的 54-DoF `JointCommand`：外部 ROS 2 → DDS/Zenoh 桥 → DDS → SPD 校验与名称映射 → MuJoCo 执行、可视化和录制；SPD 不再负责该入口的 PICO 输入、IK 或手部重定向。旧 PICO 跟踪运行链保留独立入口。论文原文见 [docs/papers/2608.15917v1.pdf](docs/papers/2608.15917v1.pdf)；不包含实机控制、脚部 IMU、鱼眼相机或 Odin。
 
 ## 目录
 
@@ -61,6 +61,70 @@ pixi run test
 ```
 
 多设备使用 `PICO_ADB_SERIAL`；端口使用 `PICO2_PORT` / `PICO2_DEVICE_PORT`。启动脚本可用 `bash scripts/start_spd_vr.sh --dry-run` 查看实际进程与资源路径。
+
+### ROS 2 运行链与采集
+
+ROS 环境是独立的 `ros-jazzy` Pixi environment，使用 Jazzy/Fast DDS。桥使用官方独立二进制 **zenoh-bridge-ros2dds 1.10.0**，不是旧 tracking Zenoh 协议，也不是 `rmw_zenoh`。Linux x86-64 首次安装（系统需 `curl`、`unzip`、`sha256sum`；此路径不需要 ADB）：
+
+```bash
+pixi install
+pixi run ros-bridge-install
+pixi run ros-build-interfaces
+```
+
+安装器从 [Eclipse 固定版本发布目录](https://download.eclipse.org/zenoh/zenoh-plugin-ros2dds/1.10.0/) 下载，并校验已固定的官方 SHA-256；二进制位于 `.pixi/tools/zenoh-bridge-ros2dds/1.10.0/zenoh-bridge-ros2dds`，被现有 `.gitignore` 忽略。无需 Rust 编译或系统级安装。接口构建等价于在 ROS Pixi 环境运行 `colcon build --base-paths packages/tianji-spd-interfaces --build-base .ros/build --install-base .ros/install --merge-install`；发布主机也须构建同一接口并 source 对应 `setup.sh`。
+
+两端默认连接为 **发布侧 domain 120 → Zenoh TCP `127.0.0.1:7447` → SPD domain 121**：
+
+```bash
+# 终端 A：仅启动发布侧桥；前台运行，Ctrl-C 只停止此桥
+pixi run ros-bridge-publisher
+
+# 终端 B：启动 SPD 侧桥和 MuJoCo 订阅 Viewer；有显示器时省略 --headless
+pixi run spd-teleop-ros --attach
+# 无图形运行：
+# pixi run spd-teleop-ros --headless --output /tmp/spd-episodes
+
+# 仅停止当前项目的 SPD 桥/Viewer 会话，不影响发布端或其他 tmux 会话
+pixi run spd-teleop-ros-stop
+```
+
+发布侧实际应用由用户在外部 `tianji_teleop` 工作区独立启动。其进程必须使用 `ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`，并 source 接口 overlay。SPD 环境默认 domain 为 121；通用模拟发布进程须在 Pixi 激活之后设置 domain 120，避免发布到 SPD 同域。下述 HDF5 播放器在代码中明确使用 domain 120。SPD 启动脚本绝不启动 `ros_publisher`、PICO、IK 或实机控制，也不会自动重建接口。
+
+独立调试 SPD 桥可运行 `pixi run ros-bridge-spd`（前台 Ctrl-C 停止），不要与一键入口重复启动。跨主机时，在 SPD 主机设 `SPD_ZENOH_LISTEN=tcp/0.0.0.0:7447` 后运行一键入口；发布主机设 `SPD_ZENOH_CONNECT=tcp/<SPD主机IP>:7447` 后启动发布侧桥。仅显式开放该 TCP 端口到可信网络；默认不提供认证或加密。两端 ROS 应用仍分别与本机桥通信，domain 120/121 不可合并，否则 DDS 可绕过桥。`config/ros2dds.json5` 关闭 Zenoh multicast/gossip 自动发现，仅允许关节命令 topic 的 publisher/subscriber 路由，禁止其他 topic、service 和 action；本机 ROS DDS 发现不等同于 Zenoh 自动发现。
+
+SPD 会话使用项目专属 tmux socket `.pixi/spd-ros.tmux.sock`，含 `bridge` / `viewer` 两个窗口；启动输出给出 attach 命令，可用 tmux `Ctrl-b n` 切换窗口查看桥日志。控制终端和 Viewer 均用 `e` 启用/禁用命令应用、`c` 清除控制与授权；终端输入需要回车，Viewer 按键无需回车。清除不重置物理模型。启用前校验新鲜候选和当前目标差，默认门限 `0.15 rad`，可用 `--max-enable-delta-rad` 调整。Viewer 用 `F8` / `F9` 切换前一个／后一个关节的目标和实际位置曲线，避免与 MuJoCo 原生相机、关节、坐标轴快捷键冲突。`r` 开始录制、`s` 保存成功 episode、`d` 丢弃；录制目录可用 `SPD_EPISODE_OUTPUT` 或 `--output` 指定。
+
+启用门限只检查候选命令中 ready 组的每个关节，相对保留的实际目标计算；未 ready 的组保持上次目标。合法的新 session 会撤销已有授权，但保留候选供再次显式启用。每组超过 `100 ms` 未获得新鲜 ready 命令后锁定 hold，须显式重新启用才能恢复，其他仍新鲜的组可继续。物理 tick 消费命令时也会复查 UTC 新鲜度，不把接收时合法等同于应用时仍有效。
+
+HUD 显示接收/有效/拒绝计数、接收频率、会话、序号、目标年龄、ready/hold 和各组最大跟踪误差；曲线橙色为实际应用目标，蓝色为 MuJoCo 实际关节位置，不把命令当作观测。超时后仍有新消息不代表自动恢复；使用 `e` 先禁用再启用。相机首次创建和同步渲染可能阻塞主循环并触发 100 ms 保持，尚不保证录制开启时的实时控制频率；保持门槛不会为渲染而放宽。
+
+消息接口位于 `packages/tianji-spd-interfaces/msg/JointCommand.msg`，ROS 类型为 `tianji_spd_interfaces/msg/JointCommand`，topic 为 `/spd/tianji_wuji2/v1/joint_command`，`schema_version=1`、`robot_config="tianji_wuji2_v1"`，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATILE`。消息携带 54 个关节名称和弧度目标，由订阅端校验并按名称映射，不直接信任数组顺序；时间戳使用主机 UTC 纳秒，跨主机须同步时钟。schema-v1 episode 的 `observations/commands` 保存实际应用的 54-DoF target、sequence/session、ready/hold mask 和物理应用时间。
+
+ROS Viewer 在已验证模型上按 `config/sim_cameras.yaml` 添加三路真实仿真相机，不修改已生成的模型文件或复制 overview 图像冒充多视角。JPEG/HDF5 和保存/丢弃由后台线程处理；当前相机配置仍标为 provisional，不宣称已校准。录制中的命令扩展与 `docs/schema-v1.md` 的“只存实际状态和 RGB”契约不同，不能用当前校验器通过来宣称符合该原始 schema。
+
+桥配置依据官方 [使用说明](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/tree/1.10.0#usage) 和 [1.10.0 配置定义](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/blob/1.10.0/DEFAULT_CONFIG.json5)；官方明确要求桥两端避免直接 DDS 通信。桥内部使用 CycloneDDS，与此处 Fast DDS 节点通过标准 DDS UDP 互通，不能依赖 Fast DDS 专用共享内存跨桥传输。
+
+桥进程通过 `config/ros2dds-cyclone.xml` 使用 loopback UDP 单播发现和固定范围参与者端口；Linux `lo` 未开启 MULTICAST 标志时也不需要 sudo 修改网卡。该配置只用于桥内的 CycloneDDS，不会把 ROS 节点的 Fast DDS 后端换掉。
+
+### HDF5 观测数据模拟发布
+
+先启动上面的两侧桥和 SPD Viewer，再启动独立播放面板：
+
+```bash
+pixi run -e ros-jazzy bash -c \
+  'source .ros/install/setup.sh && exec python -m spd_vr.ros_recorded_publisher "$@"' -- \
+  /home/summer/下载/20260914_153712_352406_take001.h5 \
+  /home/summer/下载/20260914_182335_419850_take003.h5 --loop
+```
+
+播放器只读 `schema-v1` 的双臂/双手 `qpos` 和各自时间戳，以双方已有首样本的公共起点开始，到双方仍有数据的公共终点结束；按时间向后取最近样本，不把两个异步数组按行号强行拼接。54 维顺序为左臂、右臂、左手、右手；若存在关节名称或配置元数据，拒绝与此契约冲突的内容。
+
+这些文件没有原始控制命令，故此入口明确把**实测观测作为合成测试目标**，不是恢复原始动作。发布使用新 UUID 会话、递增序号和当前 UTC 时间，原始时间戳只控制播放进度。默认 60 Hz、原速播放；`--speed` 修改文件播放速度，`--loop` 循环文件列表。初始与段间使用明确标注的平滑过渡，持续至少 2 秒、最大关节速率 0.3 rad/s；不夹紧文件中的非法目标。
+
+启动后处于 WAITING，并持续发送 manifest HOME 目标。在 SPD Viewer 按 `e` 授权后，点击面板 **Play**；**Pause** 持续发送最后目标，不使接收端误判断流；**Next** 切换下一份文件并做过渡。终端也接受 `play` / `pause` / `next`。关闭面板停止发布，SPD 按超时规则保持。
+
+播放面板显示文件名、进度、发布数，以及本地读取的 `top` / `left_wrist` 原始 JPEG 预览（最高 10 Hz）。**跨桥传输的只有 JointCommand，RGB 不是订阅端重渲染结果，也不经此命令话题发送。** MuJoCo 窗口检验关节目标接收和物理执行，不自动重建原始图像中的物体、接触或任务场景。
 
 ### 无硬件检查
 

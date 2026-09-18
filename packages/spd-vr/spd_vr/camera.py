@@ -11,8 +11,8 @@ import numpy as np
 import yaml
 
 CAMERA_NAMES = ("top", "left_wrist", "right_wrist")
-IMAGE_HEIGHT = 168
-IMAGE_WIDTH = 224
+IMAGE_HEIGHT = 720
+IMAGE_WIDTH = 1280
 CALIBRATION_REVISION = "provisional-v1"
 
 
@@ -189,6 +189,30 @@ class SyntheticCameraProvider:
             )
             for name in CAMERA_NAMES
         }, sim_time_ns)
+
+
+def load_camera_model(model_path: str | Path, config_path: str | Path) -> Any:
+    """Add configured, body-attached RGB views without changing robot dynamics."""
+    import mujoco
+
+    document, configs = load_camera_config(config_path)
+    spec = mujoco.MjSpec.from_file(str(model_path))
+    for name, config in configs.items():
+        if spec.camera(name) is not None:
+            raise CameraError(f"model already defines camera {name}; refusing ambiguous configuration")
+        parent = spec.worldbody if config.parent == "world" else spec.body(config.parent)
+        if parent is None:
+            raise CameraError(f"camera {name} parent is missing: {config.parent}")
+        parent.add_camera(
+            name=name,
+            pos=config.position,
+            quat=rotation_to_mujoco_quat(look_at_rotation(config.position, config.look_at)),
+            fovy=document["fovy_deg"],
+        )
+    model = spec.compile()
+    model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), IMAGE_WIDTH)
+    model.vis.global_.offheight = max(int(model.vis.global_.offheight), IMAGE_HEIGHT)
+    return model
 
 
 class MujocoCameraProvider:

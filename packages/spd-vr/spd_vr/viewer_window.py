@@ -5,6 +5,7 @@ single owner of the complete simulation state, while this class only renders it.
 """
 
 from __future__ import annotations
+from collections import deque
 
 from typing import Any, Callable, Mapping
 
@@ -33,6 +34,8 @@ class ViewerWindow:
         clock_ns: Callable[[], int] | None = None,
         shutdown: Callable[[], None] | None = None,
         control: Callable[[str], None] | None = None,
+        recording_control: Callable[[str], None] | None = None,
+        joint_control: Callable[[str], None] | None = None,
         state: Callable[[], str] | None = None,
         pose_markers: Callable[[], Mapping[str, Any]] | None = None,
         hand_keypoints: Callable[[], Mapping[str, Any]] | None = None,
@@ -44,6 +47,8 @@ class ViewerWindow:
         self._clock_ns = clock_ns
         self._shutdown = shutdown
         self._control = control
+        self._recording_control = recording_control
+        self._joint_control = joint_control
         self._state = state
         self._pose_markers = pose_markers
         self._hand_keypoints = hand_keypoints
@@ -51,6 +56,9 @@ class ViewerWindow:
         self._closed = False
         self._shutdown_sent = False
         self.hud: dict[str, Any] = {}
+        self._joint_figure: Any | None = None
+        self._joint_history: deque[tuple[float, float, float]] = deque(maxlen=300)
+        self._plot_joint = ""
 
     @property
     def window(self) -> Any | None:
@@ -94,10 +102,16 @@ class ViewerWindow:
         if isinstance(key, int):
             if key in (27, 256):
                 return "escape"
-            if key in (ord("q"), ord("Q")):
-                return "q"
+            if key in (297, 298):
+                return "f8" if key == 297 else "f9"
+            if key in (ord("e"), ord("E"), ord("c"), ord("C")):
+                return chr(key).lower()
             if key in (ord("r"), ord("R")):
                 return "r"
+            if key in (ord("s"), ord("S")):
+                return "s"
+            if key in (ord("d"), ord("D")):
+                return "d"
             if key in (ord("n"), ord("N")):
                 return "n"
             if key == 32:
@@ -113,15 +127,25 @@ class ViewerWindow:
             self._shutdown_sent = True
             if self._shutdown is not None:
                 self._shutdown()
-        elif self._control is not None:
-            if name == "space":
-                current = (self._state() if self._state is not None else "IDLE").upper()
-                command = "PAUSE" if current == "RUNNING" else "RESUME" if current == "PAUSED" else "START"
-                self._control(command)
-            elif name == "r":
+        elif self._joint_control is not None and name in {"e", "c", "f8", "f9"}:
+            self._joint_control(name)
+        elif name == "r":
+            if self._recording_control is not None:
+                self._recording_control("start")
+            elif self._control is not None:
                 self._control("REALIGN")
-            elif name == "n":
-                self._control("RESET")
+        elif name == "s":
+            if self._recording_control is not None:
+                self._recording_control("success")
+        elif name == "d":
+            if self._recording_control is not None:
+                self._recording_control("discard")
+        elif self._control is not None and name == "space":
+            current = (self._state() if self._state is not None else "IDLE").upper()
+            command = "PAUSE" if current == "RUNNING" else "RESUME" if current == "PAUSED" else "START"
+            self._control(command)
+        elif self._control is not None and name == "n":
+            self._control("RESET")
     handle_key = on_key
     def update_hud(self, values: Mapping[str, Any]) -> None:
         self.hud = dict(values)
@@ -146,6 +170,39 @@ class ViewerWindow:
         update = getattr(self._window, "update_hud", None)
         if update is not None:
             update(self.hud)
+
+    def update_joint_plot(self, name: str, seconds: float, target: float, actual: float) -> None:
+        """Plot an applied target against measured simulation position, in radians."""
+        if self._window is None or not callable(getattr(self._window, "set_figures", None)):
+            return
+        import mujoco
+
+        if self._joint_figure is None:
+            self._joint_figure = mujoco.MjvFigure()
+            self._joint_figure.xlabel = "Host elapsed time (s)"
+            self._joint_figure.flg_legend = 1
+            self._joint_figure.linename[0] = b"Applied target (rad)"
+            self._joint_figure.flg_extend = 0
+            self._joint_figure.linename[1] = b"Actual qpos (rad)"
+            self._joint_figure.linergb[0] = (1.0, 0.65, 0.15)
+            self._joint_figure.linergb[1] = (0.15, 0.8, 1.0)
+        if name != self._plot_joint:
+            self._joint_history.clear()
+            self._plot_joint = name
+        self._joint_history.append((seconds, target, actual))
+        figure = self._joint_figure
+        figure.title = name
+        history = np.asarray(self._joint_history)
+        figure.range[0] = (history[0, 0], max(history[-1, 0], history[0, 0] + 0.1))
+        low, high = float(np.min(history[:, 1:])), float(np.max(history[:, 1:]))
+        margin = max(0.02, (high - low) * 0.1)
+        figure.range[1] = (low - margin, high + margin)
+        count = len(history)
+        for index in range(2):
+            figure.linepnt[index] = count
+            figure.linedata[index, :2 * count:2] = history[:, 0]
+            figure.linedata[index, 1:2 * count:2] = history[:, index + 1]
+        self._window.set_figures((mujoco.MjrRect(0, 0, 560, 220), figure))
     def sync(self, now_ns: int | None = None) -> None:
         del now_ns
         if self._closed or self._window is None:

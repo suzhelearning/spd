@@ -90,6 +90,7 @@ class SessionController:
                 self._require_alignment(frame.monotonic_timestamp_ns)
         elif command is ControlCommand.PAUSE:
             if self.state is SessionState.RUNNING:
+                self._call("abort_recording", "paused")
                 self._call("set_paused", True)
                 self.state = SessionState.PAUSED
         elif command is ControlCommand.RESUME:
@@ -107,9 +108,9 @@ class SessionController:
                 self._call("reset_home", frame.monotonic_timestamp_ns)
                 self.state = SessionState.IDLE
                 self._alignment_generation += 1
-                self._requires_fresh_alignment = True
         elif command is ControlCommand.SHUTDOWN:
             if self.state is not SessionState.SHUTDOWN:
+                self._call("abort_recording", "shutdown")
                 self._call("shutdown")
                 self.state = SessionState.SHUTDOWN
         else:  # pragma: no cover - ControlFrame validates enum values

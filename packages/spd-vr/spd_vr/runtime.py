@@ -115,7 +115,7 @@ def run_runtime(
     headless: bool = True,
     mock: bool = False,
 ) -> Path:
-    """Write one deterministic episode without any live/device input path."""
+    """Write one deterministic schema-v1 episode without live device input."""
     del seed, headless
     if not math.isfinite(float(duration_s)) or duration_s <= 0.0:
         raise ValueError("duration_s must be positive")
@@ -129,65 +129,81 @@ def run_runtime(
     recorder.start_episode(1, {"scene": scene, "task": task, "synthetic": True})
     ticks = max(1, int(round(float(duration_s) * plant.physics_hz)))
     hand_sequence = 0
-    arm_sequence = 0
-    last_hand = -1
+    last_hand_key: tuple[int, int] | None = None
+    last_arm = -1
     last_camera = -1
-    last_robot = -1
     try:
         for index in range(ticks):
             sim_ns = plant.sim_time_ns
             now_ns = max(1, time.monotonic_ns())
-            arm_sequence += 1
+            arm_sequence = index + 1
             plant.submit_arm_target(
                 _arm_frame(plant, arm_sequence, 1, MOCK_EPOCH_NS + sim_ns + 1),
                 now_ns=now_ns,
             )
-            if index % max(1, plant.physics_hz // plant.hand_target_hz) == 0:
+            hand_due = index % max(1, plant.physics_hz // 60) == 0
+            if hand_due:
                 hand_sequence += 1
-                hand = _mock_hand_frame(sim_ns, hand_sequence, 1)
-                plant.submit_tracking(hand, now_ns=now_ns)
-                recorder.append_hands(
-                    hand.timestamp_ns,
-                    hand.sequence_id,
-                    hand.tracking_epoch,
-                    hand.left_hand,
-                    hand.right_hand,
-                    left_active=True,
-                    right_active=True,
-                )
+                plant.submit_tracking(_mock_hand_frame(sim_ns, hand_sequence, 1), now_ns=now_ns)
             step = plant.physics_tick(now_ns)
-            if step.tick % max(1, plant.physics_hz // 60) == 0:
-                recorder.append_robot(
-                    step.sim_time_ns,
-                    plant.data.qpos[:54],
-                    plant.data.qvel[:54],
-                    plant.data.ctrl[:54],
-                    arm_valid_mask=step.arm_valid_mask,
-                    hand_valid_mask=step.hand_valid_mask,
+            if step.tick % max(1, plant.physics_hz // 120) == 0:
+                qpos = np.asarray(plant.data.qpos[:54], dtype=np.float32)
+                wire_qpos = np.concatenate((qpos[:7], qpos[27:34], qpos[7:27], qpos[34:54]))
+                received_ns = time.monotonic_ns()
+                recorder.append_arm_qpos(received_ns, np.concatenate((qpos[:7], qpos[27:34])))
+                recorder.append_command(
+                    received_ns,
+                    wire_qpos,
+                    sequence=arm_sequence,
+                    stamp_utc_ns=time.time_ns(),
+                    ready_mask=3 if step.hand_valid_mask == 3 else 1,
+                    session_id="synthetic-runtime",
+                    applied_sim_time_ns=step.sim_time_ns,
+                    hold_mask=0 if step.hand_valid_mask == 3 else 6,
                 )
-                last_robot = step.sim_time_ns
+                last_arm = step.sim_time_ns
+            if hand_due and step.hand_valid_mask == 3:
+                key = (1, hand_sequence)
+                if key != last_hand_key:
+                    qpos = np.asarray(plant.data.qpos[:54], dtype=np.float32)
+                    recorder.append_hand_qpos(
+                        time.monotonic_ns(),
+                        np.concatenate((qpos[7:27], qpos[34:54])),
+                        both_fresh=True,
+                    )
+                    last_hand_key = key
             if step.sim_time_ns > last_camera and step.tick % max(1, plant.physics_hz // 30) == 0:
-                frames = camera.capture(step.sim_time_ns)
-                recorder.append_cameras(frames)
+                recorder.append_cameras(
+                    camera.capture(step.sim_time_ns),
+                    available_timestamp_ns=time.monotonic_ns(),
+                )
                 last_camera = step.sim_time_ns
-            last_hand = hand_sequence
-        # Ensure every required stream has one sample for very short episodes.
-        if last_robot < 0:
-            recorder.append_robot(
-                plant.sim_time_ns,
-                plant.data.qpos[:54],
-                plant.data.qvel[:54],
-                plant.data.ctrl[:54],
+        qpos = np.asarray(plant.data.qpos[:54], dtype=np.float32)
+        if last_arm < 0:
+            recorder.append_arm_qpos(time.monotonic_ns(), np.concatenate((qpos[:7], qpos[27:34])))
+            recorder.append_command(
+                time.monotonic_ns(),
+                np.concatenate((qpos[:7], qpos[27:34], qpos[7:27], qpos[34:54])),
+                sequence=max(1, arm_sequence),
+                stamp_utc_ns=time.time_ns(),
+                ready_mask=3 if last_hand_key is not None else 1,
+                session_id="synthetic-runtime",
+                applied_sim_time_ns=plant.sim_time_ns,
+                hold_mask=0 if last_hand_key is not None else 6,
             )
-        if last_hand < 1:
-            hand = _mock_hand_frame(plant.sim_time_ns, 1, 1)
-            recorder.append_hands(hand.timestamp_ns, 1, 1, hand.left_hand, hand.right_hand, left_active=True, right_active=True)
+        if last_hand_key is None:
+            recorder.append_hand_qpos(
+                time.monotonic_ns(),
+                np.concatenate((qpos[7:27], qpos[34:54])),
+                both_fresh=True,
+            )
         if last_camera < 0:
-            recorder.append_cameras(camera.capture(plant.sim_time_ns))
-        return recorder.finish_episode()
+            recorder.append_cameras(camera.capture(plant.sim_time_ns), available_timestamp_ns=time.monotonic_ns())
+        return recorder.finish_episode(success=True)
     finally:
+        if recorder.is_recording:
+            recorder.abort_episode("runtime_interrupted")
         plant.close()
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)

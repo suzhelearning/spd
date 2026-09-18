@@ -1,7 +1,7 @@
 version: 1
 calibration_revision: provisional-v1
-width: 224
-height: 168
+width: 1280
+height: 720
 fovy_deg: 70.0
 near_m: 0.01
 far_m: 3.0

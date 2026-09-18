@@ -4,7 +4,28 @@
 
 参考 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、附录 A.1，在 MuJoCo 内通过人类遥操作采集目标机器人本体的示范。机器人替换为 tianji_arm + wuji-hand2，跟踪输入替换为 PICO_2。实机控制与真实传感器融合不在范围内。
 
-## 已有代码的数据路径
+## 外部关节订阅入口
+
+`pixi run spd-teleop-ros` 只启动 SPD 侧 DDS/Zenoh 桥和 ROS Viewer：
+
+```text
+外部 tianji_teleop（标定 / IK / 手部重定向）或模拟发布器
+    → ROS JointCommand，domain 120
+    → 发布侧 zenoh-bridge-ros2dds
+    → Zenoh TCP
+    → SPD 侧 zenoh-bridge-ros2dds，domain 121
+    → 校验 / 会话授权 / 最新目标邮箱 / 名称映射
+    → MuJoCo position actuators / 物理积分
+    → Viewer 目标与实际位置曲线 / 仿真 episode
+```
+
+SPD 此入口不接 PICO、不初始化手部重定向、不运行 IK，也不启动发布器；`PlantController(command_only=True)` 拒绝旧 tracking/arm-target 输入。两侧使用不同 ROS domain，桥采用显式 TCP 端点和 loopback DDS 单播发现，避免同机 DDS 绕过桥。ROS 节点使用 Jazzy/Fast DDS，桥内部的 CycloneDDS 不改变 ROS 节点后端。
+
+54 维目标必须满足固定名称顺序、有限值、ready 组范围、会话、递增序号和 UTC 新鲜度。范围检查通过后才原子更新目标；实际消费再次检查年龄。映射按 manifest 名称预计算 qpos/执行器地址，场景 free joints 不占用机器人索引。启用须检查新鲜候选相对保持目标的差值；100 ms 组级超时锁存，新会话解除授权，恢复需本地显式启用。
+
+Viewer 显示接收/拒绝/保持状态和所选关节的实际应用目标、MuJoCo qpos 曲线；`F8/F9` 切换关节，`e/c` 启用或清除控制，`r/s/d` 独立控制录制。相机按既有配置附着在世界/腕部，仿真状态按名称取值；不把未 ready 输入占位值记录为实际动作。当前同步相机渲染仍可能触发控制超时，不宣称已满足录制开启时的实时频率。启动命令和网络配置见根 README。
+
+## 保留的 PICO 跟踪入口
 
 ```text
 PICO_2 APK → ADB/TCP → pico_hand_tracking
@@ -30,8 +51,8 @@ PICO_2 APK → ADB/TCP → pico_hand_tracking
 | `arm_ik`, `qp_arm`, `retarget_pair`, `alignment` | 机械臂求解、灵巧手映射与操作者对齐 |
 | `model_compiler`, `manifest` | URDF 编译、碰撞资产和关节契约 |
 | `simulator`, `viewer`, `camera` | 物理状态推进、查看和相机数据 |
-| `episode`, `recorder` | episode 状态、检查点和 HDF5 输出 |
-| `replay`, `filter_contacts`, `align_30hz` | 回放、接触裁剪与时间对齐 |
+| `episode`, `recorder` | episode 生命周期与 schema-v1 HDF5 输出 |
+| `replay` | schema-v1 文件校验与只读检查；时间对齐由训练端负责 |
 
 `packages/spd-envs/spd_envs/` 独立管理环境：`registry` 注册六类场景与 17 个任务，`scene_builder` 生成物体和随机参数，`model_scene` 将场景合入调用者提供的机器人 MJCF，`validate` 检查重置。它只依赖 NumPy 和 MuJoCo，不依赖 PICO、Zenoh 或 `spd_vr`。
 
@@ -60,6 +81,12 @@ PICO_2 APK → ADB/TCP → pico_hand_tracking
 3. 与论文六场景、离线批量渲染及数据增强的等价性尚未验收。
 4. 实机后训练、策略训练和部署不属于本次项目整理。
 
+## schema-v1 订阅与发布
+
+核心观测为仿真/设备反馈形成的双臂 14 维 qpos、双手 40 维 qpos，以及启用相机的 RGB 帧。ROS Viewer 当前只提供仿真反馈；关节与完整 RGB 帧使用采集主机单调时间，以 episode 起点归零。写入线程负责 JPEG 编码和 HDF5 发布，保存/丢弃由录制协调线程等待，不在控制回调中同步等待。
+
+录制中的文件为 `episode_XXXXXX.partial.h5`。收到成功确认后完成字段、维度、有限值、时间戳和 JPEG 解码校验，通过后发布为 `.h5`；中断或校验失败保留 partial 文件。当前录制器还要求 `observations/commands`，保存实际应用目标及 session/sequence/UTC/ready/hold/物理应用时间；这是仿真命令扩展，并不符合 `docs/schema-v1.md` 排除命令的原始文件契约。文件不包含速度、深度、IMU、分割图或 30 Hz 训练副本。
+
 ## 数据与资源约定
 
 - `assets/`：原始 URDF、网格与必须保留的机器人资产。
@@ -68,4 +95,4 @@ PICO_2 APK → ADB/TCP → pico_hand_tracking
 - `docs/papers/`：研究依据；论文不作为可执行规范替代代码验证。
 - 根目录 `pixi.toml` 和 `pixi.lock` 是唯一受维护运行环境；系统 ADB 和图形会话为外部前置条件。
 
-本次移除旧 ROS 2 采集、鱼眼、IMU、Odin、PXREA 和实机控制入口，不为它们保留兼容启动脚本。旧项目文档由根 README 与本文件替代。
+此前移除的旧 ROS 2 采集、鱼眼、IMU、Odin、PXREA 和实机控制入口不恢复。新的 ROS 入口仅订阅外部关节目标驱动仿真，不发布实机控制命令。

@@ -1,7 +1,7 @@
 """PICO_2-driven SPD VR simulation runtime.
 
 The runtime consumes the direct PICO_2 tracking stream and arm targets, then
-simulates the Tianji arm and Wuji Hand 2 plant with replayable episode output.
+simulates the Tianji arm and Wuji Hand 2 plant with schema-v1 episode output.
 It has no robot-hardware control backend.
 """
 
