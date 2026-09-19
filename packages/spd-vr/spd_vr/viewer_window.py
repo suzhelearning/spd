@@ -6,6 +6,7 @@ single owner of the complete simulation state, while this class only renders it.
 
 from __future__ import annotations
 from collections import deque
+import threading
 
 from typing import Any, Callable, Mapping
 
@@ -53,6 +54,7 @@ class ViewerWindow:
         self._pose_markers = pose_markers
         self._hand_keypoints = hand_keypoints
         self._window = window
+        self._render_thread: threading.Thread | None = None
         self._closed = False
         self._shutdown_sent = False
         self.hud: dict[str, Any] = {}
@@ -87,6 +89,7 @@ class ViewerWindow:
             from mujoco import viewer as mujoco_viewer
         except ImportError as exc:  # pragma: no cover - environment dependent
             raise RuntimeError("visible viewer requires mujoco.viewer") from exc
+        existing_threads = set(threading.enumerate())
         self._window = mujoco_viewer.launch_passive(
             self.model,
             self.data,
@@ -94,6 +97,14 @@ class ViewerWindow:
             show_left_ui=False,
             show_right_ui=False,
         )
+        # MuJoCo 3.12 starts a daemon render thread but Handle.close() only
+        # requests exit. Retain that specific thread so GLFW/C++ teardown
+        # finishes before Python exits; otherwise finite viewers can abort.
+        self._render_thread = next((
+            thread for thread in threading.enumerate()
+            if thread not in existing_threads
+            and getattr(thread, "_target", None) is mujoco_viewer._launch_internal
+        ), None)
         return self
     @staticmethod
     def _key_name(key: Any) -> str:
@@ -313,6 +324,9 @@ class ViewerWindow:
             close = getattr(window, "close", None)
             if close is not None:
                 close()
+        if self._render_thread is not None:
+            self._render_thread.join()
+            self._render_thread = None
 
     def __enter__(self) -> "ViewerWindow":
         return self.open()

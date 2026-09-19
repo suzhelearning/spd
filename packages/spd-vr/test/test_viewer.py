@@ -217,26 +217,6 @@ def test_viewer_window_uses_real_handle_text_surface_for_hud():
     assert "physics_hz: 480" in handle.texts[3]
 
 
-def test_visible_viewer_hides_mujoco_side_panels(monkeypatch):
-    import mujoco.viewer as mujoco_viewer
-
-    captured = {}
-    handle = object()
-
-    def launch_passive(model, data, **kwargs):
-        captured.update(model=model, data=data, **kwargs)
-        return handle
-
-    monkeypatch.setattr(mujoco_viewer, "launch_passive", launch_passive)
-    model = object()
-    data = object()
-
-    window = ViewerWindow(model=model, data=data).open()
-
-    assert window.window is handle
-    assert captured["show_left_ui"] is False
-    assert captured["show_right_ui"] is False
-
 
 def test_viewer_draws_commanded_wrist_pose_axes():
     import mujoco

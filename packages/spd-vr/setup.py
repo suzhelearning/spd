@@ -50,6 +50,7 @@ setup(
             "spd-arm-ik = spd_vr.arm_ik:main",
             "spd-viewer = spd_vr.viewer:main",
             "spd-viewer-ros = spd_vr.ros_viewer:main",
+            "spd-scene = spd_vr.scene:main",
             "spd-preflight = spd_vr.preflight:main",
             "spd-control = spd_vr.control_cli:main",
             "spd-status = spd_vr.status_cli:main",

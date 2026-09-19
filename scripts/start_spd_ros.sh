@@ -8,18 +8,27 @@ mode="detach"
 output="${SPD_EPISODE_OUTPUT:-$repo_root/episodes}"
 headless=0
 max_enable_delta="0.15"
+scene=""
+task=""
+seed="0"
 
 usage() {
-  echo "Usage: start_spd_ros.sh [--attach] [--headless] [--output PATH] [--max-enable-delta-rad RAD]"
+  echo "Usage: start_spd_ros.sh [--attach] [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--max-enable-delta-rad RAD]"
   echo "Starts only the SPD ROS2DDS bridge (domain 121) and MuJoCo subscriber viewer."
 }
 while (($#)); do
   case "$1" in
     --attach) mode="attach"; shift ;;
     --headless) headless=1; shift ;;
-    --output|--max-enable-delta-rad)
+    --output|--max-enable-delta-rad|--scene|--task|--seed)
       [[ $# -ge 2 && -n "$2" ]] || { echo "Missing value for $1" >&2; exit 2; }
-      if [[ "$1" == --output ]]; then output="$2"; else max_enable_delta="$2"; fi
+      case "$1" in
+        --output) output="$2" ;;
+        --max-enable-delta-rad) max_enable_delta="$2" ;;
+        --scene) scene="$2" ;;
+        --task) task="$2" ;;
+        --seed) seed="$2" ;;
+      esac
       shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -45,6 +54,9 @@ fi
 mkdir -p "$output"
 viewer_inner="source .ros/install/setup.sh && export ROS_DOMAIN_ID=121 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS='' && exec python -m spd_vr.ros_viewer --output $(printf '%q' "$output") --max-enable-delta-rad $(printf '%q' "$max_enable_delta")"
 if ((headless)); then viewer_inner+=" --headless"; fi
+viewer_inner+=" --seed $(printf '%q' "$seed")"
+if [[ -n "$scene" ]]; then viewer_inner+=" --scene $(printf '%q' "$scene")"; fi
+if [[ -n "$task" ]]; then viewer_inner+=" --task $(printf '%q' "$task")"; fi
 bridge="cd $(printf '%q' "$repo_root") && exec env SPD_ZENOH_LISTEN=$(printf '%q' "${SPD_ZENOH_LISTEN:-tcp/127.0.0.1:7447}") bash scripts/run_ros_bridge.sh spd"
 viewer="cd $(printf '%q' "$repo_root") && exec pixi run -e ros-jazzy bash -c $(printf '%q' "$viewer_inner")"
 "$tmux_bin" -S "$socket" new-session -d -s "$session_name" -n bridge "$bridge"

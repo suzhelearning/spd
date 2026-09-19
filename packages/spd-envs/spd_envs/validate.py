@@ -15,9 +15,12 @@ def validate_tasks(seed_start: int, seed_count: int) -> dict[str, Any]:
         raise ValueError("seed_count must be positive")
     results = []
     for spec in TASKS:
-        expected_duration = 60.0 * spec.table2_minutes / spec.table2_episodes
-        if not math.isclose(spec.target_duration_s, expected_duration, rel_tol=0.0, abs_tol=1e-12):
-            raise AssertionError(f"duration formula mismatch: {spec.qualified_name}")
+        stats = TABLE2_STATS.get((spec.scene, spec.name))
+        if stats is not None:
+            episodes, minutes = stats
+            expected_duration = 60.0 * minutes / episodes
+            if spec.target_duration_s is None or not math.isclose(spec.target_duration_s, expected_duration, rel_tol=0.0, abs_tol=1e-12):
+                raise AssertionError(f"duration formula mismatch: {spec.qualified_name}")
         for seed in range(seed_start, seed_start + seed_count):
             first = spec.reset(seed)
             second = spec.reset(seed)
@@ -33,7 +36,7 @@ def validate_tasks(seed_start: int, seed_count: int) -> dict[str, Any]:
     return {
         "scenes": 6,
         "tasks": len(TASKS),
-        "duration_formula": "60 * table2_minutes / table2_episodes",
+        "duration_formula": "60 * table2_minutes / table2_episodes (Table 2 tasks only)",
         "seed_start": seed_start,
         "seed_count": seed_count,
         "resets": len(results),

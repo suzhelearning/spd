@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -10,25 +9,40 @@ from .scene_builder import SceneBuildResult, SceneResetError, contact_gate
 
 
 def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_model: str | Path) -> Path:
-    base_model, output_model = Path(base_model), Path(output_model)
+    base_model, output_model = Path(base_model).resolve(), Path(output_model).resolve()
+    if base_model == output_model:
+        raise SceneResetError("scene output must not overwrite the verified base model")
     root = ET.parse(base_model).getroot()
     size = root.find("size")
     if size is None:
         size = ET.Element("size")
         root.insert(0, size)
-    size.set("nuser_geom", "2")
+    size.set("nuser_geom", str(max(2, int(size.get("nuser_geom", "0")))))
     worldbody = root.find("worldbody")
     if worldbody is None:
         raise SceneResetError("base model has no worldbody")
 
-    for mesh in root.iter("mesh"):
-        file_name = mesh.attrib.get("file")
+    # Compiled assets are relative to the original MJCF, not the scene output.
+    # Absolute resource directories also survive MjSpec camera composition.
+    compiler = root.find("compiler")
+    if compiler is not None:
+        # Robot inertials remain explicit; infer only the new compound objects.
+        compiler.set("inertiafromgeom", "auto")
+        for attribute in ("assetdir", "meshdir", "texturedir"):
+            if attribute in compiler.attrib:
+                compiler.set(attribute, str((base_model.parent / compiler.get(attribute)).resolve()))
+    for element in root.iter():
+        file_name = element.get("file")
         if not file_name:
             continue
-        source = (base_model.parent / file_name).resolve()
+        directory = base_model.parent
+        if compiler is not None and element.tag in {"mesh", "texture", "hfield"}:
+            attribute = {"mesh": "meshdir", "texture": "texturedir", "hfield": "assetdir"}[element.tag]
+            directory = Path(compiler.get(attribute, compiler.get("assetdir", str(directory))))
+        source = (directory / file_name).resolve()
         if not source.is_file():
-            raise SceneResetError(f"base model mesh not found: {source}")
-        mesh.set("file", os.path.relpath(source, output_model.parent))
+            raise SceneResetError(f"base model resource not found: {source}")
+        element.set("file", str(source))
     for child in result.worldbody:
         if child.tag == "body" and any(existing.attrib.get("name") == child.attrib.get("name") for existing in worldbody.findall("body")):
             raise SceneResetError(f"duplicate scene body: {child.attrib.get('name')}")
@@ -42,15 +56,7 @@ def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_m
         model = mujoco.MjModel.from_xml_path(str(output_model))
         data = mujoco.MjData(model)
         object_names = {item.name for item in result.objects}
-        allowed_pairs = {
-            frozenset((left.name, right.name))
-            for index, left in enumerate(result.objects)
-            for right in result.objects[index + 1:]
-            if left.assembled and right.assembled and left.class_name == right.class_name == "cup"
-        }
-        contact_gate(model, data, object_names, allowed_pairs)
-    except ImportError:
-        pass
+        contact_gate(model, data, object_names)
     except Exception:
         output_model.unlink(missing_ok=True)
         raise

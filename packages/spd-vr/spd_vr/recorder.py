@@ -256,7 +256,12 @@ class EpisodeRecorder:
                 task = task_manifest.get("task") or task_manifest.get("scene") or str(episode_id)
             else:
                 task = task_manifest
-            self._create_h5(partial, task=str(task), robot_config=self.robot_config).close()
+            with self._create_h5(partial, task=str(task), robot_config=self.robot_config) as handle:
+                if isinstance(task_manifest, Mapping):
+                    handle.attrs["task_manifest"] = json.dumps(dict(task_manifest), sort_keys=True)
+                    for key in ("scene", "seed"):
+                        if key in task_manifest:
+                            handle.attrs[key] = task_manifest[key]
             self._episode_id = str(episode_id)
             self._partial_path = partial
             self._final_path = final

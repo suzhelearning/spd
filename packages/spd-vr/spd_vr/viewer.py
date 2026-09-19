@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 import queue
+import tempfile
 import threading
 import time
 from typing import Any, Callable, Mapping, Sequence
@@ -175,6 +176,8 @@ class PlantController:
         urdf_path: str | Path | None = None,
         command_only: bool = False,
         camera_config_path: str | Path | None = None,
+        scene_result: Any | None = None,
+        scene_output_dir: str | Path | None = None,
     ) -> None:
         try:
             import mujoco
@@ -185,6 +188,12 @@ class PlantController:
         production_model = model is None
         verified = None
         self.synthetic = False
+        self.scene_manifest = scene_result.manifest() if scene_result is not None else None
+        self.scene_model_path: Path | None = None
+        self.scene_manifest_path: Path | None = None
+        self._scene_temp: tempfile.TemporaryDirectory | None = None
+        if scene_result is not None and not production_model:
+            raise ArtifactError("scene composition requires a verified production model")
         if strict_artifacts is None:
             strict_artifacts = production_model
         if production_model:
@@ -199,6 +208,29 @@ class PlantController:
                 verified = verify_artifacts(manifest_path, urdf_path)
                 if Path(model_path).resolve() != verified.full_model.resolve():
                     raise ArtifactError("viewer must load manifest unified_plant.xml")
+            if scene_result is not None:
+                if verified is None:
+                    raise ArtifactError("scene composition requires verified model artifacts")
+                from spd_envs.model_scene import write_scene_model
+
+                if scene_output_dir is None:
+                    self._scene_temp = tempfile.TemporaryDirectory(prefix="spd-scene-")
+                    scene_output_dir = self._scene_temp.name
+                destination = (
+                    Path(scene_output_dir).resolve() / scene_result.scene
+                    / scene_result.task / f"seed_{scene_result.seed}"
+                )
+                self.scene_model_path = write_scene_model(
+                    verified.full_model, scene_result, destination / "scene.xml",
+                )
+                self.scene_manifest_path = destination / "scene_manifest.json"
+                self.scene_manifest_path.write_text(json.dumps({
+                    **self.scene_manifest,
+                    "base_model": str(verified.full_model.resolve()),
+                    "base_manifest_sha256": verified.manifest.get("manifest_sha256"),
+                    "model": str(self.scene_model_path),
+                }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                model_path = self.scene_model_path
             if camera_config_path is None:
                 model = mujoco.MjModel.from_xml_path(str(model_path))
             else:
@@ -926,6 +958,9 @@ class PlantController:
 
     def shutdown(self) -> None:
         self._closed = True
+        if self._scene_temp is not None:
+            self._scene_temp.cleanup()
+            self._scene_temp = None
 
     close = shutdown
 

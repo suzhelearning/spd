@@ -54,9 +54,11 @@ PICO_2 APK → ADB/TCP → pico_hand_tracking
 | `episode`, `recorder` | episode 生命周期与 schema-v1 HDF5 输出 |
 | `replay` | schema-v1 文件校验与只读检查；时间对齐由训练端负责 |
 
-`packages/spd-envs/spd_envs/` 独立管理环境：`registry` 注册六类场景与 17 个任务，`scene_builder` 生成物体和随机参数，`model_scene` 将场景合入调用者提供的机器人 MJCF，`validate` 检查重置。它只依赖 NumPy 和 MuJoCo，不依赖 PICO、Zenoh 或 `spd_vr`。
+`packages/spd-envs/spd_envs/` 独立管理环境：`registry` 注册六类场景、Table 2 的 17 个任务及 A.4 的 `jenga/playing`，`scene_builder` 生成带接触几何的物体和随机参数，`model_scene` 将场景合入调用者提供的机器人 MJCF，`validate` 检查重置。它只依赖 NumPy 和 MuJoCo，不依赖 PICO、Zenoh 或 `spd_vr`。未报告的 A.4 时长和数据集统计为 `None`，不伪造 Table 2 数据。
 
 依赖方向为 `spd-vr → spd-envs`。原 `spd_vr.scenes` 已迁移为 `spd_envs`，不保留转发层。机器人 `generated/` 与 `config/` 留在 `spd-vr`；原始机器人资产独立放在根目录 `assets/`。环境包不硬编码 Tianji/Wuji 模型路径。
+
+五个 Figure 4/A.4 场景可通过 `pixi run spd-scene --task SCENE/TASK --seed N` 独立查看，也可通过 `spd-teleop-ros --task SCENE/TASK --seed N` 加载到既有关节订阅链。`PlantController` 先验证基础机器人资产，再合入场景；不覆盖基础 MJCF，不因场景 free joints 改变机器人索引。桌高 0.75 m 适配 Tianji 初始姿态，盘架、杯架和箱体固定，盘/杯/积木/瓶自由运动；杯体和把手使用非凸组合碰撞，不允许初始穿透。构造参数及 seed 写入 scene manifest，ROS episode 保存完整 task manifest。此功能是可交互物理场景，不包含自动策略、任务评分或原论文视觉资产的精确复刻。
 
 ## 论文目标与当前实现的区别
 

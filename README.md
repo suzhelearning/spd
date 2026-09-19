@@ -21,7 +21,7 @@ Python import 名称为 `spd_vr`、`spd_envs`、`pico_hand_tracking`、`wuji_ret
 
 ### 环境包
 
-`spd-envs` 管理 `jenga`、`spelling_blocks`、`mugs`、`dishes`、`cups`、`bottles` 六类程序化场景，共 17 个任务。运行 `pixi run spd-envs-check` 检查所有任务的随机重置。程序化资产并不意味着已经逐项复现论文的视觉与接触参数。
+`spd-envs` 管理 `jenga`、`spelling_blocks`、`mugs`、`dishes`、`cups`、`bottles` 六类程序化场景，保留论文 Table 2 的 17 个任务，另加附录 A.4 的 `jenga/playing`。运行 `pixi run spd-envs-check` 检查所有任务的随机重置。程序化资产并不意味着逐项复现论文的视觉与接触参数。
 
 ```python
 from spd_envs import get_task
@@ -36,7 +36,48 @@ write_scene_model(
 )
 ```
 
-增加或调整场景时修改 `packages/spd-envs/spd_envs/`，机器人控制仍由 `spd-vr` 负责。当前这是环境构建接口，不是 Viewer 已支持运行时切换场景的声明。
+增加或调整场景时修改 `packages/spd-envs/spd_envs/`，机器人控制仍由 `spd-vr` 负责。场景在启动时选择；不支持运行中切换。
+
+### 五个论文任务场景
+
+参考 Figure 4 和附录 A.4，使用当前 Tianji/Wuji 机器人分别运行：
+
+```bash
+pixi run spd-scene --task dishes/rack_dishes --seed 0
+pixi run spd-scene --task mugs/hang_mug --seed 0
+pixi run spd-scene --task jenga/playing --seed 0
+pixi run spd-scene --task cups/pyramid --seed 0
+pixi run spd-scene --task bottles/toss_in_bin --seed 0
+```
+
+每条命令打开一个 MuJoCo 窗口；关闭后可启动另一个任务。鼠标操作沿用 MuJoCo，`Esc` / `q` 退出。独立查看器保持机器人 HOME 目标，不启动 ROS、PICO 或自动任务策略。
+
+| 任务 | 初始场景与接触几何 |
+|---|---|
+| Plate racking | 两只平放盘子、带三道开放插槽的固定盘架 |
+| Mug hanging | 一只空心带孔杯柄马克杯、四分支固定挂杯架 |
+| Playing Jenga | 18 层交错排列、54 块独立自由积木；中层抽取目标记录在 manifest |
+| Cup stacking | 六只真实套叠的空心锥形杯，可拆开并倒置搭成 3–2–1 金字塔 |
+| Bottles in bin | 四只自由瓶子、带底和四壁的开口固定收纳箱 |
+
+桌面高度为 **0.75 m**，适配 Tianji HOME 前臂和手掌的碰撞间隙。盘子半径 100 mm、积木 75×25×15 mm、杯高 90 mm、瓶高 180 mm、箱内尺寸 350×250×150 mm；这些是工程选型，不是论文提供的精确尺寸。物体使用真实碰撞、重力和摩擦，不以焊接、禁用接触或允许杯子穿透来维持摆放。随机质量、摩擦、颜色与位置可由 seed 重现。
+
+导出带机器人场景、采样参数、最终状态和截图：
+
+```bash
+pixi run spd-scene --task cups/pyramid --seed 0 \
+  --headless --duration 3 --output data/task_scenes
+```
+
+输出为 `data/task_scenes/cups/pyramid/seed_0/{scene.xml,scene_manifest.json,state.json,final.png}`。其他任务目录同理；重复运行同一输出目录、任务和 seed 会更新这些输出，不修改已验证的基础机器人模型。`--duration 0` 导出初始状态；`--screenshot PATH` 指定截图路径。无图形模式默认使用 EGL。
+
+接入既有外部关节控制链路时，在 SPD 启动命令中选任务：
+
+```bash
+pixi run spd-teleop-ros --task mugs/hang_mug --seed 0 --attach
+```
+
+发布端和桥的启动方式不变，仍需本地 `e` 授权。场景自由关节不改变 54 维机器人命令顺序，录制保存采样场景 manifest。HDF5 观测回放仅驱动关节，**不会自动完成这些任务**。现已检查初始稳定性、盘架承托、杯柄悬挂、套杯/金字塔支撑、积木抽取和瓶子落入箱内；未验收机器人自主抓取、完整任务策略或论文成绩复现。
 
 ## 环境与运行
 

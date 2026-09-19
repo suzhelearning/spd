@@ -1,0 +1,142 @@
+"""Launch a deterministic task scene with the verified robot; no autonomous policy."""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import time
+from typing import Any
+
+
+def build_selected_scene(scene: str | None, task: str | None, seed: int) -> Any:
+    """Accept a qualified task ID or an explicit scene/task pair."""
+    from spd_envs.registry import get_task
+
+    if task is not None and "/" in task:
+        task_scene, task = task.split("/", 1)
+        if scene is not None and scene != task_scene:
+            raise ValueError("--scene conflicts with the qualified --task")
+        scene = task_scene
+    if scene is None or scene == "hardware_free":
+        if task not in (None, "external_joint_command"):
+            raise ValueError("use --task SCENE/TASK or supply --scene with a task name")
+        return None
+    try:
+        spec = get_task(scene, task)
+    except KeyError as exc:
+        raise ValueError(str(exc)) from exc
+    return spec.build(seed)
+
+
+def frame_scene(camera: Any, options: Any) -> None:
+    """Show the tabletop and both arms, hiding duplicate robot collision meshes."""
+    camera.lookat[:] = (0.40, 0.0, 0.85)
+    camera.distance = 2.0
+    camera.azimuth = 135.0
+    camera.elevation = -30.0
+    options.geomgroup[0] = 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", required=True, help="Qualified task ID, e.g. dishes/rack_dishes")
+    parser.add_argument("--scene", help="Scene name when --task is not qualified")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--duration", type=float, help="Simulation seconds; required in headless mode")
+    parser.add_argument("--output", type=Path, help="Save SCENE/TASK/seed_N/{scene.xml,scene_manifest.json,final.png,state.json}")
+    parser.add_argument("--screenshot", type=Path, help="Save the final view here (overrides output's final.png)")
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=960)
+    args = parser.parse_args(argv)
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration < 0):
+        parser.error("--duration must be finite and nonnegative")
+    if args.headless and args.duration is None:
+        parser.error("--headless requires a finite --duration")
+    if args.width <= 0 or args.height <= 0:
+        parser.error("image dimensions must be positive")
+    # MuJoCo chooses its offscreen backend at import time. Respect explicit overrides.
+    if args.headless:
+        os.environ.setdefault("MUJOCO_GL", "egl")
+    try:
+        result = build_selected_scene(args.scene, args.task, args.seed)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if result is None:
+        parser.error("spd-scene requires a procedural task")
+
+    import mujoco
+    import numpy as np
+    from PIL import Image
+
+    from .viewer import PlantController
+    from .viewer_window import ViewerWindow
+
+    plant = PlantController(
+        command_only=True, strict_artifacts=True,
+        scene_result=result, scene_output_dir=args.output,
+    )
+    window = ViewerWindow(plant.model, plant.data, headless=args.headless)
+    summary: dict[str, Any] = {}
+    try:
+        window.open()
+        if window.window is not None:
+            with window.window.lock():
+                frame_scene(window.window.cam, window.window.opt)
+        timestep = float(plant.model.opt.timestep)
+        steps = None if args.duration is None else math.ceil(args.duration / timestep)
+        start = time.monotonic()
+        render_every = max(1, round(plant.physics_hz / plant.render_hz))
+        while window.is_running() and (steps is None or plant.tick < steps):
+            plant.physics_tick(now_ns=round(plant.tick * timestep * 1e9))
+            if not np.isfinite(plant.data.qpos).all() or not np.isfinite(plant.data.qvel).all():
+                raise RuntimeError("scene physics produced non-finite state")
+            if not args.headless:
+                if plant.tick % render_every == 0:
+                    window.sync()
+                time.sleep(max(0.0, start + plant.tick * timestep - time.monotonic()))
+        mujoco.mj_forward(plant.model, plant.data)
+        destination = plant.scene_model_path.parent
+        screenshot = args.screenshot
+        if screenshot is None and args.output is not None:
+            screenshot = destination / "final.png"
+        if screenshot is not None:
+            plant.model.vis.global_.offwidth = max(int(plant.model.vis.global_.offwidth), args.width)
+            plant.model.vis.global_.offheight = max(int(plant.model.vis.global_.offheight), args.height)
+            camera, options = mujoco.MjvCamera(), mujoco.MjvOption()
+            mujoco.mjv_defaultCamera(camera)
+            frame_scene(camera, options)
+            with mujoco.Renderer(plant.model, height=args.height, width=args.width) as renderer:
+                renderer.update_scene(plant.data, camera=camera, scene_option=options)
+                screenshot = screenshot.resolve()
+                screenshot.parent.mkdir(parents=True, exist_ok=True)
+                Image.fromarray(renderer.render()).save(screenshot)
+        summary = {
+            "scene": result.scene, "task": result.task, "seed": result.seed,
+            "steps": plant.tick, "sim_time_s": float(plant.data.time),
+            "robot_joints": len(plant.joints), "nq": plant.model.nq, "nv": plant.model.nv,
+            "artifact_hash": plant.artifact_hash,
+            "model": str(plant.scene_model_path) if args.output is not None else None,
+            "manifest": str(plant.scene_manifest_path) if args.output is not None else None,
+            "screenshot": str(screenshot) if screenshot is not None else None,
+            "object_positions": {
+                obj.name: plant.data.body(obj.name).xpos.tolist() for obj in result.objects
+            },
+        }
+        if args.output is not None:
+            state_path = destination / "state.json"
+            summary["state"] = str(state_path)
+            state_path.write_text(json.dumps({
+                **summary, "qpos": plant.data.qpos.tolist(), "qvel": plant.data.qvel.tolist(),
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    finally:
+        window.close()
+        plant.close()
+    print(json.dumps(summary, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

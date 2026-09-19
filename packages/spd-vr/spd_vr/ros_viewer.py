@@ -22,6 +22,7 @@ from .recorder import EpisodeRecorder
 from .ros_executor import ControlTerminal, RosJointCommandExecutor
 from .ros_joint_command import JOINT_NAMES, TOPIC
 from .viewer import PlantController
+from .scene import build_selected_scene, frame_scene
 from .viewer_window import ViewerWindow
 
 
@@ -40,9 +41,13 @@ class RosViewerApp:
         self._record_operation = ""
         self._accept_recording = False
         self.recorder = EpisodeRecorder(args.output, camera_names=CAMERA_NAMES)
+        scene_result = build_selected_scene(args.scene, args.task, args.seed)
+        args.scene = scene_result.scene if scene_result is not None else "hardware_free"
+        args.task = scene_result.task if scene_result is not None else "external_joint_command"
         self.plant = PlantController(
             strict_artifacts=True, command_only=True,
             camera_config_path=Path(__file__).resolve().parents[1] / "config" / "sim_cameras.yaml",
+            scene_result=scene_result, scene_output_dir=args.output / "scenes",
         )
         self.camera: MujocoCameraProvider | None = None
         self.window = ViewerWindow(
@@ -131,7 +136,11 @@ class RosViewerApp:
                             break
                     self._record_background(
                         "preparing", self.recorder.start_episode, self.episode_counter,
-                        {"task": self.args.task, "scene": self.args.scene},
+                        {
+                            **(self.plant.scene_manifest or {}),
+                            "task": self.args.task, "scene": self.args.scene,
+                            "seed": self.args.seed, "artifact_hash": self.plant.artifact_hash,
+                        },
                     )
                 elif command == "success" and self._accept_recording:
                     self._record_background("saved", self.recorder.finish_episode, success=True)
@@ -213,15 +222,21 @@ class RosViewerApp:
             handle = self.window.window
             if handle is not None:
                 with handle.lock():
-                    visual_positions = self.plant.data.geom_xpos[self.plant.model.geom_group == 1]
-                    low, high = visual_positions.min(axis=0), visual_positions.max(axis=0)
-                    handle.cam.lookat[:] = (low + high) * 0.5
-                    handle.cam.distance = max(2.0, float(np.linalg.norm(high - low)) * 2.0)
-                    handle.cam.azimuth = 135.0
-                    handle.cam.elevation = -20.0
-                    handle.opt.geomgroup[0] = 0  # Hide duplicate collision meshes, not dynamics.
+                    if self.plant.scene_manifest is not None:
+                        frame_scene(handle.cam, handle.opt)
+                    else:
+                        visual_positions = self.plant.data.geom_xpos[self.plant.model.geom_group == 1]
+                        low, high = visual_positions.min(axis=0), visual_positions.max(axis=0)
+                        handle.cam.lookat[:] = (low + high) * 0.5
+                        handle.cam.distance = max(2.0, float(np.linalg.norm(high - low)) * 2.0)
+                        handle.cam.azimuth = 135.0
+                        handle.cam.elevation = -20.0
+                        handle.opt.geomgroup[0] = 0  # Hide duplicate collision meshes, not dynamics.
             self.control_terminal.start()
             print(f"SPD subscriber ready: {TOPIC}; explicit local enable required", flush=True)
+            if self.plant.scene_model_path is not None:
+                print(f"Scene: {self.args.scene}/{self.args.task}; seed={self.args.seed}; "
+                      f"model={self.plant.scene_model_path}; manifest={self.plant.scene_manifest_path}", flush=True)
             while not self.stop and rclpy.ok() and self.window.is_running():
                 rclpy.spin_once(self.node, timeout_sec=0.0)
                 self._process_actions()
@@ -259,8 +274,9 @@ class RosViewerApp:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scene", default="hardware_free")
-    parser.add_argument("--task", default="external_joint_command")
+    parser.add_argument("--scene", help="Scene name (default: hardware_free)")
+    parser.add_argument("--task", help="Task name or qualified SCENE/TASK ID")
+    parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--max-enable-delta-rad", type=float, default=0.15,
                         help="Simulation-only maximum ready-joint target jump allowed at local enable")

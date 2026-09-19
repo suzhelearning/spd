@@ -1,4 +1,4 @@
-"""SPD's six-scene, 17-task deterministic registry."""
+"""SPD's 17 Table 2 tasks plus the Figure 4 / A.4 Jenga playing task."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from .scene_builder import ProceduralSceneBuilder, SceneBuildResult
 class TaskSpec:
     name: str
     prompt: str
-    target_duration_s: float
+    target_duration_s: float | None
     build: Callable[[int], SceneBuildResult]
     reset: Callable[[int], SceneBuildResult]
     score_debug: Callable[[SceneBuildResult], dict[str, float | int | str]]
     scene: str
-    table2_episodes: int
-    table2_minutes: int
+    table2_episodes: int | None
+    table2_minutes: int | None
 
     @property
     def qualified_name(self) -> str:
@@ -53,6 +53,7 @@ PROMPTS = {
     ("jenga", "criss_cross"): "Build a criss-cross Jenga tower.",
     ("jenga", "handover_lr"): "Hand the block from the left hand to the right.",
     ("jenga", "handover_rl"): "Hand the block from the right hand to the left.",
+    ("jenga", "playing"): "Push a middle block out, pull it free without collapsing the tower, and place it on top.",
     ("spelling_blocks", "spelling"): "Spell the requested word with letter blocks.",
     ("spelling_blocks", "sort_and_unload"): "Sort the letter blocks and unload them.",
     ("spelling_blocks", "pyramid"): "Build a pyramid from the letter blocks.",
@@ -82,8 +83,9 @@ def _score(result: SceneBuildResult) -> dict[str, float | int | str]:
 
 
 def _task(scene: str, task: str) -> TaskSpec:
-    episodes, minutes = TABLE2_STATS[(scene, task)]
-    duration = 60.0 * float(minutes) / float(episodes)
+    statistics = TABLE2_STATS.get((scene, task))
+    episodes, minutes = statistics if statistics is not None else (None, None)
+    duration = 60.0 * float(minutes) / float(episodes) if statistics is not None else None
     builder = lambda seed: _build(scene, task, seed)
     return TaskSpec(
         name=task,
@@ -98,7 +100,9 @@ def _task(scene: str, task: str) -> TaskSpec:
     )
 
 
-TASKS: tuple[TaskSpec, ...] = tuple(_task(scene, task) for scene, task in TABLE2_STATS)
+# A.4 evaluates playing, but Table 2 does not report a playing dataset row.
+# None denotes unreported statistics/duration, rather than invented counts.
+TASKS: tuple[TaskSpec, ...] = tuple(_task(scene, task) for scene, task in TABLE2_STATS) + (_task("jenga", "playing"),)
 TASK_REGISTRY = {spec.qualified_name: spec for spec in TASKS}
 SCENES = tuple(dict.fromkeys(spec.scene for spec in TASKS))
 
