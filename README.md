@@ -1,6 +1,6 @@
 # SPD Simulation Collection — Tianji + Wuji Hand 2
 
-本项目面向《Pre-training Visual Dexterity in Simulation》的仿真示范采集，目标机器人为双侧 **tianji_arm + wuji-hand2**。ROS 2 入口仅接收外部 `tianji_teleop` 生成的 54-DoF `JointCommand`：外部 ROS 2 → DDS/Zenoh 桥 → DDS → SPD 校验与名称映射 → MuJoCo 执行、可视化和录制；SPD 不再负责该入口的 PICO 输入、IK 或手部重定向。旧 PICO 跟踪运行链保留独立入口。论文原文见 [docs/papers/2608.15917v1.pdf](docs/papers/2608.15917v1.pdf)；不包含实机控制、脚部 IMU、鱼眼相机或 Odin。
+本项目面向《Pre-training Visual Dexterity in Simulation》的仿真示范采集，目标机器人为双侧 **tianji_arm + wuji-hand2**。ROS 2 订阅入口只接收 54-DoF `JointCommand`：发布侧 ROS 2 → DDS/Zenoh 桥 → DDS → SPD 校验与名称映射 → MuJoCo 执行、可视化和录制。发布侧可选外部 `tianji_teleop`、H5 播放器，或本项目独立的 PICO 实时发布进程；PICO 输入、IK 与手部重定向不进入 SPD 订阅进程。旧 PICO 跟踪运行链保留独立入口。论文原文见 [docs/papers/2608.15917v1.pdf](docs/papers/2608.15917v1.pdf)；不包含实机控制、脚部 IMU、鱼眼相机或 Odin。
 
 ## 目录
 
@@ -134,7 +134,7 @@ pixi run spd-teleop-ros --attach
 pixi run spd-teleop-ros-stop
 ```
 
-发布侧实际应用由用户在外部 `tianji_teleop` 工作区独立启动。其进程必须使用 `ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`，并 source 接口 overlay。SPD 环境默认 domain 为 121；通用模拟发布进程须在 Pixi 激活之后设置 domain 120，避免发布到 SPD 同域。下述 HDF5 播放器在代码中明确使用 domain 120。SPD 启动脚本绝不启动 `ros_publisher`、PICO、IK 或实机控制，也不会自动重建接口。
+使用外部 `tianji_teleop` 时，发布应用由用户在其工作区独立启动。其进程必须使用 `ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`，并 source 接口 overlay。SPD 环境默认 domain 为 121；通用模拟发布进程须在 Pixi 激活之后设置 domain 120，避免发布到 SPD 同域。下述 PICO 发布器和 HDF5 播放器均在代码中明确使用 domain 120。`spd-teleop-ros` 只启动订阅侧，不启动 PICO、IK 或实机控制，也不会自动重建接口。
 
 独立调试 SPD 桥可运行 `pixi run ros-bridge-spd`（前台 Ctrl-C 停止），不要与一键入口重复启动。跨主机时，在 SPD 主机设 `SPD_ZENOH_LISTEN=tcp/0.0.0.0:7447` 后运行一键入口；发布主机设 `SPD_ZENOH_CONNECT=tcp/<SPD主机IP>:7447` 后启动发布侧桥。仅显式开放该 TCP 端口到可信网络；默认不提供认证或加密。两端 ROS 应用仍分别与本机桥通信，domain 120/121 不可合并，否则 DDS 可绕过桥。`config/ros2dds.json5` 关闭 Zenoh multicast/gossip 自动发现，仅允许关节命令 topic 的 publisher/subscriber 路由，禁止其他 topic、service 和 action；本机 ROS DDS 发现不等同于 Zenoh 自动发现。
 
@@ -151,6 +151,46 @@ ROS Viewer 在已验证模型上按 `config/sim_cameras.yaml` 添加三路真实
 桥配置依据官方 [使用说明](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/tree/1.10.0#usage) 和 [1.10.0 配置定义](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds/blob/1.10.0/DEFAULT_CONFIG.json5)；官方明确要求桥两端避免直接 DDS 通信。桥内部使用 CycloneDDS，与此处 Fast DDS 节点通过标准 DDS UDP 互通，不能依赖 Fast DDS 专用共享内存跨桥传输。
 
 桥进程通过 `config/ros2dds-cyclone.xml` 使用 loopback UDP 单播发现和固定范围参与者端口；Linux `lo` 未开启 MULTICAST 标志时也不需要 sudo 修改网卡。该配置只用于桥内的 CycloneDDS，不会把 ROS 节点的 Fast DDS 后端换掉。
+
+### PICO 实时发布 → SPD 拼字场景
+
+在头显中打开 PICO 手部跟踪 APK，启用手部跟踪并授权 USB 调试，然后在电脑图形桌面的项目终端运行：
+
+```bash
+pixi run spd-pico
+# 多设备时：
+# pixi run spd-pico --adb-serial SERIAL
+```
+
+此入口只加载 `spelling_blocks/spelling`（默认 seed 0，可用 `--seed` 修改），同时启动 PICO 控制窗口、两侧 DDS/Zenoh 桥和 SPD MuJoCo 窗口。不改变六个任务的几何、物理参数或原有 `spd-demo` H5 入口。控制路径为：
+
+```text
+PICO_2 TCP → 发布侧真实双臂 IK + Wuji 手部重定向
+    → 54-DoF JointCommand / ROS domain 120
+    → DDS/Zenoh → DDS / ROS domain 121
+    → SPD 授权、名称映射与保持 → spelling_blocks/spelling
+```
+
+操作全部在 **PICO 控制窗口**完成，不再需要切到 MuJoCo 按 `e`：
+
+1. 确认窗口显示跟踪有效，双腕保持稳定，点击 **对齐 Align (C)**，或在该窗口获得焦点后按 **C**。等待双臂和双手全部就绪；此时保持目标，不开始运动。
+2. 点击 **确认并跟随 (F)**，或按 **F**。窗口先向 SPD 请求当前会话的授权；SPD 检查候选新鲜度、三组就绪状态和目标差值，返回成功确认后才开始跟随。等待期间保持目标，拒绝或超时不会启动。
+3. 查看同一窗口的双臂／左手／右手状态、标定状态、SPD 授权与保持状态。失败原因显示在窗口内，不把“请求已发送”当成“已授权”。
+4. 点击 **保持 Hold (Space)**，或按 **空格**：立即停止源目标变化，同时请求 SPD 撤销授权，不跳回 HOME。跟踪失效、SPD 撤权或授权通道中断后，不会自动续动；恢复时重新 **C 对齐 → F 确认并跟随**。
+
+快捷键只在 PICO 控制窗口获得焦点时生效，按住不连续触发；不是全局快捷键。整个标定、授权、跟随和保持流程不需要切换窗口。MuJoCo 窗口继续显示仿真，原有录制操作保持不变。
+
+启动器为这次会话创建私有本机 Unix socket；只传授权请求和状态确认，54 维运动目标仍走原有 ROS/DDS/Zenoh 链路。请求绑定会话、唯一编号和有效期；取消、重新标定或输入失效后的迟到确认不能启动运动。控制请求在独立线程中等待，不阻塞 IK 或界面。仅 `spd-pico` 启用该通道，普通 ROS Viewer/H5 演示不改变操作方式。直接单独运行发布器且未提供 `--control-socket` 时，会明确显示需要手动 SPD `e` 授权的模式。
+
+双臂共享一个 ready 位，任一腕失效会保持双臂；左右手独立失效。源侧按实际接收时间检查 50 ms 新鲜度，订阅端继续执行原有 100 ms 超时和 0.15 rad 启用门限。IK 调度周期 5 ms，ROS 发布目标频率 60 Hz；源目标变化限制为不超过关节限速与 0.5 rad/s 两者的较小值。这些是调度/安全配置，不保证负载下始终达到目标频率。
+
+默认连接本机 TCP `10002`，转发到设备 `10002`。`--host`、`--port`、`--device-port`、`--adb-path`、`--adb-serial`、`--reconnect` 可配置输入。已有转发仅在设备、两端端口完全匹配时复用，退出时保留；新建转发使用 `--no-rebind`，仅清理本次拥有的映射。已有 TCP 输入可用 `--no-adb-forward --host HOST --port PORT`，不操作 ADB。USB 拔插若使转发消失，可关闭后重新运行入口。
+
+进程窗口就绪不代表头显已提供有效跟踪；`WAITING / STALE` 时不能启动控制。APK 的安装、授权和只显示手骨架的限制见 [输入包说明](packages/pico-hand-tracking/README.md)。本入口不安装或自动打开 APK，也不向头显回传 MuJoCo 画面。
+
+关闭任一窗口或终端 Ctrl+C 会清理本次进程。日志在 `.pixi/pico-teleop/`；与 `spd-demo` 互斥，不抢占其他进程的 7447 端口。现有 `r/s/d` 录制操作保持不变，录制实时性限制仍适用。
+
+**本次改动前存档**：Git 标签 `checkpoint/pre-pico-spelling-277330f`，基线提交 `277330f`；原本地场景包和恢复元数据位于 `.pixi/checkpoints/pre-pico-spelling-277330f/`。用户说“退回”时，以此恢复改动前代码及需要恢复的场景文件；先保全之后新增的录制和无关修改，不执行全目录清理。存档不包含运行中的进程、窗口或内存中的物理状态。
 
 ### HDF5 观测数据模拟发布
 

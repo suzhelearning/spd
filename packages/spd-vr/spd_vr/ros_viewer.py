@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from .camera import CAMERA_NAMES, MujocoCameraProvider
+from .local_control import LocalControlServer
 from .recorder import EpisodeRecorder
 from .ros_executor import ControlTerminal, RosJointCommandExecutor
 from .ros_joint_command import JOINT_NAMES, TOPIC
@@ -64,6 +65,7 @@ class RosViewerApp:
             self.node, self.plant, max_enable_delta_rad=args.max_enable_delta_rad,
         )
         self.control_terminal = ControlTerminal(self.executor)
+        self.local_control: LocalControlServer | None = None
         self._started_ns = time.monotonic_ns()
         self._last_received = 0
         self._rate_ns = self._started_ns
@@ -218,6 +220,9 @@ class RosViewerApp:
         deadline = time.monotonic_ns()
         display_deadline = deadline
         try:
+            control_path = getattr(self.args, "control_socket", None)
+            if control_path is not None:
+                self.local_control = LocalControlServer(control_path, self.executor)
             self.window.open()
             handle = self.window.window
             if handle is not None:
@@ -240,6 +245,8 @@ class RosViewerApp:
             while not self.stop and rclpy.ok() and self.window.is_running():
                 rclpy.spin_once(self.node, timeout_sec=0.0)
                 self._process_actions()
+                if self.local_control is not None:
+                    self.local_control.poll()
                 self._poll_recording()
                 now = time.monotonic_ns()
                 applied = self.executor.apply_pending(now_ns=now)
@@ -257,6 +264,8 @@ class RosViewerApp:
                 else:
                     deadline = time.monotonic_ns()
         finally:
+            if self.local_control is not None:
+                self.local_control.close()
             self.control_terminal.close()
             self._record_worker.shutdown(wait=True)
             self.recorder.close()
@@ -278,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task", help="Task name or qualified SCENE/TASK ID")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--control-socket", type=Path,
+                        help="Private local PICO control socket (optional; parent directory must be 0700)")
     parser.add_argument("--max-enable-delta-rad", type=float, default=0.15,
                         help="Simulation-only maximum ready-joint target jump allowed at local enable")
     args = parser.parse_args(argv)
