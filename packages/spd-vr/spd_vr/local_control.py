@@ -17,9 +17,9 @@ import time
 from typing import Any
 import uuid
 
-from .ros_joint_command import VALID_READY_MASK
+from .ros_joint_command import ARM_NAMES, VALID_READY_MASK
 
-_MAX_PACKET = 4096
+_MAX_PACKET = 16384
 _MAX_REQUESTS_PER_POLL = 8
 _MAX_INFLIGHT_IDS = 2048
 _MAX_TIMEOUT = 60.0
@@ -43,6 +43,25 @@ def _decode(packet: bytes) -> dict[str, Any]:
     return value
 
 
+def _validate_feedback(value: Any, *, requested_ns: int, received_ns: int) -> None:
+    """Reject absent, misidentified or stale state on the private clock domain."""
+    if not isinstance(value, dict) or value.get("joint_names") != list(ARM_NAMES):
+        raise ValueError("invalid local control feedback joint identity")
+    stamp = value.get("monotonic_ns")
+    if type(stamp) is not int or not requested_ns <= stamp <= received_ns:
+        raise ValueError("invalid local control feedback sample time")
+    for key in ("position_rad", "velocity_rad_s", "retained_position_rad"):
+        values = value.get(key)
+        if (not isinstance(values, list) or len(values) != len(ARM_NAMES)
+            or any(type(item) not in (int, float) or not math.isfinite(item) for item in values)):
+            raise ValueError(f"invalid local control feedback {key}")
+    if "scene_xml" not in value or (
+        value["scene_xml"] is not None
+        and (not isinstance(value["scene_xml"], str) or not value["scene_xml"])
+    ):
+        raise ValueError("invalid local control feedback scene XML")
+
+
 class LocalControlClient:
     def __init__(self, path: str | Path, timeout: float = 0.5) -> None:
         if not math.isfinite(timeout) or not 0 < timeout <= _MAX_TIMEOUT:
@@ -55,7 +74,8 @@ class LocalControlClient:
         if op not in _OPERATIONS or not isinstance(session_id, str):
             raise RuntimeError("invalid local control operation or session")
         request_id = uuid.uuid4().hex
-        deadline = time.monotonic_ns() + int(self.timeout * 1_000_000_000)
+        requested_ns = time.monotonic_ns()
+        deadline = requested_ns + int(self.timeout * 1_000_000_000)
         packet = json.dumps({"request_id": request_id, "op": op, "session_id": session_id,
                              "deadline_ns": deadline}, separators=(",", ":")).encode()
         if len(packet) > _MAX_PACKET:
@@ -73,7 +93,8 @@ class LocalControlClient:
                         raise TimeoutError("local control request expired")
                     sock.settimeout(remaining)
                     response = _decode(sock.recv(_MAX_PACKET + 1))
-                    if time.monotonic_ns() >= deadline:
+                    received_ns = time.monotonic_ns()
+                    if received_ns >= deadline:
                         raise TimeoutError("local control request expired")
             if response.get("request_id") != request_id or response.get("session_id") != session_id:
                 raise ValueError("local control response request/session mismatch")
@@ -93,8 +114,10 @@ class LocalControlClient:
                 raise ValueError("local control enable response did not authorize requested session")
             if response["ok"] and op == "hold" and response["enabled"]:
                 raise ValueError("local control hold response remains enabled")
+            if response["ok"]:
+                _validate_feedback(response.get("feedback"), requested_ns=requested_ns, received_ns=received_ns)
             return response
-        except (OSError, ValueError, TypeError, RecursionError) as exc:
+        except (OSError, ValueError, TypeError, OverflowError, RecursionError) as exc:
             raise RuntimeError(f"local control unavailable: {exc}") from exc
 
 
@@ -131,6 +154,19 @@ class LocalControlServer:
             self._identity = None
 
     def _status(self, request: dict[str, Any], error: str = "") -> dict[str, Any]:
+        feedback = None
+        if not error:
+            try:
+                feedback = self.executor.arm_feedback()
+            except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+                error = f"actual arm feedback unavailable: {exc}"
+            if time.monotonic_ns() >= request["deadline_ns"]:
+                error = "control request expired during feedback sampling"
+                feedback = None
+            if error and request["op"] == "enable":
+                # Sampling is part of the authorization transaction: never
+                # leave an enable pending after a failed or expired reply.
+                self.executor.authorize(False)
         mailbox = self.executor.mailbox
         candidate = mailbox.latest
         enabled = mailbox.enabled
@@ -154,6 +190,7 @@ class LocalControlServer:
             "candidate_session": candidate.session_id if candidate is not None else None,
             "ready_mask": candidate.ready_mask if candidate is not None else 0,
             "hold_mask": self.executor.hold_mask,
+            "feedback": feedback,
         }
 
     def _handle(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -219,9 +256,17 @@ class LocalControlServer:
                     continue
             except (ValueError, TypeError, RecursionError):
                 continue
-            response = json.dumps(self._handle(request), separators=(",", ":")).encode()
+            result = self._handle(request)
+            response = json.dumps(result, separators=(",", ":")).encode()
             if len(response) > _MAX_PACKET:
-                continue
+                with self.executor.mailbox._lock:
+                    if request["op"] == "enable" and result["ok"]:
+                        self.executor.authorize(False)
+                    response = json.dumps(
+                        self._status(request, "control response exceeds packet limit"), separators=(",", ":"),
+                    ).encode()
+                if len(response) > _MAX_PACKET:
+                    continue
             try:
                 self._socket.sendto(response, peer)
             except OSError:

@@ -50,17 +50,30 @@ CLASS_IDS = {
     "bin": 9,
     "domino": 10,
 }
+# Dry-contact engineering defaults, not measured material-pair coefficients.
+# Wood blocks and the ceramic disk use 650 / 2400 kg/m^3 respectively.
+# Vessel masses are nominal empty-object masses; collision shapes stay unchanged.
+_MATERIALS = {
+    "jenga_block": ("wood", (0.40, 0.60)),
+    "letter_block": ("wood", (0.40, 0.60)),
+    "domino": ("wood", (0.40, 0.60)),
+    "mug": ("ceramic", (0.25, 0.40)),
+    "plate": ("ceramic", (0.25, 0.40)),
+    "cup": ("plastic", (0.20, 0.35)),
+    "bottle": ("glass", (0.15, 0.30)),
+}
+
 BASE_MASSES = {
-    "jenga_block": 0.045,
-    "letter_block": 0.040,
-    "plate": 0.120,
-    "cup": 0.055,
-    "mug": 0.180,
-    "bottle": 0.110,
+    "jenga_block": 650.0 * math.prod(JENGA_BLOCK_SIZE),
+    "letter_block": 650.0 * math.prod(LETTER_BLOCK_SIZE),
+    "plate": 2400.0 * math.pi * PLATE_RADIUS ** 2 * PLATE_THICKNESS,
+    "cup": 0.030,
+    "mug": 0.220,
+    "bottle": 0.250,
     "rack": 0.500,
     "mug_tree": 0.400,
     "bin": 0.800,
-    "domino": 0.030,
+    "domino": 650.0 * 0.060 * 0.012 * 0.070,
 }
 
 # Five-by-seven glyphs for the eight physical blocks in the spelling task.
@@ -133,7 +146,13 @@ class ObjectSpec:
     geoms: tuple[dict[str, Any], ...]
 
     def manifest(self) -> dict[str, Any]:
-        return asdict(self)
+        values = asdict(self)
+        if self.class_name in _MATERIALS:
+            material, friction_range = _MATERIALS[self.class_name]
+            values.update(material=material, friction_range=list(friction_range),
+                          nominal_mass_kg=BASE_MASSES[self.class_name],
+                          material_parameter_source="engineering defaults; not calibrated")
+        return values
 
 
 @dataclass(frozen=True)
@@ -376,7 +395,8 @@ class ProceduralSceneBuilder:
             if not (WORKSPACE_X[0] <= position[0] <= WORKSPACE_X[1] and WORKSPACE_Y[0] <= position[1] <= WORKSPACE_Y[1]):
                 raise SceneResetError(f"object {instance_id} leaves workspace")
             mass = BASE_MASSES[class_name] * float(rng.uniform(0.8, 1.2))
-            friction = float(rng.uniform(0.6, 1.2))
+            friction_range = _MATERIALS.get(class_name, ("", (0.6, 1.2)))[1]
+            friction = float(rng.uniform(*friction_range))
             color = tuple(float(value) for value in (0.15 + 0.75 * rng.random(3)))
             objects.append(ObjectSpec(
                 instance_id=instance_id, class_id=CLASS_IDS[class_name], class_name=class_name,
@@ -390,7 +410,8 @@ class ProceduralSceneBuilder:
     @staticmethod
     def _worldbody(objects: Iterable[ObjectSpec]) -> ET.Element:
         worldbody = ET.Element("worldbody")
-        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.45 0 {TABLE_Z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="2", rgba="0.30 0.26 0.22 1")
+        # Near edge x=0.10 clears the base column (x=0.0825 at tabletop height).
+        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.50 0 {TABLE_Z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="2", rgba="0.30 0.26 0.22 1")
         for obj in objects:
             body = ET.SubElement(worldbody, "body", name=obj.name,
                 pos=" ".join(f"{value:.12g}" for value in obj.position),
@@ -411,6 +432,10 @@ class ProceduralSceneBuilder:
                     "solref": "0.004 1", "solimp": "0.95 0.99 0.001",
                     "rgba": " ".join(f"{value:.12g}" for value in geom["rgba"]),
                 }
+                if obj.class_name in _MATERIALS:
+                    # Otherwise MuJoCo's equal-priority max rule lets the
+                    # unchanged table/robot friction mask the material value.
+                    attributes["priority"] = "1"
                 for key in ("size", "pos", "fromto", "quat"):
                     if key in geom:
                         attributes[key] = " ".join(f"{value:.12g}" for value in geom[key])
@@ -439,7 +464,10 @@ class ProceduralSceneBuilder:
                 contact_gate(model, mujoco.MjData(model), {item.name for item in objects})
                 values = {
                     "mass_multiplier_range": [0.8, 1.2],
-                    "friction_range": [0.6, 1.2],
+                    "friction_range_by_class": {
+                        item.class_name: list(_MATERIALS.get(item.class_name, ("", (0.6, 1.2)))[1])
+                        for item in objects
+                    },
                     "xy_jitter_m": 0.015,
                     "yaw_jitter_deg": 15.0,
                     "candidate": candidate,

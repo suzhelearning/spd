@@ -237,6 +237,7 @@ class PlantController:
                 from .camera import load_camera_model
 
                 model = load_camera_model(model_path, camera_config_path)
+        self.full_model_path: Path | None = verified.full_model.resolve() if verified is not None else None
         if data is None:
             data = mujoco.MjData(model)
         self.model = model
@@ -501,6 +502,7 @@ class PlantController:
         ):
             raise ManifestError("joint commands require named hinge joints")
         self._command_qpos = self.model.jnt_qposadr[joint_ids].copy()
+        self._command_dof = self.model.jnt_dofadr[joint_ids].copy()
         self._command_actuators = np.asarray([self._actuator_ids[e.actuator] for e in entries])
         self._command_home = np.asarray([self._home[e.index] for e in entries], dtype=np.float64)
         self._command_targets = self._command_home.copy()
@@ -531,6 +533,12 @@ class PlantController:
         if self._command_qpos is None:
             raise ManifestError("model has no canonical joint command mapping")
         return self.data.qpos[self._command_qpos]
+
+    def joint_command_velocities(self) -> np.ndarray:
+        """Return simulated velocities by named joint DOFs, not qpos addresses."""
+        if self._command_qpos is None:
+            raise ManifestError("model has no canonical joint command mapping")
+        return self.data.qvel[self._command_dof]
 
     def joint_command_targets(self) -> np.ndarray:
         """Return the complete retained targets in canonical wire order."""

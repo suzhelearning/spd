@@ -76,6 +76,35 @@ def test_canonical_piece_hash_normalizes_cyclic_face_starts():
     )
 
 
+def test_source_preparation_welds_stl_without_changing_surface(tmp_path):
+    geometry, _ = _mesh_geometry(tmp_path)
+    source_bytes = geometry.resolved_path.read_bytes()
+    original = trimesh.load_mesh(geometry.resolved_path, process=False)
+    prepared, source_hash, _ = collision._source_and_mesh(geometry)
+
+    assert prepared.is_watertight
+    np.testing.assert_array_equal(prepared.triangles, original.triangles)
+    assert source_hash == hashlib.sha256(source_bytes).hexdigest()
+    assert geometry.resolved_path.read_bytes() == source_bytes
+
+
+def test_source_preparation_does_not_close_real_narrow_gaps():
+    left = trimesh.creation.box(extents=(0.01, 0.01, 0.01))
+    right = left.copy()
+    right.apply_translation((0.01 + 1e-10, 0.0, 0.0))
+    triangles = np.concatenate((left.triangles, right.triangles))
+    source = trimesh.Trimesh(
+        vertices=triangles.reshape(-1, 3),
+        faces=np.arange(triangles.size // 3).reshape(-1, 3),
+        process=False,
+    )
+    prepared, _, _ = collision._source_and_mesh(source)
+
+    assert prepared.is_watertight
+    assert prepared.body_count == 2
+    np.testing.assert_array_equal(prepared.triangles, source.triangles)
+
+
 def test_fixed_coacd_parameters_cannot_be_overridden():
     with pytest.raises(ValueError, match="fixed"):
         CollisionSettings(_extra_coacd_params=(("seed", 7),))
@@ -146,6 +175,67 @@ def test_bidirectional_surface_p95_is_deterministic_and_two_way():
     assert bidirectional_surface_p95(source, [shifted], samples=64) == bidirectional_surface_p95(
         source, [shifted], samples=64
     )
+
+
+@pytest.mark.parametrize("width,offset", [(0.5, 0.25), (0.75, 0.125)])
+def test_surface_metric_ignores_internal_split_and_overlap_faces(width, offset):
+    source = trimesh.creation.box()
+    left = trimesh.creation.box(extents=(width, 1.0, 1.0))
+    right = left.copy()
+    left.apply_translation((-offset, 0.0, 0.0))
+    right.apply_translation((offset, 0.0, 0.0))
+
+    assert bidirectional_surface_p95(source, [left, right], samples=256) == pytest.approx(
+        0.0, abs=1e-12
+    )
+    transform = trimesh.transformations.rotation_matrix(0.71, (1.0, 2.0, 3.0))
+    transform[:3, 3] = (3.0, -2.0, 5.0)
+    for mesh in (source, left, right):
+        mesh.apply_transform(transform)
+    assert bidirectional_surface_p95(source, [left, right], samples=256) == pytest.approx(
+        0.0, abs=1e-12
+    )
+
+
+def test_surface_metric_counts_coincident_exterior_once_and_hides_contained_pieces():
+    source = trimesh.creation.box()
+    inner = trimesh.creation.box(extents=(0.5, 0.5, 0.5))
+
+    assert bidirectional_surface_p95(source, [source, source, inner], samples=256) == pytest.approx(
+        0.0, abs=1e-12
+    )
+    # A redundant piece must not dilute the area of a genuine exterior defect.
+    extra = trimesh.creation.box(extents=(0.5, 0.5, 0.5))
+    extra.apply_translation((1.0, 0.0, 0.0))
+    assert bidirectional_surface_p95(source, [source] * 15 + [extra], samples=256) > 0.1
+
+
+def test_surface_metric_detects_exterior_excess_and_missing_volume_in_both_directions():
+    source = trimesh.creation.box()
+    extra = trimesh.creation.box(extents=(0.5, 0.5, 0.5))
+    extra.apply_translation((0.65, 0.0, 0.0))
+    assert bidirectional_surface_p95(source, [source, extra], samples=256) > 0.1
+    extra.apply_translation((0.35, 0.0, 0.0))
+
+    # Source-to-proxy alone is zero: the added component must fail the reverse.
+    assert bidirectional_surface_p95(source, [source, extra], samples=256) > 0.1
+    # Proxy-to-source alone is zero: the omitted component must fail the forward.
+    larger_source = trimesh.util.concatenate((source, extra))
+    assert bidirectional_surface_p95(larger_source, [source], samples=256) > 0.1
+
+
+def test_surface_metric_rejects_malformed_pieces_even_when_hidden():
+    source = trimesh.creation.box()
+    inner = trimesh.creation.box(extents=(0.5, 0.5, 0.5))
+    open_piece = trimesh.Trimesh(vertices=inner.vertices, faces=inner.faces[:-1], process=False)
+    inverted = inner.copy()
+    inverted.invert()
+    nonconvex = trimesh.creation.icosphere(subdivisions=1, radius=0.2)
+    nonconvex.vertices[0] = 0.0
+
+    for malformed in (open_piece, inverted, nonconvex):
+        with pytest.raises(collision.CollisionError):
+            bidirectional_surface_p95(source, [source, malformed], samples=64)
 
 
 def test_quality_gate_uses_hand_and_arm_limits(tmp_path, monkeypatch):

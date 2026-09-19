@@ -10,6 +10,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .ros_joint_command import (
+    ARM_NAMES,
     JointCommandError,
     JointCommandSnapshot,
     MAX_AGE_NS,
@@ -203,6 +204,25 @@ class RosJointCommandExecutor:
             self._latched_hold = 0
             self._hold_mask = VALID_READY_MASK ^ candidate.ready_mask
             return True
+
+    def arm_feedback(self) -> dict[str, Any]:
+        """Sample actual and retained arm state on the physics owner thread."""
+        sampled_ns = time.monotonic_ns()
+        positions = self.plant.joint_command_positions()[:len(ARM_NAMES)]
+        velocities = self.plant.joint_command_velocities()[:len(ARM_NAMES)]
+        retained = self.plant.joint_command_targets()[:len(ARM_NAMES)]
+        for label, values in (("position", positions), ("velocity", velocities), ("retained target", retained)):
+            if np.shape(values) != (len(ARM_NAMES),) or not np.all(np.isfinite(values)):
+                raise ValueError(f"actual arm feedback has invalid {label}")
+        scene = self.plant.scene_model_path or self.plant.full_model_path
+        return {
+            "monotonic_ns": sampled_ns,
+            "joint_names": list(ARM_NAMES),
+            "position_rad": positions.tolist(),
+            "velocity_rad_s": velocities.tolist(),
+            "retained_position_rad": retained.tolist(),
+            "scene_xml": str(scene) if scene is not None else None,
+        }
 
     def clear(self) -> None:
         """Clear control only; physical positions and retained targets do not move."""

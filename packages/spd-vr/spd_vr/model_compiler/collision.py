@@ -216,6 +216,10 @@ def _source_and_mesh(mesh: MeshGeometry | trimesh.Trimesh) -> tuple[trimesh.Trim
         raise CollisionError("source mesh is empty or non-finite")
     if (faces < 0).any() or (faces >= len(vertices)).any():
         raise CollisionError("source mesh has out-of-range face indices")
+    # STL repeats vertices per triangle. Weld only identical coordinates so a
+    # closed surface reaches CoACD as closed without changing its geometry.
+    vertices, vertex_indices = np.unique(vertices, axis=0, return_inverse=True)
+    faces = vertex_indices[faces]
     source = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     if not np.isfinite(source.volume) or abs(float(source.volume)) <= 0:
         raise CollisionError("source mesh has non-positive volume")
@@ -303,18 +307,117 @@ def _distance_to_mesh(points: np.ndarray, mesh: trimesh.Trimesh) -> np.ndarray:
     return distance
 
 
+def _split_surface_polygon(
+    polygon: np.ndarray, distances: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split a convex polygon into the outside and inside of one halfspace."""
+    if np.all(distances <= 0):
+        return np.empty((0, 3)), polygon
+    if np.all(distances >= 0):
+        return polygon, np.empty((0, 3))
+    outside, inside = [], []
+    for index, point in enumerate(polygon):
+        distance = distances[index]
+        if distance >= 0:
+            outside.append(point)
+        if distance <= 0:
+            inside.append(point)
+        next_index = (index + 1) % len(polygon)
+        next_distance = distances[next_index]
+        if (distance > 0 > next_distance) or (distance < 0 < next_distance):
+            intersection = point + (polygon[next_index] - point) * (
+                distance / (distance - next_distance)
+            )
+            outside.append(intersection)
+            inside.append(intersection)
+    return np.asarray(outside).reshape(-1, 3), np.asarray(inside).reshape(-1, 3)
+
+
+def _proxy_union_surface(parts: tuple[trimesh.Trimesh, ...]) -> trimesh.Trimesh:
+    """Subtract other convex solids from each face, retaining the union boundary.
+
+    Shared, oppositely facing cut faces disappear from both pieces. Coincident
+    outward faces belong to the first piece only, so neither distances nor
+    area-weighted sampling count internal faces or overlapping surface twice.
+    """
+    coordinate_scale = max(float(np.abs(part.vertices).max()) for part in parts)
+    tolerance = 128 * np.finfo(np.float64).eps * coordinate_scale
+    planes = []
+    for part in parts:
+        if (
+            not part.is_volume
+            or not np.isfinite(part.area_faces).all()
+            or np.any(part.area_faces <= 0)
+        ):
+            raise CollisionError("collision proxy must contain closed, outward solid pieces")
+        normals = np.asarray(part.face_normals)
+        offsets = np.einsum("ij,ij->i", normals, part.triangles[:, 0])
+        if np.any(part.vertices @ normals.T - offsets > tolerance):
+            raise CollisionError("collision proxy pieces must be convex")
+        if len(parts) == 1:
+            return part
+        planes.append(np.unique(np.column_stack((normals, offsets)), axis=0))
+
+    triangles = []
+    for index, part in enumerate(parts):
+        for triangle, normal in zip(part.triangles, part.face_normals):
+            fragments = [triangle]
+            for other_index, other_planes in enumerate(planes):
+                if other_index == index:
+                    continue
+                normals, offsets = other_planes[:, :3], other_planes[:, 3]
+                # Coplanar outward surfaces are exterior, not internal cuts.
+                # The lower-index owner keeps the overlapping area.
+                if index < other_index and np.any(
+                    (normals @ normal > 1 - 128 * np.finfo(np.float64).eps)
+                    & np.all(np.abs(triangle @ normals.T - offsets) <= tolerance, axis=0)
+                ):
+                    continue
+                remaining = []
+                for polygon in fragments:
+                    distances = polygon @ normals.T - offsets
+                    if np.any(np.all(distances > tolerance, axis=0)):
+                        remaining.append(polygon)
+                        continue
+                    # Each outside fragment is disjoint from all earlier ones;
+                    # only the inside fragment advances to the next plane.
+                    for plane in other_planes:
+                        distances = polygon @ plane[:3] - plane[3]
+                        distances[np.abs(distances) <= tolerance] = 0
+                        outside, polygon = _split_surface_polygon(polygon, distances)
+                        if len(outside) >= 3:
+                            remaining.append(outside)
+                        if len(polygon) < 3:
+                            break
+                    # Any final inside polygon is covered by the other solid.
+                fragments = remaining
+                if not fragments:
+                    break
+            for polygon in fragments:
+                for vertex in range(1, len(polygon) - 1):
+                    triangle = np.asarray((polygon[0], polygon[vertex], polygon[vertex + 1]))
+                    if np.linalg.norm(np.cross(triangle[1] - triangle[0], triangle[2] - triangle[0])) > 0:
+                        triangles.append(triangle)
+    if not triangles:
+        raise CollisionError("collision proxy union has no exterior surface")
+    vertices = np.asarray(triangles).reshape(-1, 3)
+    return trimesh.Trimesh(
+        vertices=vertices, faces=np.arange(len(vertices)).reshape(-1, 3), process=False
+    )
+
+
 def bidirectional_surface_p95(
     source: trimesh.Trimesh | tuple[np.ndarray, np.ndarray],
     pieces: Iterable[trimesh.Trimesh | tuple[np.ndarray, np.ndarray]],
     samples: int,
 ) -> float:
-    """Return the worst (p95) of source→proxy and proxy→source distances."""
+    """Return the worst p95 of source↔convex-proxy-union boundary distances."""
     if samples <= 0:
         raise ValueError("samples must be positive")
 
     def as_mesh(item: trimesh.Trimesh | tuple[np.ndarray, np.ndarray]) -> trimesh.Trimesh:
         if isinstance(item, trimesh.Trimesh):
-            return item
+            item = (item.vertices, item.faces)
         vertices, faces = _canonical_mesh_arrays(*item)
         return trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
 
@@ -322,7 +425,7 @@ def bidirectional_surface_p95(
     proxy_parts = tuple(as_mesh(piece) for piece in pieces)
     if not proxy_parts:
         raise CollisionError("collision proxy is empty")
-    proxy = trimesh.util.concatenate(proxy_parts)
+    proxy = _proxy_union_surface(proxy_parts)
     rng = np.random.default_rng(0)
     source_points = _sample_surface(source_mesh, samples, rng)
     proxy_points = _sample_surface(proxy, samples, rng)
@@ -335,12 +438,14 @@ def _cache_key(source_hash: str, scale: tuple[float, float, float], settings: Co
     payload = {
         "source_mesh_sha256": source_hash,
         "scale": scale,
+        "source_preparation": "exact_vertex_weld_v1",
         "coacd_version": _coacd_version(),
         "seed": settings.seed,
         "max_pieces": settings.max_pieces,
         "max_vertices": settings.max_vertices,
         "coacd_params": settings.coacd_kwargs(),
         "surface_samples": settings.surface_samples,
+        "surface_metric": "convex_union_boundary_p95_v2",
         "surface_p95_threshold_m": settings.surface_p95_threshold_m,
     }
     return _hash_bytes(_canonical_json(payload).encode("utf-8"))

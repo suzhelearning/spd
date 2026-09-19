@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from spd_vr.alignment import PICO_TO_ROBOT_ROTATION, SideAlignment
 
@@ -26,40 +27,31 @@ def test_alignment_requires_ten_frames_and_uses_explicit_transform():
     np.testing.assert_allclose(result.target_pose, robot_neutral)
 
 
-def test_pico_world_axes_map_to_robot_world_axes_after_alignment():
+def test_flu_wrist_motion_preserves_robot_forward_left_up_axes():
     alignment = SideAlignment(pico_to_robot_rotation=PICO_TO_ROBOT_ROTATION)
+    frame_ns = 16_666_667
     for timestamp in range(1, 11):
-        alignment.accept(np.eye(4), True, 1, timestamp)
+        alignment.accept(np.eye(4), True, 1, timestamp * frame_ns)
 
-    current = np.eye(4)
-    current[:3, 3] = (0.005, 0.004, 0.003)
-    angle = 0.05
-    current[:3, :3] = (
-        (1.0, 0.0, 0.0),
-        (0.0, np.cos(angle), -np.sin(angle)),
-        (0.0, np.sin(angle), np.cos(angle)),
-    )
-    target = alignment.accept(current, True, 1, 11).target_pose
-
-    np.testing.assert_allclose(
-        target[:3, 3],
-        PICO_TO_ROBOT_ROTATION @ current[:3, 3],
-    )
-    np.testing.assert_allclose(
-        target[:3, :3],
-        PICO_TO_ROBOT_ROTATION @ current[:3, :3] @ PICO_TO_ROBOT_ROTATION.T,
-    )
+    # Input protocol is already FLU, as is the robot world: no Unity remapping.
+    current = pose(0.005, 0.004, 0.003, 0.05)
+    target = alignment.accept(current, True, 1, 11 * frame_ns)
+    assert target.valid
+    np.testing.assert_allclose(target.target_pose[:3, 3], (0.005, 0.004, 0.003))
+    # A positive yaw about input up remains a positive yaw about robot up.
+    np.testing.assert_allclose(target.target_pose[:3, :3], current[:3, :3])
 
 def test_jump_resets_window_but_holds_last_target_and_sides_are_independent():
     left = SideAlignment(neutral_robot=pose(1.0))
     right = SideAlignment(neutral_robot=pose(-1.0))
+    frame_ns = 16_666_667
     for timestamp in range(1, 11):
-        assert left.accept(pose(), True, 1, timestamp).stable_count == min(timestamp, 10)
-        right.accept(pose(), True, 1, timestamp)
-    left.accept(pose(x=0.01), True, 1, 11)
-    steady = left.accept(pose(x=0.0201), True, 1, 12)
-    jumped = left.accept(pose(x=0.041), True, 1, 13)
-    inactive = right.accept(pose(), False, 1, 12)
+        assert left.accept(pose(), True, 1, timestamp * frame_ns).stable_count == min(timestamp, 10)
+        right.accept(pose(), True, 1, timestamp * frame_ns)
+    left.accept(pose(x=0.01), True, 1, 11 * frame_ns)
+    steady = left.accept(pose(x=0.0201), True, 1, 12 * frame_ns)
+    jumped = left.accept(pose(x=0.4), True, 1, 13 * frame_ns)
+    inactive = right.accept(pose(), False, 1, 12 * frame_ns)
 
     assert steady.aligned
     assert not jumped.aligned
@@ -136,3 +128,113 @@ def test_stationary_hold_rejects_wrist_jitter_without_delaying_real_motion():
     )
     assert moved.valid
     assert moved.target_pose[0, 3] > 0.01
+
+
+@pytest.mark.parametrize("frame_ns", [11_111_111, 16_666_667, 33_333_333])
+def test_running_rapid_motion_preserves_neutral_at_different_sample_rates(frame_ns):
+    alignment = SideAlignment()
+    neutral = pose(x=0.2, y=-0.1, angle=0.3)
+    for index in range(1, 11):
+        alignment.accept(neutral, True, 1, index * frame_ns)
+
+    # 3 m/s and 14 rad/s exceed calibration steps even at 90 Hz, but are
+    # plausible input wrist motion. The target follows without a new neutral.
+    for index in range(1, 4):
+        elapsed_s = index * frame_ns * 1.0e-9
+        current = pose(x=0.2 + 3.0 * elapsed_s, y=-0.1, angle=0.3 + 14.0 * elapsed_s)
+        result = alignment.accept(current, True, 1, (10 + index) * frame_ns)
+        assert result.valid
+        np.testing.assert_allclose(
+            result.target_pose,
+            pose(x=3.0 * elapsed_s, angle=14.0 * elapsed_s),
+            atol=1.0e-12,
+        )
+
+
+@pytest.mark.parametrize("current", [pose(x=0.06), pose(angle=0.3)])
+def test_running_rejects_discontinuity_using_elapsed_sample_time(current):
+    # The same displacement is plausible in 20 ms, not in 10 ms:
+    # respectively 3 vs 6 m/s, or 15 vs 30 rad/s.
+    for frame_ns, accepted in [(20_000_000, True), (10_000_000, False)]:
+        alignment = SideAlignment()
+        for index in range(1, 11):
+            previous = alignment.accept(pose(), True, 1, index * frame_ns)
+        result = alignment.accept(current, True, 1, 11 * frame_ns)
+        assert result.valid is accepted
+        assert alignment.aligned is accepted
+        if accepted:
+            np.testing.assert_allclose(result.target_pose, current)
+        else:
+            assert result.hold_reason == "aligning"
+            np.testing.assert_allclose(result.target_pose, previous.target_pose)
+            # A rejected discontinuity starts a fresh ten-frame stable window.
+            for index in range(12, 20):
+                assert not alignment.accept(current, True, 1, index * frame_ns).aligned
+            recovered = alignment.accept(current, True, 1, 20 * frame_ns)
+            assert recovered.valid
+            np.testing.assert_allclose(recovered.target_pose, np.eye(4), atol=1e-12)
+
+
+@pytest.mark.parametrize("unstable", [pose(x=0.021), pose(angle=0.16)])
+def test_calibration_still_restarts_stable_window_on_small_fast_steps(unstable):
+    alignment = SideAlignment()
+    frame_ns = 16_666_667
+    for index in range(1, 10):
+        assert not alignment.accept(pose(), True, 1, index * frame_ns).aligned
+    # This step would be allowed in RUNNING, but is not a stable neutral.
+    result = alignment.accept(unstable, True, 1, 10 * frame_ns)
+    assert not result.aligned
+    assert result.stable_count == 1
+    for index in range(11, 19):
+        assert not alignment.accept(unstable, True, 1, index * frame_ns).aligned
+    result = alignment.accept(unstable, True, 1, 19 * frame_ns)
+    assert result.valid
+    np.testing.assert_allclose(result.target_pose, np.eye(4), atol=1e-12)
+
+
+def test_anatomical_mapping_retains_timing_guards_and_absolute_orientation_after_jump():
+    alignment = SideAlignment(neutral_robot=pose(0.5, angle=-0.4))
+    robot_offset = pose(0.04, angle=0.7)
+    alignment.configure_palm_mapping(np.eye(3), pose(0.08), robot_offset)
+    frame_ns = 16_666_667
+    for index in range(1, 11):
+        previous = alignment.accept(pose(), True, 3, index * frame_ns)
+    assert previous.valid
+    np.testing.assert_allclose((previous.target_pose @ robot_offset)[:3, :3], np.eye(3), atol=1e-12)
+    duplicate = alignment.accept(pose(x=0.4), True, 3, 10 * frame_ns)
+    np.testing.assert_allclose(duplicate.target_pose, previous.target_pose)
+    jumped = pose(x=0.4, angle=0.8)
+    rejected = alignment.accept(jumped, True, 3, 11 * frame_ns)
+    assert not rejected.valid
+    np.testing.assert_allclose(rejected.target_pose, previous.target_pose)
+    for index in range(12, 20):
+        assert not alignment.accept(jumped, True, 3, index * frame_ns).valid
+    recovered = alignment.accept(jumped, True, 3, 20 * frame_ns)
+    assert recovered.valid
+    # A fresh position baseline must not turn a new hand orientation into
+    # the robot's old neutral orientation, even after a tracking discontinuity.
+    palm = recovered.target_pose @ robot_offset
+    np.testing.assert_allclose(palm[:3, :3], jumped[:3, :3], atol=1e-12)
+    np.testing.assert_allclose(palm[:3, 3], (alignment.neutral_robot @ robot_offset)[:3, 3], atol=1e-12)
+    stale = alignment.accept(jumped, True, 3, 20 * frame_ns, now_ns=24 * frame_ns)
+    assert stale.hold_reason == "stale"
+    np.testing.assert_allclose(stale.target_pose, recovered.target_pose)
+
+
+def test_anatomical_stationary_hold_freezes_jitter_then_releases_real_rotation():
+    alignment = SideAlignment()
+    robot_offset = pose(0.04, angle=0.7)
+    alignment.configure_palm_mapping(np.eye(3), pose(0.08), robot_offset)
+    frame_ns = 16_666_667
+    for index in range(1, 11):
+        alignment.accept(pose(), True, 1, index * frame_ns)
+    outputs = []
+    for index in range(11, 31):
+        sign = -1 if index % 2 else 1
+        result = alignment.accept(pose(x=sign * 0.0008, angle=sign * 0.002), True, 1, index * frame_ns)
+        outputs.append(result.target_pose)
+    for output in outputs[-5:]:
+        np.testing.assert_allclose(output, outputs[-1], atol=1e-12)
+    moved = alignment.accept(pose(x=0.015, angle=0.05), True, 1, 31 * frame_ns)
+    assert moved.valid
+    np.testing.assert_allclose((moved.target_pose @ robot_offset)[:3, :3], pose(angle=0.05)[:3, :3], atol=1e-12)

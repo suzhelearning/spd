@@ -1,7 +1,9 @@
 """Authorization/cancellation contracts without ROS or production solvers."""
+from argparse import Namespace
+
 import pytest
 
-from spd_vr.ros_publisher import _FollowControl
+from spd_vr.ros_publisher import _FollowControl, run_publisher
 
 
 class HeldSource:
@@ -15,6 +17,17 @@ class HeldSource:
         self.state = "hold"
         self.reason = "aligned"
         self.alignments = 0
+        self.calibrating = False
+        self.feedback_ns = 0
+
+    def update_feedback(self, feedback):
+        if feedback["monotonic_ns"] <= self.feedback_ns:
+            return False
+        self.feedback_ns = feedback["monotonic_ns"]
+        if not feedback.get("usable", True):
+            self.running_mask = self.ready_mask = 0
+            self.reason = "actual feedback unavailable"
+        return True
 
     def status(self):
         return dict(fresh=self.fresh, input_mask=self.input_mask, ready_mask=self.ready_mask,
@@ -24,12 +37,15 @@ class HeldSource:
         if command == "start":
             self.running_mask = self.ready_mask
             return bool(self.running_mask)
+        if command in {"calibrate", "align"} and self.running_mask:
+            return False
         self.running_mask = self.ready_mask = 0
         self.state = "hold"
-        if command == "align":
+        if command in {"calibrate", "align"}:
             self.alignments += 1
             self.session_id = f"session-{self.alignments}"
-            self.state = "aligning"
+            self.calibrating = command == "calibrate"
+            self.state = "calibrating" if self.calibrating else "aligning"
         return True
 
 
@@ -48,7 +64,7 @@ def reply(request, *, transport_error="", **changes):
     op, generation, session = request
     response = dict(ok=True, error="", state="active", enabled=True,
                     authorized_session=session, candidate_session=session, ready_mask=7,
-                    hold_mask=0)
+                    hold_mask=0, feedback={"monotonic_ns": 1, "usable": True})
     response.update(changes)
     return op, generation, session, None if transport_error else response, transport_error
 
@@ -70,12 +86,12 @@ def test_only_matching_enable_ack_starts_source_not_status(controls):
     assert source.running_mask == 7
 
 
-@pytest.mark.parametrize("cancel", ["hold", "align", "tracking_loss", "session_change"])
+@pytest.mark.parametrize("cancel", ["hold", "calibrate", "align", "tracking_loss", "session_change"])
 def test_cancellation_during_enable_rejects_late_success(controls, cancel):
     source, receiver, control = controls
     control.command("confirm")
     request = receiver.requests[-1]
-    if cancel in {"hold", "align"}:
+    if cancel in {"hold", "calibrate", "align"}:
         control.command(cancel)
     else:
         if cancel == "tracking_loss":
@@ -172,3 +188,47 @@ def test_confirm_refuses_partial_or_incomplete_calibration(controls):
     control.command("confirm")
     assert not receiver.requests
     assert source.running_mask == 0
+
+
+@pytest.mark.parametrize("command", ["calibrate", "align"])
+def test_calibration_or_preview_revokes_follow_and_never_reauthorizes(controls, command):
+    source, receiver, control = controls
+    control.command("confirm")
+    control.result(reply(receiver.requests[-1]))
+    assert source.running_mask == 7
+    control.command(command)
+    assert source.running_mask == 0
+    assert not control.following
+    assert source.state == ("calibrating" if command == "calibrate" else "aligning")
+    assert receiver.requests[-1][0] == "hold"
+    # Even a receiver claiming authorization cannot make preview/calibration move.
+    control.result(reply(("status", control.generation, source.session_id)))
+    control.command("confirm")
+    assert source.running_mask == 0
+    assert not control.pending
+
+
+def test_enable_ack_measurement_can_invalidate_readiness_before_start(controls):
+    source, receiver, control = controls
+    control.command("confirm")
+    control.result(reply(receiver.requests[-1], feedback={"monotonic_ns": 2, "usable": False}))
+    assert source.running_mask == 0
+    assert not control.pending and not control.following
+    assert receiver.requests[-1][0] == "hold"
+
+
+def test_held_feedback_does_not_authorize_motion(controls):
+    source, receiver, control = controls
+    control.command("calibrate")
+    # Calibration replaced the source session; held measurements remain useful.
+    control.result(reply(receiver.requests[-1], enabled=False,
+                         feedback={"monotonic_ns": 2, "usable": False}))
+    assert source.reason == "actual feedback unavailable"
+    assert source.running_mask == 0
+    assert not control.pending and not control.following
+
+
+def test_production_requires_actual_state_control_before_loading_ros():
+    with pytest.raises(SystemExit) as error:
+        run_publisher(Namespace(control_socket=None))
+    assert error.value.code != 0

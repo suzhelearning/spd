@@ -61,6 +61,18 @@ class ViewerWindow:
         self._joint_figure: Any | None = None
         self._joint_history: deque[tuple[float, float, float]] = deque(maxlen=300)
         self._plot_joint = ""
+        if model is not None:
+            arm_bodies = {
+                f"{link}_{side}"
+                for side in ("L", "R")
+                for link in ("Base", *(f"Link{i}" for i in range(1, 8)), "TCP_Link")
+            }
+            for geom_id in range(model.ngeom):
+                body_name = model.body(int(model.geom_bodyid[geom_id])).name
+                # Group 1 contains visual meshes; collision geometry is untouched.
+                if (model.geom_group[geom_id] == 1
+                        and (body_name in arm_bodies or body_name.startswith(("l_", "r_")))):
+                    model.geom_rgba[geom_id, 3] = 0.45
 
     @property
     def window(self) -> Any | None:

@@ -1,4 +1,4 @@
-"""Independent PICO-wrist neutral alignment for one arm side."""
+"""Independent position alignment and optional anatomical palm mapping."""
 
 from __future__ import annotations
 
@@ -10,10 +10,15 @@ import numpy as np
 
 
 _IDENTITY = np.eye(4, dtype=float)
-PICO_TO_ROBOT_ROTATION = np.asarray(
-    ((0.0, 0.0, -1.0), (-1.0, 0.0, 0.0), (0.0, 1.0, 0.0)),
-    dtype=float,
-)
+# The wire protocol is already FLU (forward, left, up), matching robot world.
+# Applying another axis permutation corrupts both translation and rotation.
+PICO_TO_ROBOT_ROTATION = np.eye(3, dtype=float)
+
+# Input-wrist plausibility bounds, not robot output speed limits. Calibration
+# requires small steps; an aligned operator may move rapidly without losing
+# the neutral reference. Compare distance (m/rad) against speed * sample time.
+_MAX_RUNNING_TRANSLATION_SPEED_M_S = 5.0
+_MAX_RUNNING_ROTATION_SPEED_RAD_S = 20.0
 
 
 def _pose_matrix(value: Any) -> np.ndarray:
@@ -112,7 +117,11 @@ class AlignedPose:
 
 
 class SideAlignment:
-    """Neutral alignment plus a zero-lag stationary wrist-jitter hold."""
+    """Position alignment plus a zero-lag stationary wrist-jitter hold.
+
+    Generic users retain relative wrist orientation. Configured palm users get
+    absolute anatomical orientation, independent of position realignment.
+    """
 
     def __init__(
         self,
@@ -160,6 +169,7 @@ class SideAlignment:
         if orientation_hold_exit_velocity_rad_s <= orientation_hold_enter_velocity_rad_s:
             raise ValueError("orientation hold exit velocity must exceed enter velocity")
         self.stable_frames = int(stable_frames)
+        # Per-frame stability thresholds apply only while finding neutral.
         self.max_translation_step_m = float(max_translation_step_m)
         self.max_rotation_step_rad = float(max_rotation_step_rad)
         self.stale_after_ns = int(stale_after_ns)
@@ -188,6 +198,9 @@ class SideAlignment:
         ):
             raise ValueError("pico_to_robot_rotation must be a proper 3x3 rotation")
         self.pico_to_robot_rotation = rotation.copy()
+        self._human_wrist_to_palm: np.ndarray | None = None
+        self._robot_wrist_to_palm: np.ndarray | None = None
+        self._robot_palm_to_wrist: np.ndarray | None = None
         self._epoch: int | None = None
         self._last_timestamp_ns: int | None = None
         self._candidate: np.ndarray | None = None
@@ -222,6 +235,65 @@ class SideAlignment:
     @property
     def last_target(self) -> np.ndarray | None:
         return None if self._last_target is None else self._last_target.copy()
+
+    def configure_palm_mapping(
+        self,
+        basis: Any,
+        human_wrist_to_palm: Any,
+        robot_wrist_to_palm: Any,
+    ) -> None:
+        """Install a frozen anatomical calibration; reset position alignment.
+
+        ``basis`` maps tracking-world vectors into robot FLU. Both rigid
+        transforms are expressed in their respective wrist-local frames.
+        ``realign`` and ``reset`` deliberately retain this calibration.
+        """
+        basis_pose = np.eye(4)
+        rotation = np.asarray(basis, dtype=float)
+        if rotation.shape != (3, 3):
+            raise ValueError("basis must be a proper 3x3 rotation")
+        basis_pose[:3, :3] = rotation
+        validated_basis = _pose_matrix(basis_pose)[:3, :3]
+        human = _pose_matrix(human_wrist_to_palm)
+        robot = _pose_matrix(robot_wrist_to_palm)
+        inverse = np.eye(4)
+        inverse[:3, :3] = robot[:3, :3].T
+        inverse[:3, 3] = -robot[:3, :3].T @ robot[:3, 3]
+        self.pico_to_robot_rotation = validated_basis.copy()
+        self._human_wrist_to_palm = human
+        self._robot_wrist_to_palm = robot
+        self._robot_palm_to_wrist = inverse
+        self.reset()
+
+    def _human_pose(self, wrist: np.ndarray) -> np.ndarray:
+        if self._human_wrist_to_palm is None:
+            return wrist
+        return wrist @ self._human_wrist_to_palm
+
+    def _mapped_target(self, current: np.ndarray) -> np.ndarray:
+        """Map a human palm pose, or wrist pose for generic alignment."""
+        assert self._pico_neutral is not None
+        basis = self.pico_to_robot_rotation
+        if self._robot_wrist_to_palm is not None:
+            assert self._robot_palm_to_wrist is not None
+            target = self.neutral_robot @ self._robot_wrist_to_palm
+            # Palm translation is one-to-one; generic wrist scaling does not
+            # alter anatomical mapping or the physical wrist lever arm.
+            target[:3, 3] += basis @ (current[:3, 3] - self._pico_neutral[:3, 3])
+            target[:3, :3] = basis @ current[:3, :3]
+            return target @ self._robot_palm_to_wrist
+        target = self.neutral_robot.copy()
+        target[:3, 3] += self.position_scale * basis @ (
+            current[:3, 3] - self._pico_neutral[:3, 3]
+        )
+        target[:3, :3] = (
+            basis
+            @ current[:3, :3]
+            @ self._pico_neutral[:3, :3].T
+            @ basis.T
+            @ self.neutral_robot[:3, :3]
+        )
+        return target
 
     def _clear_alignment(self) -> None:
         self._candidate = None
@@ -345,6 +417,7 @@ class SideAlignment:
                 None if self._aligned else "aligning",
                 self._stable_count,
             )
+        previous_timestamp = self._last_timestamp_ns
         self._last_timestamp_ns = timestamp
         try:
             current = _pose_matrix(wrist_pose)
@@ -355,27 +428,22 @@ class SideAlignment:
         if self._aligned:
             assert self._candidate is not None
             assert self._pico_neutral is not None
+            assert previous_timestamp is not None
             previous = self._candidate
             translation_step = float(np.linalg.norm(current[:3, 3] - previous[:3, 3]))
             rotation_step = _rotation_distance(previous[:3, :3], current[:3, :3])
-            if translation_step > self.max_translation_step_m or rotation_step > self.max_rotation_step_rad:
+            dt = (timestamp - previous_timestamp) * 1.0e-9
+            if (
+                translation_step > _MAX_RUNNING_TRANSLATION_SPEED_M_S * dt
+                or rotation_step > _MAX_RUNNING_ROTATION_SPEED_RAD_S * dt
+            ):
                 self._clear_alignment()
                 self._candidate = current
                 self._stable_count = 1
                 return self._held("aligning")
-            basis = self.pico_to_robot_rotation
-            target = self.neutral_robot.copy()
-            target[:3, 3] += self.position_scale * basis @ (
-                current[:3, 3] - self._pico_neutral[:3, 3]
-            )
-            target[:3, :3] = (
-                basis
-                @ current[:3, :3]
-                @ self._pico_neutral[:3, :3].T
-                @ basis.T
-                @ self.neutral_robot[:3, :3]
-            )
-            target = self._stationary_hold(current, target, timestamp)
+            human = self._human_pose(current)
+            target = self._mapped_target(human)
+            target = self._stationary_hold(human, target, timestamp)
             self._candidate = current
             self._last_target = target
             return AlignedPose(target, True, None, self._stable_count)
@@ -394,11 +462,12 @@ class SideAlignment:
                 self._stable_count += 1
         if self._stable_count >= self.stable_frames:
             self._candidate = current
-            self._transform = self.neutral_robot @ np.linalg.inv(current)
-            self._pico_neutral = current.copy()
+            human = self._human_pose(current)
+            self._pico_neutral = human.copy()
             self._aligned = True
-            target = self.neutral_robot.copy()
-            self._motion_pose = current.copy()
+            target = self._mapped_target(human)
+            self._transform = target @ np.linalg.inv(current)
+            self._motion_pose = human.copy()
             self._motion_timestamp_ns = timestamp
             self._stationary_since_ns = timestamp
             self._last_target = target

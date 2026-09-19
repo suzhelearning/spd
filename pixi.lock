@@ -156,7 +156,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/s2n-1.7.6-h7e3ee7f_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/scipy-1.17.1-py311hbe70eeb_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/tinyxml2-11.0.0-hee9eb32_1.conda
-      - conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-noxft_h1df4ec4_4.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-xft_h590fa25_4.conda
       - conda: https://prefix.dev/conda-forge/linux-64/tmux-3.7c_-hd13ee6d_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/urdfdom-5.1.2-h8631160_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/urdfdom_headers-2.1.2-hb700be7_0.conda
@@ -361,7 +361,7 @@ environments:
       - conda: https://prefix.dev/conda-forge/linux-64/scipy-1.17.1-py311hbe70eeb_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/spdlog-1.15.3-h6dc744f_1.conda
       - conda: https://prefix.dev/conda-forge/linux-64/tinyxml2-10.0.0-h3f2d84a_2.conda
-      - conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-noxft_h1df4ec4_4.conda
+      - conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-xft_h590fa25_4.conda
       - conda: https://prefix.dev/conda-forge/linux-64/uncrustify-0.80.1-h5888daf_0.conda
       - conda: https://prefix.dev/conda-forge/linux-64/urdfdom-4.0.1-h2e5d1f2_2.conda
       - conda: https://prefix.dev/conda-forge/linux-64/urdfdom_headers-1.1.2-h84d6215_0.conda
@@ -3781,23 +3781,26 @@ packages:
     - tinyxml2 >=11.0.0,<11.1.0a0
   size: 132572
   timestamp: 1789420786161
-- conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-noxft_h1df4ec4_4.conda
-  build_number: 104
-  sha256: a1a241d172c1ccab067ba245206dd048bc3c2d1b84504b53c9468e99adfc16a1
-  md5: 676a2f9b1c4fcf57b70aa5c65f6c60d0
+- conda: https://prefix.dev/conda-forge/linux-64/tk-8.6.13-xft_h590fa25_4.conda
+  sha256: 7d73fefb96af03a88dc3ed5d723f416cfe0201724504e2d40160834c97ea4ff5
+  md5: 8635f7a574df700372c8bb403617a016
   depends:
   - libgcc >=15
   - __glibc >=2.17,<3.0.a0
   - libzlib >=1.3.2,<2.0a0
   constrains:
   - xorg-libx11 >=1.8.13,<2.0a0
+  - xorg-libxft >=2.3.9,<3.0a0
+  - fontconfig >=2.18.3,<3.0a0
+  track_features:
+  - tk-p-0
   license: TCL
   purls: []
   run_exports:
     weak:
     - tk >=8.6.13,<8.7.0a0
-  size: 3566806
-  timestamp: 1787272857910
+  size: 3564157
+  timestamp: 1787272875184
 - conda: https://prefix.dev/conda-forge/linux-64/tmux-3.7c_-hd13ee6d_0.conda
   sha256: da737c4dfa83c2124e96c102f43275dd8662847d52c7d59c2ccea5bce9d21f8f
   md5: 45aa7070c37d18b473cdc8ebe83805a3

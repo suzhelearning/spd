@@ -14,15 +14,39 @@ from typing import Any
 
 
 class _InputQueue:
-    """Bounded, ordered callback handoff, preserving loss/reconnect events."""
+    """Latest healthy pose per burst; loss, clock and control boundaries stay ordered."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._events: deque[tuple[str, Any, int]] = deque()
 
+    @staticmethod
+    def _continuous_frames(previous: Any, current: Any) -> bool:
+        # Validation is needed only on backlog. Never hide a lost/invalid frame
+        # or device-clock transition by replacing it with a later healthy pose.
+        from .pico_ros_source import _canonical_hand, _pose_values
+
+        try:
+            if not 0 <= previous.timestamp_ms < current.timestamp_ms:
+                return False
+            for frame in (previous, current):
+                if frame.head.valid:
+                    _pose_values(frame.head, "head")
+                if not all(_canonical_hand(getattr(frame, side), side)[0] for side in ("left", "right")):
+                    return False
+            return True
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+
     def put(self, kind: str, value: Any = None) -> None:
         receipt = time.monotonic_ns()
         with self._lock:
+            if (kind == "frame" and self._events and self._events[-1][0] == "frame"
+                    and self._continuous_frames(self._events[-1][1], value)
+                    and not (len(self._events) > 1 and self._events[-2][0] == "frame"
+                             and self._events[-2][1].timestamp_ms >= self._events[-1][1].timestamp_ms)):
+                self._events[-1] = (kind, value, receipt)
+                return
             if len(self._events) >= 128:
                 self._events.clear()
                 self._events.append(("disconnect", None, receipt))
@@ -79,13 +103,14 @@ class _ControlWorker:
                 else:
                     generation, session = self._context
                     op = "status"
+            poll_started = time.monotonic()
             try:
                 response = self.client.request(op, session_id=session)
                 error = ""
             except RuntimeError as exc:
                 response, error = None, str(exc)
             self.events.put("control", (op, generation, session, response, error))
-            next_poll = time.monotonic() + 0.2
+            next_poll = poll_started + 0.05
 
 
 class _FollowControl:
@@ -98,13 +123,13 @@ class _FollowControl:
         self.following = False
         self.session = core.session_id
         self.receiver: dict[str, Any] | None = None
-        self.detail = "先对齐，再确认并跟随；必须收到 SPD 授权确认"
+        self.detail = "先 K 标准掌姿校准，再 C 位置对齐/预览；只有 F 授权确认后才跟随"
         self.worker.context(self.generation, self.session)
 
     @staticmethod
     def _ready(status: dict[str, Any]) -> bool:
         return (status["fresh"] and status["input_mask"] == 7
-                and status["ready_mask"] == 7 and status["state"] != "aligning")
+                and status["ready_mask"] == 7 and status["state"] not in {"aligning", "calibrating"})
 
     def _hold(self, reason: str) -> None:
         old_session = self.session
@@ -117,14 +142,17 @@ class _FollowControl:
         self.detail = reason
 
     def command(self, command: str) -> None:
-        if command in {"align", "hold"}:
-            self._hold("本地已保持；正在请求 SPD 保持。恢复需要重新对齐并确认")
-            if command == "align":
-                aligned = self.core.command("align")
+        if command in {"calibrate", "align", "hold"}:
+            self._hold("本地已保持；正在请求 SPD 保持。恢复需要 C 对齐及 F 确认")
+            if command in {"calibrate", "align"}:
+                accepted = self.core.command(command)
                 self.session = self.core.session_id
                 self.worker.context(self.generation, self.session)
-                self.detail = ("正在按保持位置对齐；请稳住双手腕" if aligned else
-                               "对齐被拒绝：" + self.core.status()["reason"])
+                action = ("标准掌姿校准：头朝前、手指向前、掌心向下，请保持稳定"
+                          if command == "calibrate" else
+                          "正在按实际保持位置对齐；完成后仅预览，F 前不跟随")
+                self.detail = (action if accepted else
+                               "校准/对齐被拒绝：" + self.core.status()["reason"])
             return
         if command not in {"start", "confirm"} or self.pending or self.following:
             return
@@ -151,6 +179,12 @@ class _FollowControl:
 
     def result(self, result: tuple[str, int, str, Any, str]) -> None:
         op, generation, session, response, error = result
+        # Measurement is independent of authorization. A hold reply can belong
+        # to the prior session after C/K; the core rejects old sample timestamps.
+        if not error and response is not None and response.get("ok"):
+            feedback = response.get("feedback")
+            if feedback is not None:
+                self.core.update_feedback(feedback)
         if generation != self.generation or session != self.session:
             # A cancelled in-flight enable can still have reached SPD.
             if op == "enable":
@@ -255,36 +289,43 @@ def _control_window(events: _InputQueue, stop: threading.Event, *, integrated: b
     root = tk.Tk()
     default_font = tkfont.nametofont("TkDefaultFont")
     if "Noto Sans CJK SC" in tkfont.families(root):
-        default_font.configure(family="Noto Sans CJK SC", size=16)
+        default_font.configure(family="Noto Sans CJK SC", size=13)
     else:
-        default_font.configure(family="fixed", size=18)
-    root.title("PICO -> SPD spelling | domain 120")
-    root.geometry("1000x650")
-    status = tk.StringVar(value="等待 PICO 输入；机器人目标尚未就绪")
-    tk.Label(root, text="PICO 实时控制 — 仅 spelling 仿真场景",
-             font=(default_font.actual("family"), 16, "bold")).pack(pady=12)
-    tk.Label(root, textvariable=status, font=default_font, justify="left", wraplength=950).pack(padx=18, pady=12)
+        default_font.configure(family="sans", size=13)
+    root.title("PICO -> SPD | palm calibration and target-only preview | domain 120")
+    root.geometry("1240x900")
+    root.minsize(1000, 820)
+    status = tk.StringVar(value="等待 PICO 输入和 SPD 实际状态；保持，不会运动")
+    tk.Label(root, text="PICO 实时控制 — K 标准掌姿 → C 位置对齐/预览 → F 确认跟随",
+             font=(default_font.actual("family"), 15, "bold")).pack(pady=8)
+    tk.Label(root, textvariable=status, font=default_font, justify="left", anchor="nw",
+             height=7, wraplength=1180).pack(fill="x", padx=18, pady=4)
     controls = tk.Frame(root)
-    controls.pack(pady=8)
-    follow_label = "确认并跟随 (F)" if integrated else "启动：先手动 SPD e (F)"
-    for label, command in (("对齐 Align (C)", "align"), (follow_label, "start"), ("保持 Hold (Space)", "hold")):
-        tk.Button(controls, text=label, font=default_font, width=22,
+    controls.pack(pady=6)
+    follow_label = "确认并跟随 (F)" if integrated else "未连接：禁止跟随 (F)"
+    for label, command in (("标准掌姿校准 (K)", "calibrate"), ("位置对齐 / 预览 (C)", "align"),
+                           (follow_label, "start"), ("保持 Hold (Space)", "hold")):
+        tk.Button(controls, text=label, font=default_font,
                   command=lambda command=command: events.put("command", command)).pack(side="left", padx=6)
     steps = (
-        "1. 对齐：稳住双手腕；按当前保持位置校准，不会跳回 HOME。\n"
-        "2. 确认并跟随：三组全部就绪后点击；收到 SPD 当前会话授权确认才启动。\n"
-        "3. 保持：立即停止源端并撤销 SPD 授权。失效组恢复需要重新对齐并确认。"
+        "K：先保持；头朝正前、手指向前、掌心向下，稳住双腕，采集 10 个稳定样本。\n"
+        "C：按机器人新鲜、静止的实际掌位对齐（保留 K 校准）；移动双手检查目标坐标轴，仅预览。\n"
+        "F：三组全部就绪且 SPD 当前会话授权确认后才跟随。Space：源端和 SPD 保持；恢复需 C → F。"
         if integrated else
-        "手动模式 — 未连接 SPD 控制接口。\n"
-        "1. 按保持位置对齐。2. 到 SPD 窗口按 e，再回到这里启动。\n"
-        "3. 保持只停止本源端。跟踪丢失后需要重新对齐、SPD e、启动。"
+        "未连接 SPD 控制接口 — 仅显示，无法位置对齐或跟随。\n"
+        "K：头朝前、手指向前、掌心向下并保持稳定。取得新鲜实际状态后才能 C 对齐/预览。\n"
+        "生产启动请使用 pixi run spd-pico，或提供 --control-socket；无实际反馈时禁止跟随。"
     )
-    tk.Label(root, font=default_font, justify="left", wraplength=950, text=steps + (
-        "\nC / F / 空格仅在本窗口获得焦点时有效；建议优先使用按钮。"
-    )).pack(padx=18, pady=12)
+    tk.Label(root, font=default_font, justify="left", wraplength=1180, text=steps + (
+        "\nK / C / F / 空格仅在本窗口获得焦点时有效；预览不是实际运动，也不是精度/避碰保证。"
+    )).pack(fill="x", padx=18, pady=6)
+    tk.Canvas(root, name="palm_preview", background="white", height=300,
+              highlightthickness=0).pack(fill="both", expand=True, padx=12, pady=4)
+    tk.Label(root, name="palm_errors", font=("sans", 11), justify="left", anchor="nw",
+             height=8, wraplength=1180, text="Actual / solver diagnostics: unavailable").pack(fill="x", padx=18, pady=6)
     pressed: set[str] = set()
     releases: dict[str, Any] = {}
-    shortcuts = {"c": "align", "f": "start", "space": "hold"}
+    shortcuts = {"k": "calibrate", "c": "align", "f": "start", "space": "hold"}
 
     def key_down(event: Any) -> str | None:
         key = event.keysym.lower()
@@ -318,6 +359,15 @@ def _control_window(events: _InputQueue, stop: threading.Event, *, integrated: b
     return root, status
 
 
+def _update_control_window(root: Any, label: Any, status: dict[str, Any], integrated: bool) -> None:
+    """Render a production status without sending any control command."""
+    from .palm_preview import palm_preview_text, render_palm_preview
+
+    label.set(_status_text(status, integrated))
+    render_palm_preview(root.nametowidget("palm_preview"), status)
+    root.nametowidget("palm_errors").configure(text=palm_preview_text(status))
+
+
 def _status_text(status: dict[str, Any], integrated: bool) -> str:
     groups = []
     for name, bit in (("双臂（双腕）", 1), ("左手", 4), ("右手", 2)):
@@ -325,9 +375,12 @@ def _status_text(status: dict[str, Any], integrated: bool) -> str:
                  "就绪 / 保持" if status["ready_mask"] & bit else
                  "已跟踪 / 待对齐" if status["input_mask"] & bit else "丢失 / 保持")
         groups.append(f"{name}: {state}")
-    calibration = ("正在采集稳定手腕" if status["state"] == "aligning" else
-                   "已完成" if status["ready_mask"] & 1 else "需要对齐")
-    lines = [f"PICO: {'新鲜有效' if status['fresh'] else '等待 / 已过期'} | 校准: {calibration}",
+    mapping = status.get("mapping") or {}
+    calibration = ("正在采集标准掌姿" if mapping.get("calibrating") else
+                   "已完成" if mapping.get("calibrated") else "需要 K 标准掌姿校准")
+    alignment = ("正在采集稳定手腕" if status["state"] == "aligning" else
+                 "已对齐 / 可预览" if status["ready_mask"] & 1 else "需要 C 位置对齐")
+    lines = [f"PICO: {'新鲜有效' if status['fresh'] else '等待 / 已过期'} | K: {calibration} | C: {alignment}",
              " | ".join(groups)]
     if integrated:
         receiver = status.get("spd")
@@ -339,12 +392,15 @@ def _status_text(status: dict[str, Any], integrated: bool) -> str:
                          f"就绪掩码={receiver['ready_mask']} 保持掩码={receiver['hold_mask']}")
         lines.append(status.get("control_detail", "正在等待 SPD 控制状态"))
     else:
-        lines.append("SPD: 手动模式 / 无法在此验证 — 启动前请在 SPD 窗口按 e")
+        lines.append("SPD: 未连接 / 无实际状态 — 无法校准、对齐或授权跟随")
     lines.append("源端诊断: " + status["reason"])
     return "\n".join(lines)
 
 
 def run_publisher(args: argparse.Namespace) -> int:
+    if not getattr(args, "control_socket", None):
+        raise SystemExit("Actual SPD state is required: use pixi run spd-pico or provide "
+                         "--control-socket for actual state. Manual SPD e cannot replace feedback.")
     import rclpy
     from pico_hand_tracking import Pico2Receiver
     from tianji_spd_interfaces.msg import JointCommand
@@ -359,7 +415,7 @@ def run_publisher(args: argparse.Namespace) -> int:
     errors: queue.Queue[BaseException] = queue.Queue()
     forward = _AdbForward(args)
     control_worker = None
-    integrated = bool(getattr(args, "control_socket", None))
+    integrated = True
 
     class OwnedReceiver(Pico2Receiver):
         def ensure_adb_forward(self) -> None:
@@ -383,16 +439,15 @@ def run_publisher(args: argparse.Namespace) -> int:
         initialized = True
         node = rclpy.create_node("spd_pico_joint_command_publisher")
         publisher = node.create_publisher(JointCommand, TOPIC, best_effort_qos())
-        if integrated:
-            from .local_control import LocalControlClient
+        from .local_control import LocalControlClient
 
-            control_worker = _ControlWorker(LocalControlClient(args.control_socket), events)
-            control_worker.thread.start()
+        control_worker = _ControlWorker(LocalControlClient(args.control_socket), events)
+        control_worker.thread.start()
 
         def solve() -> None:
             next_tick = next_publish = time.monotonic_ns()
             last_status: tuple[Any, ...] | None = None
-            control = _FollowControl(core, control_worker) if control_worker is not None else None
+            control = _FollowControl(core, control_worker)
             try:
                 while not stop.is_set() and rclpy.ok():
                     now = time.monotonic_ns()
@@ -406,26 +461,21 @@ def run_publisher(args: argparse.Namespace) -> int:
                             core.connected()
                         elif kind == "disconnect":
                             core.disconnected()
-                        elif kind == "control" and control is not None:
+                        elif kind == "control":
                             control.result(value)
                         elif kind == "command":
                             if value == "quit":
                                 stop.set()
-                            elif control is not None:
-                                control.command(value)
                             else:
-                                core.command("start" if value == "confirm" else value)
-                        if control is not None:
-                            control.observe()
+                                control.command(value)
+                        control.observe()
                     now = time.monotonic_ns()
                     core.tick(now)
-                    if control is not None:
-                        control.observe()
+                    control.observe()
                     if now >= next_publish:
                         publisher.publish(message_from_snapshot(core.snapshot()))
                         status = core.status()
-                        if control is not None:
-                            status.update(control.status())
+                        status.update(control.status())
                         key = (status["fresh"], status["input_mask"], status["ready_mask"],
                                status["running_mask"], status["state"], status["reason"],
                                status.get("control_detail"),
@@ -446,13 +496,13 @@ def run_publisher(args: argparse.Namespace) -> int:
                     next_tick += core.PERIOD_NS
                     finished = time.monotonic_ns()
                     if next_tick <= finished:
-                        next_tick = finished + core.PERIOD_NS
+                        # Skip missed deadlines without adding another idle period.
+                        next_tick = finished
             except BaseException as exc:
                 errors.put(exc)
                 stop.set()
             finally:
-                if control is not None:
-                    control.command("hold")
+                control.command("hold")
                 core.disconnected()
                 try:
                     publisher.publish(message_from_snapshot(core.snapshot()))
@@ -466,17 +516,18 @@ def run_publisher(args: argparse.Namespace) -> int:
             def stdin_commands() -> None:
                 for line in sys.stdin:
                     command = line.strip().lower()
-                    if command in {"align", "start", "confirm", "hold", "quit"}:
+                    if command in {"calibrate", "align", "start", "confirm", "hold", "quit"}:
                         events.put("command", command)
                     elif command:
-                        print("Commands: align / confirm (or start) / hold / quit", flush=True)
+                        print("Commands: calibrate (standard palms/head forward) / align (preview) / "
+                              "confirm (or start) / hold / quit", flush=True)
             threading.Thread(target=stdin_commands, name="pico-stdin", daemon=True).start()
         print("PICO publisher ready (process/control ready; waiting for live tracking, not robot-ready)", flush=True)
         while not stop.is_set():
             if root is not None:
                 try:
                     status = statuses.get_nowait()
-                    label.set(_status_text(status, integrated))
+                    _update_control_window(root, label, status, integrated)
                 except queue.Empty:
                     pass
                 root.update()
@@ -514,8 +565,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--adb-serial")
     parser.add_argument("--reconnect", type=float, default=2.0)
     parser.add_argument("--no-adb-forward", action="store_true")
-    parser.add_argument("--control-socket", help="Private local SPD control socket; omitted means manual SPD e")
-    parser.add_argument("--headless", action="store_true", help="stdin align/confirm/start/hold/quit; smoke testing only")
+    parser.add_argument("--control-socket", help="Required private SPD control socket for actual state and authorization; use pixi run spd-pico")
+    parser.add_argument("--headless", action="store_true", help="stdin calibrate/align/confirm/start/hold/quit; smoke testing only")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535 or not 1 <= args.device_port <= 65535:
         parser.error("ports must be in 1..65535")

@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 import pytest
 
@@ -5,6 +6,7 @@ import numpy as np
 
 import spd_vr.arm_ik as arm_ik
 from spd_vr.arm_ik import DualArmController, build_synthetic_fixture
+from spd_vr.alignment import SideAlignment
 from spd_vr.wire import (
     ARM_TARGETS_KEY,
     STATUS_IK_KEY,
@@ -57,6 +59,72 @@ def test_controller_uses_absolute_deadlines_without_catchup():
     ticks = controller.run(2, clock=lambda: next(times), sleep=lambda _: None)
     assert len(ticks) == 2
     assert controller.tick_count == 2
+
+
+@pytest.mark.parametrize(
+    "elapsed_ns, integrated_s",
+    [
+        (5_000_000, 0.005),
+        (20_000_000, 0.020),
+        (100_000_000, 0.050),
+        (0, 0.0),
+        (-5_000_000, 0.0),
+    ],
+)
+def test_arm_motion_tracks_elapsed_time_without_unbounded_catchup(elapsed_ns, integrated_s):
+    controller, left_pose, right_pose = build_synthetic_fixture()
+    controller.left_alignment = SideAlignment(neutral_robot=left_pose, stable_frames=1)
+    controller.right_alignment = SideAlignment(neutral_robot=right_pose, stable_frames=1)
+    controller.left_solver.velocity_limits[:] = 0.01
+    start = 1_000_000_000
+    controller.accept_tracking(arm_ik._synthetic_tracking(left_pose, right_pose, 1, start))
+    controller.tick(start)
+    previous_q = controller.left_q.copy()
+    left_pose[1, 3] += 0.02
+    timestamp = start + max(elapsed_ns, 5_000_000)
+    controller.accept_tracking(arm_ik._synthetic_tracking(left_pose, right_pose, 2, timestamp))
+
+    result = controller.tick(start + elapsed_ns)
+
+    # The reachable translational target saturates one hinge at 0.01 rad/s.
+    assert np.linalg.norm(controller.left_q - previous_q) == pytest.approx(
+        0.01 * integrated_s, abs=1.0e-8
+    )
+    if integrated_s == 0.0:
+        assert result.left_hold_reason is ArmTargetHoldReason.SOLVER_FAILURE
+    else:
+        assert result.left_hold_reason is ArmTargetHoldReason.NONE
+
+
+def test_bursty_receipt_uses_device_motion_time_but_local_freshness():
+    controller, left_pose, right_pose = build_synthetic_fixture()
+    controller.left_alignment = SideAlignment(neutral_robot=left_pose, stable_frames=1)
+    controller.right_alignment = SideAlignment(neutral_robot=right_pose, stable_frames=1)
+    source = 1_000_000_000
+    receipt = 10_000_000_000
+    initial = replace(
+        arm_ik._synthetic_tracking(left_pose, right_pose, 1, source),
+        bridge_monotonic_ns=receipt,
+    )
+    controller.accept_tracking(initial)
+    controller.tick(receipt)
+    left_pose[1, 3] += 0.04
+    next_receipt = receipt + 1_000
+    moved = replace(
+        arm_ik._synthetic_tracking(left_pose, right_pose, 2, source + 20_000_000),
+        bridge_monotonic_ns=next_receipt,
+    )
+    controller.accept_tracking(moved)
+
+    active = controller.tick(next_receipt)
+    assert active.left_hold_reason is ArmTargetHoldReason.NONE
+    assert controller.left_alignment.aligned
+
+    stale = controller.tick(next_receipt + 50_000_001)
+    assert stale.left_hold_reason is ArmTargetHoldReason.INPUT_STALE
+    assert not controller.left_alignment.aligned
+
+
 def test_control_gate_processes_ordered_commands_once():
     controller, _, _ = build_synthetic_fixture()
     pause = ControlFrame(2, 2_000_000_000, ControlCommand.PAUSE)
@@ -182,3 +250,40 @@ def test_main_closes_node_when_final_shutdown_fails(monkeypatch):
 
     assert arm_ik.main(["--model", "arm.xml", "--manifest", "manifest.yaml", "--urdf", "robot.urdf"]) == 0
     assert seen["closed"] is True
+
+
+def test_unreachable_wrist_keeps_alignment_and_valid_bounded_hold():
+    controller, left_pose, right_pose = build_synthetic_fixture()
+    unreachable = left_pose.copy()
+    unreachable[0, 3] += 10.0
+    controller.left_alignment = SideAlignment(neutral_robot=unreachable, stable_frames=1)
+    controller.right_alignment = SideAlignment(neutral_robot=right_pose, stable_frames=1)
+    before = controller.left_q.copy()
+    for i in range(3):
+        timestamp = 1_000_000_000 + i * 5_000_000
+        controller.accept_tracking(arm_ik._synthetic_tracking(left_pose, right_pose, i + 1, timestamp))
+        result = controller.tick(timestamp)
+        assert controller.left_alignment.aligned
+        assert result.valid_mask & 1
+        assert result.left_hold_reason == ArmTargetHoldReason.NONE
+        np.testing.assert_array_equal(result.left_q, before)
+    diagnostic = controller.diagnostics()["left"]
+    assert diagnostic["state"] == "blocked"
+    assert diagnostic["position_error_m"] > 9
+    assert diagnostic["detail"]
+
+
+def test_actual_feedback_does_not_jump_command_trajectory_and_hold_preserves_alignment():
+    controller, left_pose, right_pose = build_synthetic_fixture()
+    controller.left_alignment = SideAlignment(neutral_robot=left_pose, stable_frames=1)
+    controller.right_alignment = SideAlignment(neutral_robot=right_pose, stable_frames=1)
+    controller.accept_tracking(arm_ik._synthetic_tracking(left_pose, right_pose, 1, 1_000_000_000))
+    controller.tick(1_000_000_000)
+    original = np.concatenate((controller.left_q, controller.right_q))
+    controller.update_actual_state(original + 0.01, np.zeros(14))
+    np.testing.assert_array_equal(np.concatenate((controller.left_q, controller.right_q)), original)
+    controller.reset_motion()
+    assert controller.left_alignment.aligned
+    assert controller.right_alignment.aligned
+    with pytest.raises(ValueError):
+        controller.update_actual_state(np.full(14, np.nan), np.zeros(14))

@@ -62,7 +62,34 @@ def test_ready_requires_align_and_hand_targets_cannot_jump(source):
     core.tick(clock[0])
     position = np.asarray(core.snapshot(stamp_ns=4).position_rad)
     assert position[14] > held[14]
-    assert np.max(np.abs(position[14:] - np.asarray(held)[14:])) <= 0.5 * 0.005 + 1e-12
+    step = np.abs(position[14:] - np.asarray(held)[14:])
+    assert np.max(step) <= 2.0 * 0.005 + 1e-12  # Fixture model limit, below the hand cap.
+    assert np.min(step) > 0.5 * 0.005  # Fingers no longer inherit the arm cap.
+
+
+def test_wrist_motion_while_waiting_for_start_preserves_alignment(source):
+    core, clock = source
+    sample(core, clock, 1)
+    assert core.command("align")
+    for timestamp in range(2, 12):
+        sample(core, clock, timestamp)
+    held = core.position.copy()
+    for timestamp in range(12, 112):
+        clock[0] += 5_000_000
+        frame = raw_frame(timestamp)
+        def moved(hand):
+            return replace(hand, joints=tuple(
+                replace(joint, position=(joint.position[0] + (timestamp - 11) * 0.0003,
+                                         *joint.position[1:]))
+                for joint in hand.joints))
+        assert core.accept_frame(replace(frame, left=moved(frame.left), right=moved(frame.right)),
+                                 received_ns=clock[0])
+        core.tick(clock[0])
+    np.testing.assert_array_equal(core.position, held)
+    assert core.command("start")
+    core.tick(clock[0])
+    assert core.ready_mask == 7
+    assert core.running_mask == 7
 
 
 def test_group_loss_latches_and_realign_revokes_old_session(source):
@@ -136,3 +163,77 @@ def test_malformed_side_invalidates_only_that_side_and_receipt_is_not_relabelled
     recovered = decode_tracking(normalizer.accept_frame(raw_frame(3), received_ns=101))
     assert recovered.tracking_epoch > tracking.tracking_epoch
     assert recovered.bridge_monotonic_ns == 101
+
+
+@pytest.mark.parametrize("joint_index", [0, 6, 11, 16, 21])
+def test_unused_pico_point_loss_does_not_stop_tracking(source, joint_index):
+    core, clock = source
+    sample(core, clock, 1)
+    core.command("align")
+    for timestamp in range(2, 12):
+        sample(core, clock, timestamp)
+    core.command("start")
+    frame = raw_frame(12)
+    joints = list(frame.left.joints)
+    joints[joint_index] = replace(joints[joint_index], valid=False)
+    clock[0] += 5_000_000
+    core.accept_frame(replace(frame, left=replace(frame.left, joints=tuple(joints))), received_ns=clock[0])
+    core.tick(clock[0])
+    assert core.running_mask == 7
+
+
+def test_lost_fingertip_holds_hand_not_tracked_arms(source):
+    core, clock = source
+    sample(core, clock, 1)
+    core.command("align")
+    for timestamp in range(2, 12):
+        sample(core, clock, timestamp)
+    core.command("start")
+    frame = raw_frame(12)
+    joints = list(frame.left.joints)
+    joints[10] = replace(joints[10], valid=False)
+    clock[0] += 5_000_000
+    core.accept_frame(replace(frame, left=replace(frame.left, joints=tuple(joints))), received_ns=clock[0])
+    core.tick(clock[0])
+    assert core.running_mask == ARMS_READY | RIGHT_HAND_READY
+    # Genuine wrist loss still revokes the shared arms authorization.
+    joints[1] = replace(joints[1], valid=False)
+    clock[0] += 5_000_000
+    core.accept_frame(replace(frame, timestamp_ms=13, left=replace(frame.left, joints=tuple(joints))),
+                      received_ns=clock[0])
+    assert core.running_mask == RIGHT_HAND_READY
+
+
+@pytest.mark.parametrize("interval_ms", [5, 20])
+def test_hand_response_uses_elapsed_time_not_nominal_tick(source, interval_ms):
+    core, clock = source
+    sample(core, clock, 1)
+    core.command("align")
+    core.command("start")
+    core.tick(clock[0])
+    initial = core.position.copy()
+    for timestamp in range(2, 2 + 100 // interval_ms):
+        clock[0] += interval_ms * 1_000_000
+        core.accept_frame(raw_frame(timestamp), received_ns=clock[0])
+        core.tick(clock[0])
+    np.testing.assert_allclose(np.abs(core.position[14:] - initial[14:]), 0.2, atol=1e-10)
+
+
+def test_input_backlog_keeps_latest_pose_and_loss_control_clock_boundaries():
+    from spd_vr.ros_publisher import _InputQueue
+
+    events = _InputQueue()
+    for timestamp in range(1, 20):
+        events.put("frame", raw_frame(timestamp))
+    events.put("frame", raw_frame(20, left=False))
+    events.put("frame", raw_frame(21))
+    events.put("command", "hold")
+    events.put("frame", raw_frame(22))
+    events.put("frame", raw_frame(1))  # Device clock rollback cannot disappear.
+    events.put("frame", raw_frame(25))  # Even if the clock catches up before draining.
+    events.put("frame", raw_frame(26))
+    drained = events.drain()
+    assert [(kind, value.timestamp_ms if kind == "frame" else value)
+            for kind, value, _ in drained] == [
+                ("frame", 19), ("frame", 20), ("frame", 21),
+                ("command", "hold"), ("frame", 22), ("frame", 1), ("frame", 26)]

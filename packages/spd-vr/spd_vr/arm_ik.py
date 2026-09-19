@@ -24,6 +24,7 @@ from .defaults import DEFAULT_ZENOH_ENDPOINT
 from .manifest import arm_home_for_side
 from .model_compiler.artifacts import ArtifactError, verify_artifacts
 from .qp_arm import ArmQPSolver
+from .collision_avoidance import ArmCollisionScene
 from .wire import (
     ARM_TARGETS_KEY,
     CONTROL_KEY,
@@ -45,6 +46,7 @@ from .zenoh_transport import LatestSample, ZenohNode, peer_config
 
 
 _PERIOD_NS = 5_000_000
+_MAX_INTEGRATION_NS = 50_000_000
 class _OrderedControlQueue:
     """Thread-safe FIFO used by Zenoh callbacks; sequence gating happens on tick."""
 
@@ -135,11 +137,84 @@ class DualArmController:
         self._sequence = 0
         self._last_control_timestamp_ns: int | None = None
         self.tick_count = 0
+        self._last_tick_ns: int | None = None
         self._shutdown_published = False
         self.left_q = np.asarray(self.left_solver.home, dtype=float).copy()
         self.right_q = np.asarray(self.right_solver.home, dtype=float).copy()
         self._left_qdot = np.zeros(7, dtype=float)
         self._right_qdot = np.zeros(7, dtype=float)
+        self._collision_scene: ArmCollisionScene | None = None
+        self._actual_position: np.ndarray | None = None
+        self._actual_velocity: np.ndarray | None = None
+        self._collision_rows: tuple[np.ndarray, np.ndarray] | None = None
+        self._collision_error: str | None = None
+        self._diagnostics = {
+            side: {"state": "held", "position_error_m": None, "orientation_error_rad": None,
+                   "collision_distance_m": None, "detail": "no wrist target"}
+            for side in ("left", "right")
+        }
+
+    def reset_motion(self) -> None:
+        """Enter a retained-position hold without discarding palm alignment."""
+        self._left_qdot.fill(0.0)
+        self._right_qdot.fill(0.0)
+        self.left_solver.reset()
+        self.right_solver.reset()
+        self._last_tick_ns = None
+        for diagnostic in self._diagnostics.values():
+            diagnostic.update(state="held", detail="retained-position hold")
+
+    def configure_collision_scene(self, scene_xml: str) -> None:
+        model = mujoco.MjModel.from_xml_path(str(scene_xml))
+        names = [
+            mujoco.mj_id2name(solver.model, mujoco.mjtObj.mjOBJ_JOINT, int(index))
+            for solver in (self.left_solver, self.right_solver)
+            for index in solver.joint_ids
+        ]
+        self._collision_scene = ArmCollisionScene(model, names)
+
+    def update_actual_state(self, position14: Any, velocity14: Any) -> None:
+        position = np.asarray(position14, dtype=float)
+        velocity = np.asarray(velocity14, dtype=float)
+        if position.shape != (14,) or velocity.shape != (14,) or not np.all(np.isfinite(position)) or not np.all(np.isfinite(velocity)):
+            raise ValueError("actual arm feedback must contain fourteen finite positions and velocities")
+        # Feedback is a guard baseline, not a command trajectory reset. Align
+        # explicitly adopts settled actual q; 20Hz feedback must not jump dq.
+        self._actual_position = position.copy()
+        self._actual_velocity = velocity.copy()
+
+    def diagnostics(self) -> dict[str, dict[str, Any]]:
+        return {side: value.copy() for side, value in self._diagnostics.items()}
+
+    def _prepare_collision(self, dt: float) -> None:
+        self._collision_rows = None
+        self._collision_error = None
+        if self._collision_scene is None or dt <= 0:
+            return
+        try:
+            self._collision_rows = self._collision_scene.constraints(np.concatenate((self.left_q, self.right_q)), dt)
+        except (ValueError, FloatingPointError) as exc:
+            self._collision_error = str(exc)
+
+    def _verify_dual_step(self, left: _SideOutput, right: _SideOutput) -> tuple[_SideOutput, _SideOutput]:
+        scene = self._collision_scene
+        if scene is None or not (left.valid or right.valid):
+            return left, right
+        proposed = np.concatenate((left.q, right.q))
+        previous = np.concatenate((self.left_q, self.right_q))
+        accepted = scene.verify_step(previous, proposed)
+        if accepted and self._actual_position is not None:
+            accepted = scene.verify_step(self._actual_position, proposed)
+        if not accepted:
+            for side in ("left", "right"):
+                self._diagnostics[side].update(state="blocked", detail=scene.detail)
+            left = _SideOutput(self.left_q, np.zeros(7), left.valid, left.reason)
+            right = _SideOutput(self.right_q, np.zeros(7), right.valid, right.reason)
+            self.left_solver.reset()
+            self.right_solver.reset()
+        for side in ("left", "right"):
+            self._diagnostics[side]["collision_distance_m"] = scene.minimum_distance
+        return left, right
 
     @property
     def running(self) -> bool:
@@ -265,15 +340,35 @@ class DualArmController:
         now_ns: int,
         dt: float,
     ) -> _SideOutput:
+        side = "left" if solver is self.left_solver else "right"
+        diagnostic = self._diagnostics[side]
         try:
             aligned: AlignedPose = alignment.accept(
                 self._wrist(hand), active, epoch, timestamp_ns, now_ns=now_ns
             )
         except (TypeError, ValueError):
+            diagnostic.update(state="invalid", detail="invalid tracked wrist", position_error_m=None, orientation_error_rad=None)
             return _SideOutput(q, np.zeros(7), False, ArmTargetHoldReason.INPUT_STALE)
         if not aligned.valid:
+            diagnostic.update(state="held", detail=str(aligned.hold_reason), position_error_m=None, orientation_error_rad=None)
             return _SideOutput(q, np.zeros(7), False, _hold_reason(aligned.hold_reason))
-        result = solver.solve(q, aligned.target_pose, dt)
+        kwargs = {}
+        if self._collision_error is not None:
+            diagnostic.update(state="blocked", detail=self._collision_error, position_error_m=None, orientation_error_rad=None)
+            return _SideOutput(q, np.zeros(7), True, ArmTargetHoldReason.NONE)
+        if self._collision_rows is not None:
+            rows, lower = self._collision_rows
+            own = slice(0, 7) if side == "left" else slice(7, 14)
+            other = slice(7, 14) if side == "left" else slice(0, 7)
+            relevant = np.any(np.abs(rows[:, own]) > 1e-10, axis=1)
+            coupled = np.any(np.abs(rows[:, other]) > 1e-10, axis=1)
+            kwargs = {"collision_rows": rows[relevant, own], "collision_lower": lower[relevant] / np.where(coupled[relevant], 2.0, 1.0)}
+        result = solver.solve(q, aligned.target_pose, dt, **kwargs)
+        diagnostic.update(
+            state=result.state, detail=result.status,
+            position_error_m=result.position_error_m if np.isfinite(result.position_error_m) else None,
+            orientation_error_rad=result.orientation_error_rad if np.isfinite(result.orientation_error_rad) else None,
+        )
         if not result.success:
             return _SideOutput(q, np.zeros(7), False, ArmTargetHoldReason.SOLVER_FAILURE)
         next_q = q + result.dq * dt
@@ -284,11 +379,18 @@ class DualArmController:
     def tick(self, now_ns: int | None = None) -> ArmTargetFrame:
         self._poll_mailboxes()
         now = int(time.monotonic_ns() if now_ns is None else now_ns)
-        dt = self.period_ns * 1.0e-9
+        # Integrate wall-clock motion even when a busy solve misses a deadline,
+        # but never backfill more than one tracking freshness window.
+        elapsed_ns = self.period_ns if self._last_tick_ns is None else now - self._last_tick_ns
+        dt = max(0, min(elapsed_ns, _MAX_INTEGRATION_NS)) * 1.0e-9
         self._sequence += 1
         tracking = self._tracking
         epoch = int(tracking.tracking_epoch) if tracking is not None else 1
         source_timestamp = int(tracking.bridge_monotonic_ns) if tracking is not None else max(1, now)
+        # Shared solver data must start at the same dual-arm command state.
+        for solver, q in ((self.left_solver, self.left_q), (self.right_solver, self.right_q)):
+            solver.data.qpos[solver.qpos_indices] = q
+        self._prepare_collision(dt)
         if self._paused:
             left = _SideOutput(self.left_q, np.zeros(7), False, ArmTargetHoldReason.PAUSED)
             right = _SideOutput(self.right_q, np.zeros(7), False, ArmTargetHoldReason.PAUSED)
@@ -296,16 +398,25 @@ class DualArmController:
             left = _SideOutput(self.left_q, np.zeros(7), False, ArmTargetHoldReason.DISCONNECTED)
             right = _SideOutput(self.right_q, np.zeros(7), False, ArmTargetHoldReason.DISCONNECTED)
         else:
+            # Device sample time measures operator motion; receipt time measures
+            # freshness. Bursty transport must not inflate the inferred speed.
+            sample_now = tracking.source_timestamp_ns + now - tracking.bridge_monotonic_ns
             left = self._solve_side(
                 self.left_solver, self.left_alignment, self.left_q, self._left_qdot,
                 tracking.left_hand, tracking.left_active, tracking.tracking_epoch,
-                tracking.bridge_monotonic_ns, now, dt,
+                tracking.source_timestamp_ns, sample_now, dt,
             )
             right = self._solve_side(
                 self.right_solver, self.right_alignment, self.right_q, self._right_qdot,
                 tracking.right_hand, tracking.right_active, tracking.tracking_epoch,
-                tracking.bridge_monotonic_ns, now, dt,
+                tracking.source_timestamp_ns, sample_now, dt,
             )
+        left, right = self._verify_dual_step(left, right)
+        for side, output, solver in (("left", left, self.left_solver), ("right", right, self.right_solver)):
+            if not output.valid or self._diagnostics[side]["state"] == "blocked":
+                solver.reset()
+            if not output.valid and (self._paused or tracking is None):
+                self._diagnostics[side].update(state="held", detail=output.reason.name.lower())
         self.left_q, self._left_qdot = left.q.copy(), left.qdot.copy()
         self.right_q, self._right_qdot = right.q.copy(), right.qdot.copy()
         valid_mask = (1 if left.valid else 0) | (2 if right.valid else 0)
