@@ -8,7 +8,7 @@ from spd_vr.viewer import PlantController
 
 @pytest.mark.parametrize("task", [
     "dishes/rack_dishes", "mugs/hang_mug", "jenga/playing",
-    "cups/pyramid", "bottles/toss_in_bin",
+    "cups/pyramid", "bottles/toss_in_bin", "spelling_blocks/spelling",
 ])
 def test_task_reset_is_clear_of_home_robot_and_settles(task):
     result = get_task(task).reset(0)

@@ -54,7 +54,7 @@ PROMPTS = {
     ("jenga", "handover_lr"): "Hand the block from the left hand to the right.",
     ("jenga", "handover_rl"): "Hand the block from the right hand to the left.",
     ("jenga", "playing"): "Push a middle block out, pull it free without collapsing the tower, and place it on top.",
-    ("spelling_blocks", "spelling"): "Spell the requested word with letter blocks.",
+    ("spelling_blocks", "spelling"): "Spell ROBOTICS with the letter blocks.",
     ("spelling_blocks", "sort_and_unload"): "Sort the letter blocks and unload them.",
     ("spelling_blocks", "pyramid"): "Build a pyramid from the letter blocks.",
     ("spelling_blocks", "vowel_consonant_sort"): "Sort letters into vowels and consonants.",

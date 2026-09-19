@@ -38,9 +38,9 @@ write_scene_model(
 
 增加或调整场景时修改 `packages/spd-envs/spd_envs/`，机器人控制仍由 `spd-vr` 负责。场景在启动时选择；不支持运行中切换。
 
-### 五个论文任务场景
+### 六个论文参考场景
 
-参考 Figure 4 和附录 A.4，使用当前 Tianji/Wuji 机器人分别运行：
+五个操作任务参考 Figure 4 / 附录 A.4，拼字积木参考 Figure 2 / Table 2。使用当前 Tianji/Wuji 机器人分别运行：
 
 ```bash
 pixi run spd-scene --task dishes/rack_dishes --seed 0
@@ -48,6 +48,7 @@ pixi run spd-scene --task mugs/hang_mug --seed 0
 pixi run spd-scene --task jenga/playing --seed 0
 pixi run spd-scene --task cups/pyramid --seed 0
 pixi run spd-scene --task bottles/toss_in_bin --seed 0
+pixi run spd-scene --task spelling_blocks/spelling --seed 0
 ```
 
 每条命令打开一个 MuJoCo 窗口；关闭后可启动另一个任务。鼠标操作沿用 MuJoCo，`Esc` / `q` 退出。独立查看器保持机器人 HOME 目标，不启动 ROS、PICO 或自动任务策略。
@@ -59,8 +60,11 @@ pixi run spd-scene --task bottles/toss_in_bin --seed 0
 | Playing Jenga | 18 层交错排列、54 块独立自由积木；中层抽取目标记录在 manifest |
 | Cup stacking | 六只真实套叠的空心锥形杯，可拆开并倒置搭成 3–2–1 金字塔 |
 | Bottles in bin | 四只自由瓶子、带底和四壁的开口固定收纳箱 |
+| Spelling blocks | 八只 40 mm 自由字母方块，六面均有字母，打乱后拼出 `ROBOTICS` |
 
 桌面高度为 **0.75 m**，适配 Tianji HOME 前臂和手掌的碰撞间隙。盘子半径 100 mm、积木 75×25×15 mm、杯高 90 mm、瓶高 180 mm、箱内尺寸 350×250×150 mm；这些是工程选型，不是论文提供的精确尺寸。物体使用真实碰撞、重力和摩擦，不以焊接、禁用接触或允许杯子穿透来维持摆放。随机质量、摩擦、颜色与位置可由 seed 重现。
+
+拼字场景在窗口和终端提示目标单词 `ROBOTICS`；`--seed` 改变字母分配及摆放。目标单词和每个物体对应的字母保存在 `scene_manifest.json` 的 `sampled_values` 中。字母标记仅用于显示，不改变方块质量或碰撞形状；当前不含自动拼字策略或成功评分。
 
 导出带机器人场景、采样参数、最终状态和截图：
 

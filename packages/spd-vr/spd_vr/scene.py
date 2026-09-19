@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
         if window.window is not None:
             with window.window.lock():
                 frame_scene(window.window.cam, window.window.opt)
+        if "prompt" in result.sampled_values:
+            window.update_hud({"Task": result.sampled_values["prompt"]})
+            print(result.sampled_values["prompt"], flush=True)
         timestep = float(plant.model.opt.timestep)
         steps = None if args.duration is None else math.ceil(args.duration / timestep)
         start = time.monotonic()

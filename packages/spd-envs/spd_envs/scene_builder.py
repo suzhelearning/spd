@@ -63,6 +63,54 @@ BASE_MASSES = {
     "domino": 0.030,
 }
 
+# Five-by-seven glyphs for the eight physical blocks in the spelling task.
+_SPELLING_WORD = "ROBOTICS"
+_LETTER_PIXELS = {
+    "R": (30, 17, 17, 30, 20, 18, 17),
+    "O": (14, 17, 17, 17, 17, 17, 14),
+    "B": (30, 17, 17, 30, 17, 17, 30),
+    "T": (31, 4, 4, 4, 4, 4, 4),
+    "I": (31, 4, 4, 4, 4, 4, 31),
+    "C": (14, 17, 16, 16, 16, 17, 14),
+    "S": (15, 16, 16, 14, 1, 1, 30),
+}
+
+
+def _label_spelling_blocks(worldbody: ET.Element, seed: int) -> dict[str, str]:
+    """Paint readable letters on all six faces without changing collision/mass."""
+    letters = np.random.default_rng(seed).permutation(list(_SPELLING_WORD))
+    labels = {}
+    # Outward normal, horizontal and upward axes for each face.
+    faces = (
+        ((0, 0, 1), (1, 0, 0), (0, 1, 0)),
+        ((0, 0, -1), (-1, 0, 0), (0, 1, 0)),
+        ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+        ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
+        ((0, 1, 0), (-1, 0, 0), (0, 0, 1)),
+        ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
+    )
+    for body, letter in zip(worldbody.findall("body"), letters, strict=True):
+        labels[body.attrib["name"]] = str(letter)
+        for face, (normal, horizontal, vertical) in enumerate(faces):
+            half_size = [0.00015 if axis else 0.0019 for axis in normal]
+            for row, bits in enumerate(_LETTER_PIXELS[letter]):
+                for column in range(5):
+                    if not bits & (1 << (4 - column)):
+                        continue
+                    position = [
+                        normal[axis] * (LETTER_BLOCK_SIZE[axis] / 2 + 0.0001)
+                        + horizontal[axis] * (column - 2) * 0.004
+                        + vertical[axis] * (3 - row) * 0.004
+                        for axis in range(3)
+                    ]
+                    ET.SubElement(
+                        body, "geom", name=f"{body.attrib['name']}_letter_{face}_{row}_{column}",
+                        type="box", pos=" ".join(map(str, position)),
+                        size=" ".join(map(str, half_size)), rgba="0.025 0.025 0.025 1",
+                        contype="0", conaffinity="0", mass="0", group="2",
+                    )
+    return labels
+
 
 class SceneResetError(RuntimeError):
     """Raised when deterministic placement cannot pass the contact gate."""
@@ -272,7 +320,9 @@ class ProceduralSceneBuilder:
             if task in {"handover_lr", "handover_rl"}:
                 return [("jenga_block", (0.45, 0.0, TABLE_Z + JENGA_BLOCK_SIZE[2] * 0.5), False)]
         if scene == "spelling_blocks":
-            if task in {"spelling", "sort_and_unload"}:
+            if task == "spelling":
+                return [("letter_block", (0.27 + (i % 4) * 0.10, -0.045 + (i // 4) * 0.13, TABLE_Z + 0.02), False) for i in range(8)]
+            if task == "sort_and_unload":
                 return [("letter_block", (0.22 + (i % 4) * 0.10, -0.20 + (i // 4) * 0.10, TABLE_Z + 0.02), False) for i in range(8)]
             if task == "pyramid":
                 return [("letter_block", (0.30 + (i % 3) * 0.10, -0.10 + (i // 3) * 0.10, TABLE_Z + 0.02), False) for i in range(6)]
@@ -376,6 +426,10 @@ class ProceduralSceneBuilder:
             try:
                 objects = self._sample_candidate(rng, candidate)
                 worldbody = self._worldbody(objects)
+                labels = (
+                    _label_spelling_blocks(worldbody, self.seed)
+                    if (self.scene, self.task) == ("spelling_blocks", "spelling") else None
+                )
                 # Test the actual contact geometry, including hollow interiors.
                 # Bounding boxes cannot distinguish valid nesting from overlap.
                 root = ET.Element("mujoco")
@@ -398,6 +452,10 @@ class ProceduralSceneBuilder:
                     "object_friction": {str(item.instance_id): item.friction for item in objects},
                     "object_colors": {str(item.instance_id): list(item.color_rgb) for item in objects},
                 }
+                if labels is not None:
+                    values["target_word"] = _SPELLING_WORD
+                    values["prompt"] = f"Spell {_SPELLING_WORD} with the letter blocks."
+                    values["object_letters"] = labels
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
                 return SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody)
