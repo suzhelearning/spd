@@ -174,3 +174,41 @@ def test_redundant_elbow_moves_outward_without_moving_the_wrist(side, sign):
     assert sign * data.xpos[elbow, 1] > initial_clearance + 0.04
     np.testing.assert_allclose(data.site_xpos[0], target[:3, 3], atol=0.001)
     assert np.linalg.norm(Rotation.from_matrix(data.site_xmat[0].reshape(3, 3)).as_rotvec()) < 0.001
+
+
+def test_production_standard_palm_rotation_preserves_feasible_motion(tmp_path):
+    from pathlib import Path
+    from spd_vr.manifest import DEFAULT_ARM_HOME_RAD
+    from spd_vr.model_compiler.artifacts import compile_models
+    from spd_vr.palm_mapping import PalmMapping
+    from spd_vr.ros_joint_command import JOINT_NAMES
+
+    urdf = Path(__file__).resolve().parents[3] / "assets/tianji_wuji2/tianji_wuji2.urdf"
+    artifact = compile_models(urdf, tmp_path / "model", raw_collisions=True)
+    model = mujoco.MjModel.from_xml_path(str(artifact.arm_model))
+    data = mujoco.MjData(model)
+    solver = ArmQPSolver(model, data, side="left", joint_ids=[
+        model.joint(name).id for name in JOINT_NAMES[:7]
+    ], velocity_limits=1.5)
+    q = np.asarray(DEFAULT_ARM_HOME_RAD["left"]).copy()
+    data.qpos[solver.qpos_indices] = q
+    mujoco.mj_forward(model, data)
+    wrist = np.eye(4)
+    wrist[:3, 3] = data.site_xpos[solver.site_id]
+    wrist[:3, :3] = data.site_xmat[solver.site_id].reshape(3, 3)
+    offset = PalmMapping.from_urdf(urdf).robot_wrist_to_palm["left"]
+    palm = wrist @ offset
+    palm[:3, :3] = np.eye(3)
+    target = palm @ np.linalg.inv(offset)
+    previous = np.zeros(7)
+    for _ in range(400):
+        result = solver.solve(q, target, 0.01)
+        assert result.success, result.status
+        assert np.max(np.abs(result.dq - previous)) <= 0.08 + 2e-6
+        assert np.max(np.abs(result.dq)) <= 1.5 + 2e-6
+        q += result.dq * 0.01
+        assert np.all(q >= solver.position_limits[:, 0] - 2e-6)
+        assert np.all(q <= solver.position_limits[:, 1] + 2e-6)
+        previous = result.dq
+    assert result.position_error_m < 0.002
+    assert result.orientation_error_rad < 0.02

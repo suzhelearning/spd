@@ -40,6 +40,8 @@ class ArmCollisionScene:
                 unknown[body] |= joint not in arm_ids
         excluded = set(int(value) for value in model.exclude_signature)
         pairs = []
+        groups = {}
+        pair_groups = []
         for first in range(model.ngeom):
             b1 = int(model.geom_bodyid[first])
             if unknown[b1]:
@@ -60,13 +62,18 @@ class ArmCollisionScene:
                 if (min(b1, b2) << 16) + max(b1, b2) in excluded:
                     continue
                 pairs.append((first, second))
+                key = (min(w1, w2), max(w1, w2))
+                pair_groups.append(groups.setdefault(key, len(groups)))
         self.pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
+        self._pair_groups = np.asarray(pair_groups, dtype=int)
         self._radii = model.geom_rbound[self.pairs[:, 0]] + model.geom_rbound[self.pairs[:, 1]]
         self._planes = np.any(model.geom_type[self.pairs] == mujoco.mjtGeom.mjGEOM_PLANE, axis=1)
         self._delta = np.empty((len(pairs), 3))
         self._squared = np.empty(len(pairs))
-        self._distances = np.full(len(pairs), self.influence)
-        self._baseline = np.empty(len(pairs))
+        self._distances = np.full(len(groups), self.influence)
+        self._baseline = np.empty(len(groups))
+        self._nearest_pair = np.full(len(groups), -1, dtype=int)
+        self._nearest_points = np.empty((len(groups), 6))
         self._fromto = np.empty(6)
         self._jac1 = np.zeros((3, model.nv))
         self._jac2 = np.zeros((3, model.nv))
@@ -88,23 +95,29 @@ class ArmCollisionScene:
     def distances(self, q: np.ndarray) -> np.ndarray:
         self.set_state(q)
         self._distances.fill(self.influence)
+        self._nearest_pair.fill(-1)
         for index in self._candidates(self.influence):
             first, second = self.pairs[index]
-            self._distances[index] = mujoco.mj_geomDistance(self.model, self.data, int(first), int(second), self.influence, self._fromto)
+            distance = mujoco.mj_geomDistance(self.model, self.data, int(first), int(second), self.influence, self._fromto)
+            group = self._pair_groups[index]
+            if distance < self._distances[group]:
+                self._distances[group] = distance
+                self._nearest_pair[group] = index
+                self._nearest_points[group] = self._fromto
         nearest = float(np.min(self._distances)) if len(self._distances) else self.influence
         self.minimum_distance = nearest if nearest < self.influence else None
         return self._distances
 
     def constraints(self, q: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
-        self.set_state(q)
+        # A decomposed rigid body is one union, not hundreds of independent
+        # obstacles. Linearize its nearest piece; verify the union along the
+        # full proposed segment to catch changes of the active closest piece.
+        distances = self.distances(q)
         count = 0
-        nearest = self.influence
-        for index in self._candidates(self.influence):
-            first, second = (int(value) for value in self.pairs[index])
-            distance = float(mujoco.mj_geomDistance(self.model, self.data, first, second, self.influence, self._fromto))
-            nearest = min(nearest, distance)
-            if distance >= self.influence:
-                continue
+        for group in np.flatnonzero(self._nearest_pair >= 0):
+            first, second = (int(value) for value in self.pairs[self._nearest_pair[group]])
+            distance = distances[group]
+            self._fromto[:] = self._nearest_points[group]
             if count == self.max_constraints:
                 raise ValueError("collision constraint capacity exceeded")
             direction = self._fromto[3:] - self._fromto[:3]
@@ -122,7 +135,6 @@ class ArmCollisionScene:
             # Slow down over the influence shell, escape existing penetration.
             self.lower[count] = (self.margin - distance) / max(0.1, dt)
             count += 1
-        self.minimum_distance = nearest if nearest < self.influence else None
         return self.rows[:count], self.lower[:count]
 
     def verify_step(self, start: np.ndarray, proposed: np.ndarray) -> bool:

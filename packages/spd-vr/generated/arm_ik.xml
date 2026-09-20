@@ -266,5 +266,7 @@
     <exclude body1="marker_mocap_r" body2="marker_wuji2_r" />
     <exclude body1="marker_wuji2_r" body2="r_mount" />
     <exclude body1="r_mount" body2="r_wrist" />
+    <exclude body1="Link5_L" body2="Link7_L" />
+    <exclude body1="Link5_R" body2="Link7_R" />
   </contact>
 </mujoco>

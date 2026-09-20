@@ -37,7 +37,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output = args.output_dir or Path(__file__).resolve().parents[1] / "generated"
     urdf = args.urdf or workspace_root() / "assets" / "tianji_wuji2" / "tianji_wuji2.urdf"
-    result = compile_models(urdf, output, args.cache, raw_collisions=True)
+    result = compile_models(
+        urdf, output, args.cache,
+        raw_collisions=True,
+    )
     print(result.output_dir)
     return 0
 

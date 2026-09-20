@@ -220,21 +220,3 @@ def test_anatomical_mapping_retains_timing_guards_and_absolute_orientation_after
     assert stale.hold_reason == "stale"
     np.testing.assert_allclose(stale.target_pose, recovered.target_pose)
 
-
-def test_anatomical_stationary_hold_freezes_jitter_then_releases_real_rotation():
-    alignment = SideAlignment()
-    robot_offset = pose(0.04, angle=0.7)
-    alignment.configure_palm_mapping(np.eye(3), pose(0.08), robot_offset)
-    frame_ns = 16_666_667
-    for index in range(1, 11):
-        alignment.accept(pose(), True, 1, index * frame_ns)
-    outputs = []
-    for index in range(11, 31):
-        sign = -1 if index % 2 else 1
-        result = alignment.accept(pose(x=sign * 0.0008, angle=sign * 0.002), True, 1, index * frame_ns)
-        outputs.append(result.target_pose)
-    for output in outputs[-5:]:
-        np.testing.assert_allclose(output, outputs[-1], atol=1e-12)
-    moved = alignment.accept(pose(x=0.015, angle=0.05), True, 1, 31 * frame_ns)
-    assert moved.valid
-    np.testing.assert_allclose((moved.target_pose @ robot_offset)[:3, :3], pose(angle=0.05)[:3, :3], atol=1e-12)

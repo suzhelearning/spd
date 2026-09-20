@@ -538,6 +538,11 @@ collision:
   records: 62
   settings:
     mode: raw
+  temporary_excludes:
+  - - Link5_L
+    - Link7_L
+  - - Link5_R
+    - Link7_R
 compiler: spd-urdf-first-mjcf-1
 default_damping: 0.1
 dof: 54
@@ -1240,7 +1245,7 @@ joints:
   - 1.57
   side: right
   velocity_limit: 13.5
-manifest_sha256: 6a17403c22149685cadd24dea14a4411d2489a895e6095531ed889b5b96d0376
+manifest_sha256: df8360b3f9c269e9cb13da8c00fad9abc60555e5e336b145efd4fa6fcbdc3741
 models:
   arm:
     njnt: 14
@@ -1253,10 +1258,10 @@ models:
     nu: 54
     nv: 54
 outputs:
-  actuator_calibration.yaml: cffbd7874b171cea319b96ae7577bc1b2cff71fbfc3e806cc099829698676489
-  arm_ik.xml: 7d4cfbe4705b373def0d9c02d1187df9adcc811b9b207a87ebdfa61817814ccc
+  actuator_calibration.yaml: 6861ea717dd36aecd4014d077d84210dadac00bb4a0604856d49719aac96c4c3
+  arm_ik.xml: bb01cda59ac0c89c45fa735460392873e5c44fc6dfcebbaad2c16badb6e64730
   collision_manifest.yaml: 401ff34b5f38b430bd524465bfc95c708f1e51196e792aa9b1c7a1ef9cf8b415
-  unified_plant.xml: c015a91c1af3758edfa5f9475a00337743b1a89f6feaeaf53c2b2a93fa32df3a
+  unified_plant.xml: 1c41a0bb5123f11e255145d3d4a0278cbefa6831195f15689fea6a03342bad69
 source:
   meshes:
     meshes/Base_L.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5

@@ -18,11 +18,13 @@ from typing import Any, Iterable
 import coacd
 import fcntl
 import numpy as np
+from scipy.spatial import ConvexHull, HalfspaceIntersection
 import trimesh
 
 from .urdf_model import MeshGeometry
 
 
+CONSERVATIVE_SIMPLIFICATION_REVISION = "support_halfspace_outer_v1"
 
 
 class CollisionError(RuntimeError):
@@ -46,6 +48,7 @@ class CollisionSettings:
     pca: bool = False
     merge: bool = True
     decimate: bool = False
+    conservative_simplification: bool = False
     extrude: bool = False
     extrude_margin: float = 0.01
     apx_mode: str = "ch"
@@ -60,6 +63,8 @@ class CollisionSettings:
         overridden = {"seed", "max_convex_hull", "max_ch_vertex"} & dict(self._extra_coacd_params).keys()
         if overridden:
             raise ValueError(f"cannot override fixed CoACD parameters: {sorted(overridden)}")
+        if self.conservative_simplification and (self.decimate or self.coacd_kwargs()["decimate"]):
+            raise ValueError("conservative_simplification cannot be combined with CoACD decimate")
         if self.surface_samples <= 0 or not np.isfinite(self.surface_p95_threshold_m):
             raise ValueError("surface quality settings must be finite and positive")
         if self.surface_p95_threshold_m <= 0:
@@ -341,7 +346,8 @@ def _proxy_union_surface(parts: tuple[trimesh.Trimesh, ...]) -> trimesh.Trimesh:
     area-weighted sampling count internal faces or overlapping surface twice.
     """
     coordinate_scale = max(float(np.abs(part.vertices).max()) for part in parts)
-    tolerance = 128 * np.finfo(np.float64).eps * coordinate_scale
+    # Include roundoff from triangulating near-coplanar convex facets.
+    tolerance = 256 * np.finfo(np.float64).eps * coordinate_scale
     planes = []
     for part in parts:
         if (
@@ -434,6 +440,89 @@ def bidirectional_surface_p95(
     return float(max(source_to_proxy, proxy_to_source))
 
 
+def _conservative_simplify(
+    vertices: np.ndarray, faces: np.ndarray, max_vertices: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Enclose a valid native hull using at most 34 supporting halfspaces.
+
+    A bounded three-dimensional polytope with F faces has at most 2F-4
+    vertices. Keeping support planes, rather than decimating vertices, never
+    cuts into a native piece or opens gaps between touching pieces.
+    """
+    native = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    if not native.is_volume or np.any(native.area_faces <= 0):
+        raise CollisionError("native hull must be a closed outward solid")
+    lower, upper = np.min(vertices, axis=0), np.max(vertices, axis=0)
+    extent = upper - lower
+    scale = float(np.max(extent))
+    origin = lower + extent / 2
+    if not np.isfinite(scale) or scale <= 0:
+        raise CollisionError("conservative simplification requires finite positive extent")
+    local = (vertices - origin) / scale
+    interior = np.mean(local, axis=0)
+    original = ConvexHull(local)
+    # Native remeshing carries float32-scale quantization: triangulated facets
+    # can deviate by nanometers without describing a genuinely concave piece.
+    # Re-hulling is conservative, but reject material volume discrepancies.
+    native_volume = trimesh.Trimesh(vertices=local, faces=faces, process=False).volume
+    if original.volume - native_volume > 8 * np.finfo(np.float32).eps * original.volume:
+        raise CollisionError("native hull has a nonconvex volume discrepancy")
+    candidates = original.equations[:, :3]
+    supports = -original.equations[:, 3]
+    # Account for world-coordinate conversion as well as local arithmetic.
+    margin = 256 * np.finfo(np.float64).eps * max(1.0, float(np.abs(vertices).max()) / scale)
+    normals = np.vstack((np.eye(3), -np.eye(3)))
+    offsets = np.max(local @ normals.T, axis=0) + margin
+    plane_limit = (max_vertices + 4) // 2
+    while True:
+        halfspaces = np.column_stack((normals, -offsets))
+        points = HalfspaceIntersection(halfspaces, interior).intersections
+        if not np.isfinite(points).all():
+            raise CollisionError("conservative simplification produced non-finite intersections")
+        errors = np.max(points @ candidates.T - supports, axis=0)
+        selected = int(np.argmax(errors))
+        if len(normals) == plane_limit or errors[selected] <= 4 * margin:
+            break
+        normals = np.vstack((normals, candidates[selected]))
+        offsets = np.append(offsets, supports[selected] + margin)
+
+    # Merge numerical duplicates before triangulation, relative to hull size
+    # rather than a fixed meter grid. Rounding alone may shrink the envelope;
+    # the support-based dilation below explicitly compensates for that loss.
+    points = np.unique(np.round(points, decimals=12), axis=0)
+    hull = ConvexHull(points)
+    if len(hull.vertices) > max_vertices:
+        raise CollisionError("conservative simplification exceeds max vertices")
+    radii = -(hull.equations[:, :3] @ interior + hull.equations[:, 3])
+    if not np.isfinite(radii).all() or np.any(radii <= 0):
+        raise CollisionError("conservative simplification has no strict interior")
+    required = np.max((local - interior) @ hull.equations[:, :3].T, axis=0)
+    dilation = max(1.0, float(np.max((required + margin) / radii)))
+    points = (interior + (points - interior) * dilation) * scale + origin
+    triangles = hull.simplices.copy()
+    xyz = points[triangles]
+    reverse = np.einsum(
+        "ij,ij->i",
+        np.cross(xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0]),
+        hull.equations[:, :3],
+    ) < 0
+    triangles[reverse] = triangles[reverse][:, [0, 2, 1]]
+    used, remapped = np.unique(triangles, return_inverse=True)
+    points, triangles = _canonical_mesh_arrays(points[used], remapped.reshape(-1, 3))
+    proxy = trimesh.Trimesh(vertices=points, faces=triangles, process=False)
+    _proxy_union_surface((proxy,))
+    # Check the actual serialized geometry, not just the generating planes:
+    # every native vertex must lie inside every outward proxy triangle plane.
+    distances = np.einsum(
+        "vfi,fi->vf",
+        vertices[:, None, :] - proxy.triangles[None, :, 0, :],
+        proxy.face_normals,
+    )
+    if not np.isfinite(distances).all() or np.any(distances > 0):
+        raise CollisionError("conservative simplification failed native hull containment")
+    return points, triangles
+
+
 def _cache_key(source_hash: str, scale: tuple[float, float, float], settings: CollisionSettings) -> str:
     payload = {
         "source_mesh_sha256": source_hash,
@@ -444,6 +533,8 @@ def _cache_key(source_hash: str, scale: tuple[float, float, float], settings: Co
         "max_pieces": settings.max_pieces,
         "max_vertices": settings.max_vertices,
         "coacd_params": settings.coacd_kwargs(),
+        "conservative_simplification": settings.conservative_simplification,
+        "conservative_simplification_revision": CONSERVATIVE_SIMPLIFICATION_REVISION,
         "surface_samples": settings.surface_samples,
         "surface_metric": "convex_union_boundary_p95_v2",
         "surface_p95_threshold_m": settings.surface_p95_threshold_m,
@@ -468,6 +559,8 @@ def _artifact_from_cache(
             or tuple(manifest.get("scale", ())) != scale
             or manifest.get("coacd_version") != _coacd_version()
             or manifest.get("settings") != settings.coacd_kwargs()
+            or manifest.get("conservative_simplification") != settings.conservative_simplification
+            or manifest.get("conservative_simplification_revision") != CONSERVATIVE_SIMPLIFICATION_REVISION
             or int(manifest.get("surface_samples", settings.surface_samples)) != settings.surface_samples
         ):
             return None
@@ -566,6 +659,8 @@ def decompose_mesh(
     for piece in result:
         try:
             vertices, faces = _canonical_mesh_arrays(piece[0], piece[1])
+            if settings.conservative_simplification and len(vertices) > settings.max_vertices:
+                vertices, faces = _conservative_simplify(vertices, faces, settings.max_vertices)
             if len(vertices) > settings.max_vertices:
                 raise CollisionError("CoACD piece exceeds max vertices")
             piece_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
@@ -601,6 +696,8 @@ def decompose_mesh(
             "scale": scale,
             "coacd_version": _coacd_version(),
             "settings": settings.coacd_kwargs(),
+            "conservative_simplification": settings.conservative_simplification,
+            "conservative_simplification_revision": CONSERVATIVE_SIMPLIFICATION_REVISION,
             "surface_p95": surface_p95,
             "metrics": {"piece_count": len(canonical), "surface_p95_m": surface_p95},
             "pieces": piece_records,

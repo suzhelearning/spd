@@ -10,7 +10,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import yaml
 
@@ -19,9 +19,15 @@ try:
 except ImportError:  # pragma: no cover
     _mujoco = None
 
-from .collision import CollisionArtifact, CollisionSettings, decompose_mesh, load_collision_piece
+from .collision import (
+    CONSERVATIVE_SIMPLIFICATION_REVISION,
+    CollisionArtifact,
+    CollisionSettings,
+    decompose_mesh,
+    load_collision_piece,
+)
 from .urdf_model import UrdfModel, aggregate_fixed_point_masses, load_urdf
-from .mjcf import render_mjcf
+from .mjcf import TEMPORARY_WRIST_EXCLUDES, render_mjcf
 from ..manifest import DEFAULT_ARM_HOME_RAD
 
 FILES = (
@@ -206,6 +212,19 @@ def _copy_source_meshes(records: list[dict[str, Any]], root: Path) -> dict[str, 
     return result
 
 
+def _selected_collision_links(model: UrdfModel, names: Iterable[str]) -> frozenset[str]:
+    if isinstance(names, str):
+        raise ArtifactError("decompose_links must be an iterable of link names, not a string")
+    selected = frozenset(names)
+    links = {link.name: link for link in model.links}
+    for name in selected:
+        if name not in links:
+            raise ArtifactError(f"selected collision link does not exist: {name}")
+        if not links[name].collisions:
+            raise ArtifactError(f"selected link has no collision meshes: {name}")
+    return selected
+
+
 def _compile_collisions(
     model: UrdfModel,
     cache_dir: Path,
@@ -213,61 +232,62 @@ def _compile_collisions(
     mesh_assets: Mapping[str, tuple[str, str, tuple[float, float, float]]],
     *,
     raw: bool = False,
+    decompose_links: Iterable[str] = (),
 ) -> tuple[dict[tuple[str, int], tuple[str, ...]], dict[str, Any]]:
-    if raw:
-        # ponytail: MuJoCo treats raw mesh collisions as convex hulls; use the
-        # default decomposed mode when accurate concave contact matters.
-        assets: dict[tuple[str, int], tuple[str, ...]] = {}
-        records: list[dict[str, Any]] = []
-        for link in model.links:
-            for index, geometry in enumerate(link.collisions):
-                asset_name, output_file, _ = mesh_assets[str(geometry.path.resolve())]
-                digest = _sha256(geometry.path)
-                assets[(link.name, index)] = (asset_name,)
-                records.append({
-                    "link": link.name,
-                    "collision_index": index,
-                    "source_filename": geometry.filename,
-                    "source_sha256": digest,
-                    "scale": list(geometry.scale),
-                    "mode": "raw",
-                    "piece_count": 1,
-                    "pieces": [{"file": output_file, "sha256": digest, "source_sha256": digest}],
-                })
-        records.sort(key=lambda item: (item["link"], item["collision_index"]))
-        document = {
-            "version": 1,
-            "source_urdf_sha256": _sha256(model.source_path),
-            "settings": {"mode": "raw"},
-            "records": records,
-        }
-        (output_root / "collision_manifest.yaml").write_bytes(_yaml_bytes(document))
-        return assets, document
-
-    # Collision-only decimation keeps every quality-gated piece within Task6's
-    # fixed 64-vertex limit; visual meshes are copied byte-for-byte below.
+    selected = _selected_collision_links(model, decompose_links)
     arm_settings = CollisionSettings(decimate=True, surface_p95_threshold_m=0.003)
     hand_settings = CollisionSettings(decimate=True, surface_p95_threshold_m=0.0015)
+    selected_settings = CollisionSettings(
+        conservative_simplification=True,
+        decimate=False,
+        preprocess_resolution=200,
+        extrude=True,
+        threshold=0.05,
+        surface_p95_threshold_m=0.003,
+    )
     collision_dir = output_root / "collision"
-    collision_dir.mkdir(parents=True, exist_ok=True)
-    artifacts: dict[tuple[str, tuple[float, float, float], float], CollisionArtifact] = {}
+    artifacts: dict[tuple[str, tuple[float, float, float], CollisionSettings], CollisionArtifact] = {}
     assets: dict[tuple[str, int], tuple[str, ...]] = {}
     records: list[dict[str, Any]] = []
     copied: set[str] = set()
     for link in model.links:
         settings = hand_settings if re.search(r"(?:hand|thumb|finger|palm)", link.name, re.IGNORECASE) else arm_settings
+        if link.name in selected:
+            settings = selected_settings
         for index, geometry in enumerate(link.collisions):
-            key = (str(geometry.path.resolve()), tuple(float(item) for item in geometry.scale), settings.surface_p95_threshold_m)
+            expected_source = _sha256(geometry.path)
+            source_record = {
+                "link": link.name,
+                "collision_index": index,
+                "source_filename": geometry.filename,
+                "source_sha256": expected_source,
+                "scale": list(geometry.scale),
+            }
+            if raw and link.name not in selected:
+                asset_name, output_file, _ = mesh_assets[str(geometry.path.resolve())]
+                assets[(link.name, index)] = (asset_name,)
+                records.append({
+                    **source_record,
+                    "mode": "raw",
+                    "piece_count": 1,
+                    "pieces": [{
+                        "file": output_file,
+                        "sha256": expected_source,
+                        "source_sha256": expected_source,
+                    }],
+                })
+                continue
+            key = (str(geometry.path.resolve()), tuple(float(item) for item in geometry.scale), settings)
             artifact = artifacts.get(key)
             if artifact is None:
                 artifact = decompose_mesh(geometry, settings, cache_dir)
                 artifacts[key] = artifact
-            expected_source = _sha256(geometry.path)
             if artifact.source_sha256 != expected_source:
                 raise ArtifactError(f"collision source hash mismatch for {link.name}[{index}]")
             if len(artifact.pieces) == 0 or len(artifact.pieces) > settings.max_pieces:
                 raise ArtifactError(f"invalid collision piece count for {link.name}[{index}]")
             names: list[str] = []
+            collision_dir.mkdir(parents=True, exist_ok=True)
             piece_records: list[dict[str, Any]] = []
             if len(artifact.pieces) != len(artifact.piece_sha256):
                 raise ArtifactError(f"collision artifact hash list mismatch for {link.name}[{index}]")
@@ -295,27 +315,40 @@ def _compile_collisions(
                 })
             assets[(link.name, index)] = tuple(names)
             records.append({
-                "link": link.name,
-                "collision_index": index,
-                "source_filename": geometry.filename,
-                "source_sha256": expected_source,
-                "scale": list(geometry.scale),
+                **source_record,
+                "mode": "decomposed",
                 "cache_key": artifact.cache_key,
                 "surface_p95_m": float(artifact.surface_p95),
                 "surface_p95_threshold_m": settings.surface_p95_threshold_m,
                 "settings": settings.coacd_kwargs(),
+                "conservative_simplification": settings.conservative_simplification,
+                "surface_samples": settings.surface_samples,
+                "conservative_simplification_revision": (
+                    CONSERVATIVE_SIMPLIFICATION_REVISION if settings.conservative_simplification else None
+                ),
                 "piece_count": len(names),
                 "pieces": piece_records,
                 "metrics": dict(artifact.metrics),
             })
     records.sort(key=lambda item: (item["link"], item["collision_index"]))
+    if selected:
+        manifest_settings = {
+            "mode": "mixed" if raw else "decomposed",
+            "default_mode": "raw" if raw else "decomposed",
+            "decompose_links": sorted(selected),
+        }
+    else:
+        manifest_settings = {"mode": "raw"} if raw else arm_settings.coacd_kwargs()
     document = {
         "version": 1,
         "source_urdf_sha256": _sha256(model.source_path),
-        "settings": arm_settings.coacd_kwargs(),
-        "surface_p95_thresholds_m": {"arm_base": 0.003, "hands": 0.0015},
+        "settings": manifest_settings,
         "records": records,
     }
+    if not raw or selected:
+        document["surface_p95_thresholds_m"] = {"arm_base": 0.003, "hands": 0.0015}
+        if selected:
+            document["surface_p95_thresholds_m"]["selected"] = selected_settings.surface_p95_threshold_m
     (output_root / "collision_manifest.yaml").write_bytes(_yaml_bytes(document))
     return assets, document
 
@@ -433,6 +466,8 @@ def _manifest_document(
             "settings": collision_document["settings"],
             "records": len(collision_document["records"]),
             "adjacent_excludes": [list(pair) for pair in excludes],
+            "temporary_excludes": [list(pair) for pair in TEMPORARY_WRIST_EXCLUDES
+                                   if all(name in {link.name for link in model.links} for name in pair)],
         },
         "wrist_targets": {
             "left_body": "l_wrist",
@@ -467,8 +502,13 @@ def compile_models(
     cache_dir: str | Path | None = None,
     *,
     raw_collisions: bool = False,
+    decompose_links: Iterable[str] = (),
 ) -> ModelManifest:
-    """Compile and atomically publish the two MJCF models and three YAML files."""
+    """Compile atomically; named links use conservative, quality-gated decomposition.
+
+    ``raw_collisions`` leaves every other collision mesh unchanged. Without it,
+    unselected links retain the default arm/hand decomposition settings.
+    """
     source = Path(urdf_path).resolve()
     source_bytes = source.read_bytes()
     source_sha256 = _sha256_bytes(source_bytes)
@@ -476,6 +516,7 @@ def compile_models(
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = Path(cache_dir).resolve() if cache_dir is not None else output.parent / "collision_cache"
     model = aggregate_fixed_point_masses(load_urdf(source, source_bytes=source_bytes))
+    selected = _selected_collision_links(model, decompose_links)
     if source.read_bytes() != source_bytes:
         raise ArtifactError("authoritative URDF changed during compilation")
     axis_visuals = _inspect_primitives(source)
@@ -489,7 +530,7 @@ def compile_models(
     try:
         mesh_assets = _copy_source_meshes(mesh_records, temp)
         collision_assets, collision_document = _compile_collisions(
-            model, cache, temp, mesh_assets, raw=raw_collisions
+            model, cache, temp, mesh_assets, raw=raw_collisions, decompose_links=selected
         )
         full_path = temp / "unified_plant.xml"
         arm_path = temp / "arm_ik.xml"
@@ -604,11 +645,60 @@ def verify_artifacts(manifest_path: str | Path, urdf_path: str | Path) -> Verifi
     collision_document = yaml.safe_load(collision_file.read_text(encoding="utf-8"))
     if not isinstance(collision_document, dict):
         raise ArtifactError("collision manifest root must be a mapping")
-    for record in collision_document.get("records", []):
-        for piece in record.get("pieces", []):
+    if collision_document.get("source_urdf_sha256") != document["source"]["urdf_sha256"]:
+        raise ArtifactError("collision manifest source hash mismatch")
+    settings = collision_document.get("settings")
+    records = collision_document.get("records")
+    summary = document.get("collision", {})
+    if not isinstance(settings, dict) or settings != summary.get("settings"):
+        raise ArtifactError("collision settings differ from model manifest")
+    if not isinstance(records, list) or len(records) != summary.get("records"):
+        raise ArtifactError("collision record count differs from model manifest")
+    expected_collisions = {
+        (use["link"], use["index"]): (mesh["filename"], mesh["sha256"], use["scale"])
+        for mesh in visual_meshes
+        for use in mesh["uses"]
+        if use["kind"] == "collision"
+    }
+    selected = settings.get("decompose_links", [])
+    if not isinstance(selected, list) or any(
+        not isinstance(name, str) or not any(link == name for link, _ in expected_collisions)
+        for name in selected
+    ):
+        raise ArtifactError("collision decomposition selects an unknown or collisionless link")
+    raw_default = settings.get("mode") == "raw" or settings.get("default_mode") == "raw"
+    for record in records:
+        if not isinstance(record, dict):
+            raise ArtifactError("invalid collision record")
+        key = (record.get("link"), record.get("collision_index"))
+        expected = expected_collisions.pop(key, None)
+        if expected is None or (
+            record.get("source_filename"), record.get("source_sha256"), record.get("scale")
+        ) != expected:
+            raise ArtifactError(f"collision source provenance mismatch: {key}")
+        mode = "raw" if raw_default and key[0] not in selected else "decomposed"
+        if record.get("mode") != mode:
+            raise ArtifactError(f"collision mode differs from selected policy: {key}")
+        pieces = record.get("pieces")
+        if not isinstance(pieces, list) or record.get("piece_count") != len(pieces) or not pieces:
+            raise ArtifactError(f"invalid collision piece count: {key}")
+        if mode == "raw":
+            if len(pieces) != 1 or pieces[0].get("sha256") != expected[1]:
+                raise ArtifactError(f"raw collision differs from source mesh: {key}")
+        elif len(pieces) > 16:
+            raise ArtifactError(f"collision exceeds fixed piece limit: {key}")
+        if key[0] in selected and (
+            record.get("conservative_simplification") is not True
+            or record.get("conservative_simplification_revision") != CONSERVATIVE_SIMPLIFICATION_REVISION
+            or record.get("settings", {}).get("decimate") is not False
+        ):
+            raise ArtifactError(f"selected collision lacks conservative simplification: {key}")
+        for piece in pieces:
             piece_path = _resolve_child_path(output, piece["file"])
             if _sha256(piece_path) != piece["sha256"]:
                 raise ArtifactError(f"collision piece hash mismatch: {piece_path}")
+    if expected_collisions:
+        raise ArtifactError("collision manifest omits source collision meshes")
     dimensions = document.get("models", {})
     actual_full = _model_dimensions(output / "unified_plant.xml")
     actual_arm = _model_dimensions(output / "arm_ik.xml")

@@ -4,7 +4,11 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-from spd_vr.model_compiler.artifacts import compile_models, verify_artifacts
+from spd_vr.model_compiler.artifacts import (
+    ArtifactError,
+    compile_models,
+    verify_artifacts,
+)
 from spd_vr.manifest import load_manifest
 from spd_vr.model_compiler.collision import CollisionArtifact, _canonical_mesh_bytes
 from spd_vr.model_builder import workspace_root
@@ -141,6 +145,83 @@ def test_compile_models_can_reuse_raw_collision_meshes(tmp_path: Path, monkeypat
     assert collision["settings"] == {"mode": "raw"}
     assert collision["records"]
     assert all(record["mode"] == "raw" and record["piece_count"] == 1 for record in collision["records"])
+
+
+def test_selected_collisions_override_raw_without_changing_other_geometry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    import yaml
+    selected_links = ("Link5_L", "Link7_L", "Link5_R", "Link7_R")
+
+    _stub_quality_gated_collision(monkeypatch, tmp_path)
+    raw = compile_models(URDF, tmp_path / "raw", raw_collisions=True)
+    mixed = compile_models(
+        URDF, tmp_path / "mixed", raw_collisions=True,
+        decompose_links=iter(selected_links),
+    )
+    verify_artifacts(mixed.path, URDF)
+    raw_records = {
+        (record["link"], record["collision_index"]): record
+        for record in yaml.safe_load(raw.collision_manifest.read_text())["records"]
+    }
+    collision = yaml.safe_load(mixed.collision_manifest.read_text())
+    assert collision["settings"]["mode"] == "mixed"
+    assert set(collision["settings"]["decompose_links"]) == set(selected_links)
+    selected_records = [record for record in collision["records"] if record["mode"] == "decomposed"]
+    assert {record["link"] for record in selected_records} == set(selected_links)
+    for record in collision["records"]:
+        if record["link"] not in selected_links:
+            assert record == raw_records[(record["link"], record["collision_index"])]
+            continue
+        assert record["conservative_simplification"] is True
+        assert record["conservative_simplification_revision"]
+        assert record["settings"]["decimate"] is False
+        assert record["settings"]["preprocess_resolution"] == 200
+        assert record["settings"]["extrude"] is True
+        assert record["settings"]["threshold"] == 0.05
+        assert record["surface_p95_threshold_m"] == 0.003
+        assert all(piece["file"].startswith("collision/") for piece in record["pieces"])
+
+    # Beyond the selected collision geoms and their mesh assets, both model
+    # projections must retain identical visuals, inertials, joints and contacts.
+    for raw_path, mixed_path in ((raw.full_model, mixed.full_model), (raw.arm_model, mixed.arm_model)):
+        roots = [ET.parse(path).getroot() for path in (raw_path, mixed_path)]
+        for root in roots:
+            root.remove(root.find("asset"))
+            for body in root.iter("body"):
+                if body.attrib["name"] in selected_links:
+                    for geom in list(body.findall("geom")):
+                        if geom.attrib.get("contype") == "1":
+                            body.remove(geom)
+        assert ET.tostring(roots[0]) == ET.tostring(roots[1])
+
+    # Even consistently rehashed metadata cannot relabel a selected precise
+    # record as raw and still satisfy the declared compilation policy.
+    import hashlib
+
+    selected_records[0]["mode"] = "raw"
+    mixed.collision_manifest.write_text(yaml.safe_dump(collision, sort_keys=True, allow_unicode=True))
+    manifest = yaml.safe_load(mixed.path.read_text())
+    manifest["outputs"]["collision_manifest.yaml"] = hashlib.sha256(mixed.collision_manifest.read_bytes()).hexdigest()
+    manifest["manifest_sha256"] = ""
+    manifest["manifest_sha256"] = hashlib.sha256(
+        yaml.safe_dump(manifest, sort_keys=True, allow_unicode=True).encode("utf-8")
+    ).hexdigest()
+    mixed.path.write_text(yaml.safe_dump(manifest, sort_keys=True, allow_unicode=True))
+    with pytest.raises(ArtifactError, match="collision mode"):
+        verify_artifacts(mixed.path, URDF)
+
+
+@pytest.mark.parametrize("selection", [("missing_link",), ("r_thumb_tip",), "Link5_L"])
+def test_invalid_collision_selection_does_not_publish(tmp_path: Path, selection):
+    output = tmp_path / "generated"
+    output.mkdir()
+    sentinel = output / "untouched"
+    sentinel.write_bytes(b"previous artifacts")
+    with pytest.raises(ArtifactError):
+        compile_models(URDF, output, raw_collisions=True, decompose_links=selection)
+    assert sentinel.read_bytes() == b"previous artifacts"
+    assert not (output / "model_manifest.yaml").exists()
 
 
 def test_verify_artifacts_rejects_source_or_output_tampering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

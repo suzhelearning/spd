@@ -609,5 +609,7 @@
     <exclude body1="r_pinky_proximal_abd" body2="r_pinky_middle" />
     <exclude body1="r_pinky_middle" body2="r_pinky_distal" />
     <exclude body1="r_pinky_distal" body2="r_pinky_tip" />
+    <exclude body1="Link5_L" body2="Link7_L" />
+    <exclude body1="Link5_R" body2="Link7_R" />
   </contact>
 </mujoco>

@@ -6,20 +6,21 @@ from spd_vr.collision_avoidance import ArmCollisionScene
 from spd_vr.qp_arm import ArmQPSolver
 
 
-def collision_fixture(obstacle):
+def collision_fixture(obstacle, *, pieces=1):
     # Seven real hinges per arm. Only the distal sphere is collidable, so the
     # tests isolate a genuine table, torso, self or other-arm closest pair.
     def chain(side, root, self_geom=""):
         bodies = ""
         for index in reversed(range(7)):
-            distal = '<geom name="%s_tip" type="sphere" pos="0.1 0 0" size="0.03"/><site name="%s_wrist" pos="0.1 0 0"/>' % (side, side) if index == 6 else ''
+            distal = (''.join(f'<geom name="{side}_tip_{piece}" type="sphere" pos="0.1 0 0" size="0.03"/>' for piece in range(pieces))
+                      + f'<site name="{side}_wrist" pos="0.1 0 0"/>') if index == 6 else ''
             geometry = self_geom if index == 0 else ''
             axis = "0 1 0" if index == 0 else "0 0 1"
             bodies = f'<body name="{side}_{index}" pos="{root if index == 0 else "0.1 0 0"}"><joint name="{side}_j{index}" axis="{axis}" range="-2 2"/><geom type="sphere" size="0.005" contype="0" conaffinity="0" mass="0.1"/>{geometry}{distal}{bodies}</body>'
         return bodies
     static = {
         "table": '<geom name="table" type="box" pos="0.7 0 0.33" size="0.3 0.3 0.025"/>',
-        "torso": '<body name="torso"><geom name="torso_geom" type="sphere" pos="0.7 0.075 0.4" size="0.03"/></body>',
+        "torso": '<body name="torso">' + ''.join(f'<geom name="torso_geom_{piece}" type="sphere" pos="0.7 0.075 0.4" size="0.03"/>' for piece in range(pieces)) + '</body>',
     }.get(obstacle, "")
     self_geom = '<geom name="proximal_self" type="sphere" pos="0.7 0.075 0" size="0.03"/>' if obstacle == "self" else ""
     right_root = "0 0.075 0.4" if obstacle == "other_arm" else "0 2 0.4"
@@ -82,3 +83,15 @@ def test_movable_contact_objects_are_not_treated_as_static_obstacles():
     proposed[6] = 0.2
     assert scene.verify_step(q, proposed)
     assert scene.minimum_distance is None
+
+
+def test_convex_piece_count_does_not_turn_clear_motion_into_capacity_failure():
+    _, scene = collision_fixture("torso", pieces=16)
+    initial = np.zeros(14)
+    scene.constraints(initial, 0.005)
+    away = initial.copy()
+    away[6] = -0.04
+    assert scene.verify_step(initial, away)
+    into = initial.copy()
+    into[6] = 0.4
+    assert not scene.verify_step(initial, into)

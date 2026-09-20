@@ -11,6 +11,10 @@ import numpy as np
 
 from .urdf_model import UrdfJoint, UrdfLink, UrdfModel
 
+# Temporary, user-approved simulation bypass. These pairs can physically
+# collide; remove this exclusion after their collision geometry is repaired.
+TEMPORARY_WRIST_EXCLUDES = (("Link5_L", "Link7_L"), ("Link5_R", "Link7_R"))
+
 
 # Wuji Hand 2 beta2's official MuJoCo position-servo calibration.  Both hands
 # use the same gains; only the ``l_``/``r_`` joint prefix differs.  Keep these
@@ -301,6 +305,9 @@ def render_mjcf(
     contact = ET.SubElement(root, "contact")
     for parent, child in excludes:
         ET.SubElement(contact, "exclude", body1=parent, body2=child)
+    for first, second in TEMPORARY_WRIST_EXCLUDES:
+        if first in allowed and second in allowed:
+            ET.SubElement(contact, "exclude", body1=first, body2=second)
     ET.indent(root, space="  ")
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -443,7 +443,10 @@ class SideAlignment:
                 return self._held("aligning")
             human = self._human_pose(current)
             target = self._mapped_target(human)
-            target = self._stationary_hold(human, target, timestamp)
+            # Anatomical targets remain one-to-one, including slow fine motion.
+            # The arm QP smooths commands; a pose deadband would hide that motion.
+            if self._human_wrist_to_palm is None:
+                target = self._stationary_hold(human, target, timestamp)
             self._candidate = current
             self._last_target = target
             return AlignedPose(target, True, None, self._stable_count)

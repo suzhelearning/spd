@@ -254,6 +254,100 @@ def test_quality_gate_uses_hand_and_arm_limits(tmp_path, monkeypatch):
     assert artifact.surface_p95 <= 0.003
 
 
+@pytest.mark.parametrize(
+    "radius,translation",
+    [(1e-4, (0.0, 0.0, 0.0)), (0.02, (0.1, -0.2, 0.3)), (20.0, (100.0, 200.0, -300.0))],
+)
+def test_conservative_simplification_encloses_native_hull_at_vertex_cap(radius, translation):
+    native = trimesh.creation.icosphere(subdivisions=2, radius=radius)
+    native.apply_translation(translation)
+    vertices, faces = collision._conservative_simplify(native.vertices, native.faces, 64)
+    proxy = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    assert len(proxy.vertices) <= 64
+    assert proxy.is_volume
+    assert np.isfinite(proxy.vertices).all()
+    distances = np.einsum(
+        "vfi,fi->vf",
+        native.vertices[:, None, :] - proxy.triangles[None, :, 0, :],
+        proxy.face_normals,
+    )
+    # Outward compensation must prevent even sub-tolerance rounding cracks.
+    assert np.max(distances) <= 0
+
+
+def test_conservative_compilation_keeps_touching_native_pieces_closed(tmp_path, monkeypatch):
+    lower = trimesh.creation.cylinder(radius=0.01, height=0.01, sections=64)
+    upper = lower.copy()
+    lower.apply_translation((0.0, 0.0, -0.005))
+    upper.apply_translation((0.0, 0.0, 0.005))
+    source = trimesh.creation.cylinder(radius=0.01, height=0.02, sections=64)
+    monkeypatch.setattr(
+        collision.coacd,
+        "run_coacd",
+        lambda *_a, **_k: [(part.vertices, part.faces) for part in (lower, upper)],
+    )
+    artifact = decompose_mesh(
+        source,
+        CollisionSettings(conservative_simplification=True, surface_samples=256, surface_p95_threshold_m=0.003),
+        tmp_path / "touching",
+    )
+    proxies = [collision.load_collision_piece(path) for path in artifact.pieces]
+    proxies.sort(key=lambda part: part.centroid[2])
+    assert all(len(part.vertices) <= 64 for part in proxies)
+    assert artifact.surface_p95 <= 0.003
+    assert proxies[0].bounds[1, 2] >= proxies[1].bounds[0, 2]
+    for native, proxy in zip((lower, upper), proxies):
+        distances = np.einsum(
+            "vfi,fi->vf",
+            native.vertices[:, None, :] - proxy.triangles[None, :, 0, :],
+            proxy.face_normals,
+        )
+        assert np.max(distances) <= 0
+
+
+def test_conservative_compilation_rejects_real_quality_loss(tmp_path, monkeypatch):
+    source = trimesh.creation.icosphere(subdivisions=2, radius=1.0)
+    monkeypatch.setattr(
+        collision.coacd,
+        "run_coacd",
+        lambda *_a, **_k: [(source.vertices, source.faces)],
+    )
+    with pytest.raises(collision.CollisionError, match="surface p95"):
+        decompose_mesh(
+            source,
+            CollisionSettings(conservative_simplification=True, surface_samples=256, surface_p95_threshold_m=0.003),
+            tmp_path / "quality",
+        )
+    assert not tuple(tmp_path.rglob("manifest.json"))
+
+
+def test_conservative_compilation_does_not_repair_malformed_native_hulls(tmp_path, monkeypatch):
+    source = trimesh.creation.icosphere(subdivisions=2, radius=0.01)
+    settings = CollisionSettings(conservative_simplification=True, surface_samples=32)
+    inverted = source.copy()
+    inverted.invert()
+    nonconvex = source.copy()
+    nonconvex.vertices[0] = 0
+    bad_results = [
+        (source.vertices, source.faces[:-1]),
+        (inverted.vertices, inverted.faces),
+        (nonconvex.vertices, nonconvex.faces),
+        (source.vertices * np.nan, source.faces),
+    ]
+    for index, malformed in enumerate(bad_results):
+        monkeypatch.setattr(collision.coacd, "run_coacd", lambda *_a, **_k: [malformed])
+        with pytest.raises(collision.CollisionError):
+            decompose_mesh(source, settings, tmp_path / str(index))
+    assert not tuple(tmp_path.rglob("manifest.json"))
+
+
+def test_conservative_simplification_rejects_native_decimation():
+    with pytest.raises(ValueError, match="decimate"):
+        CollisionSettings(conservative_simplification=True, decimate=True)
+    with pytest.raises(ValueError, match="decimate"):
+        CollisionSettings(conservative_simplification=True, _extra_coacd_params=(("decimate", True),))
+
+
 def test_real_coacd_small_mesh_smoke(tmp_path):
     geometry, _ = _mesh_geometry(tmp_path)
     settings = CollisionSettings(

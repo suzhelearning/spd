@@ -57,9 +57,9 @@ actuators:
 - group: arm
   index: 5
   joint: Joint6_L
-  kd: 7.935852684896918
+  kd: 7.935852684896894
   kp: 500.0
-  mass_ii_home: 0.03148887891819282
+  mass_ii_home: 0.031488878918192624
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -68,9 +68,9 @@ actuators:
 - group: arm
   index: 6
   joint: Joint7_L
-  kd: 7.917295187714971
+  kd: 7.917295187714947
   kp: 500.0
-  mass_ii_home: 0.03134178154470732
+  mass_ii_home: 0.031341781544707126
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -81,7 +81,7 @@ actuators:
   joint: l_thumb_cmc_flex
   kd: 0.020882010257063675
   kp: 0.40844710645048043
-  mass_ii_home: 0.00020781898657564824
+  mass_ii_home: 0.00020781898657565084
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -92,7 +92,7 @@ actuators:
   joint: l_thumb_cmc_abd
   kd: 0.030610939996373314
   kp: 0.6858601063643346
-  mass_ii_home: 0.0002088844683146452
+  mass_ii_home: 0.00020888446831465127
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -103,7 +103,7 @@ actuators:
   joint: l_thumb_mcp
   kd: 0.010181475050560962
   kp: 0.2391112196099482
-  mass_ii_home: 5.312657831646169e-05
+  mass_ii_home: 5.312657831646104e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -114,7 +114,7 @@ actuators:
   joint: l_thumb_ip
   kd: 0.00909698844675045
   kp: 0.20736128319711747
-  mass_ii_home: 4.883355944059994e-06
+  mass_ii_home: 4.883355944061132e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -125,7 +125,7 @@ actuators:
   joint: l_index_finger_mcp_flex
   kd: 0.01882274330029718
   kp: 0.37352218155860073
-  mass_ii_home: 0.0002251623934855875
+  mass_ii_home: 0.00022516239348561586
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -136,7 +136,7 @@ actuators:
   joint: l_index_finger_mcp_abd
   kd: 0.019798167597016643
   kp: 0.45592448909027794
-  mass_ii_home: 0.0001390752634272091
+  mass_ii_home: 0.0001390752634272364
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -147,7 +147,7 @@ actuators:
   joint: l_index_finger_pip
   kd: 0.010477031953162727
   kp: 0.24368366649522863
-  mass_ii_home: 2.4179578154741665e-05
+  mass_ii_home: 2.4179578154756065e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -158,7 +158,7 @@ actuators:
   joint: l_index_finger_dip
   kd: 0.008240212147903584
   kp: 0.18026971340925335
-  mass_ii_home: 1.6963058698136691e-06
+  mass_ii_home: 1.6963058698135334e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -169,7 +169,7 @@ actuators:
   joint: l_middle_finger_mcp_flex
   kd: 0.01848622487024593
   kp: 0.3687093483646485
-  mass_ii_home: 0.00022516239348563627
+  mass_ii_home: 0.00022516239348562152
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -180,7 +180,7 @@ actuators:
   joint: l_middle_finger_mcp_abd
   kd: 0.018032947229953678
   kp: 0.4164253443634641
-  mass_ii_home: 0.00013907526342719868
+  mass_ii_home: 0.000139075263427226
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -191,7 +191,7 @@ actuators:
   joint: l_middle_finger_pip
   kd: 0.009592200014076666
   kp: 0.22218607502059182
-  mass_ii_home: 2.4179578154741404e-05
+  mass_ii_home: 2.4179578154755607e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -202,7 +202,7 @@ actuators:
   joint: l_middle_finger_dip
   kd: 0.009152994605972402
   kp: 0.19427606072023446
-  mass_ii_home: 1.6963058698098653e-06
+  mass_ii_home: 1.69630586980809e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -213,7 +213,7 @@ actuators:
   joint: l_ring_finger_mcp_flex
   kd: 0.018376606800780005
   kp: 0.35718151495111794
-  mass_ii_home: 0.000225162393485623
+  mass_ii_home: 0.00022516239348560775
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -224,7 +224,7 @@ actuators:
   joint: l_ring_finger_mcp_abd
   kd: 0.01867700966212433
   kp: 0.42977315313086895
-  mass_ii_home: 0.00013907526342724725
+  mass_ii_home: 0.00013907526342721863
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -235,7 +235,7 @@ actuators:
   joint: l_ring_finger_pip
   kd: 0.01059512121009555
   kp: 0.24930151196247122
-  mass_ii_home: 2.4179578154758413e-05
+  mass_ii_home: 2.4179578154754913e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -246,7 +246,7 @@ actuators:
   joint: l_ring_finger_dip
   kd: 0.009917602877441107
   kp: 0.2285032688178066
-  mass_ii_home: 1.6963058698141954e-06
+  mass_ii_home: 1.69630586981429e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -257,7 +257,7 @@ actuators:
   joint: l_pinky_mcp_flex
   kd: 0.018616960278988272
   kp: 0.3655325975433942
-  mass_ii_home: 0.00018133395184003923
+  mass_ii_home: 0.00018133395184003989
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -268,7 +268,7 @@ actuators:
   joint: l_pinky_mcp_abd
   kd: 0.018732177029667153
   kp: 0.41393113081120425
-  mass_ii_home: 0.0001082917347230922
+  mass_ii_home: 0.00010829173472309199
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -279,7 +279,7 @@ actuators:
   joint: l_pinky_pip
   kd: 0.00951005441616486
   kp: 0.22729367621965954
-  mass_ii_home: 2.0820857421402162e-05
+  mass_ii_home: 2.0820857421402657e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -290,7 +290,7 @@ actuators:
   joint: l_pinky_dip
   kd: 0.009017295241756363
   kp: 0.1964723550341816
-  mass_ii_home: 1.6963060603272983e-06
+  mass_ii_home: 1.6963060603288158e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -310,9 +310,9 @@ actuators:
 - group: arm
   index: 28
   joint: Joint2_R
-  kd: 60.618672021357
+  kd: 60.61867202135699
   kp: 500.0
-  mass_ii_home: 1.837311698816425
+  mass_ii_home: 1.8373116988164246
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -332,9 +332,9 @@ actuators:
 - group: arm
   index: 30
   joint: Joint4_R
-  kd: 29.922602934376492
+  kd: 29.922602934376478
   kp: 500.0
-  mass_ii_home: 0.4476810831841783
+  mass_ii_home: 0.4476810831841779
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -354,9 +354,9 @@ actuators:
 - group: arm
   index: 32
   joint: Joint6_R
-  kd: 7.934052608697864
+  kd: 7.9340526086978365
   kp: 500.0
-  mass_ii_home: 0.031474595398792694
+  mass_ii_home: 0.03147459539879247
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -411,7 +411,7 @@ actuators:
   joint: r_thumb_ip
   kd: 0.00909698844675045
   kp: 0.20736128319711747
-  mass_ii_home: 4.883355935518215e-06
+  mass_ii_home: 4.883355935521251e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -422,7 +422,7 @@ actuators:
   joint: r_index_finger_mcp_flex
   kd: 0.01882274330029718
   kp: 0.37352218155860073
-  mass_ii_home: 0.00022516239680439446
+  mass_ii_home: 0.0002251623968043518
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -433,7 +433,7 @@ actuators:
   joint: r_index_finger_mcp_abd
   kd: 0.019798167597016643
   kp: 0.45592448909027794
-  mass_ii_home: 0.0001390752634277373
+  mass_ii_home: 0.00013907526342768137
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -444,7 +444,7 @@ actuators:
   joint: r_index_finger_pip
   kd: 0.010477031953162727
   kp: 0.24368366649522863
-  mass_ii_home: 2.417957815481118e-05
+  mass_ii_home: 2.417957815481773e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -455,7 +455,7 @@ actuators:
   joint: r_index_finger_dip
   kd: 0.008240212147903584
   kp: 0.18026971340925335
-  mass_ii_home: 1.6963058694269723e-06
+  mass_ii_home: 1.6963058694268216e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -466,7 +466,7 @@ actuators:
   joint: r_middle_finger_mcp_flex
   kd: 0.01848622487024593
   kp: 0.3687093483646485
-  mass_ii_home: 0.00022516239680435136
+  mass_ii_home: 0.0002251623968043661
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -477,7 +477,7 @@ actuators:
   joint: r_middle_finger_mcp_abd
   kd: 0.018032947229953678
   kp: 0.4164253443634641
-  mass_ii_home: 0.00013907526342768527
+  mass_ii_home: 0.0001390752634277139
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -488,7 +488,7 @@ actuators:
   joint: r_middle_finger_pip
   kd: 0.009592200014076666
   kp: 0.22218607502059182
-  mass_ii_home: 2.417957815481888e-05
+  mass_ii_home: 2.4179578154819098e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -499,7 +499,7 @@ actuators:
   joint: r_middle_finger_dip
   kd: 0.009152994605972402
   kp: 0.19427606072023446
-  mass_ii_home: 1.6963058694236314e-06
+  mass_ii_home: 1.6963058694236585e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -510,7 +510,7 @@ actuators:
   joint: r_ring_finger_mcp_flex
   kd: 0.018376606800780005
   kp: 0.35718151495111794
-  mass_ii_home: 0.00022516239680436118
+  mass_ii_home: 0.0002251623968043747
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -521,7 +521,7 @@ actuators:
   joint: r_ring_finger_mcp_abd
   kd: 0.01867700966212433
   kp: 0.42977315313086895
-  mass_ii_home: 0.00013907526342772387
+  mass_ii_home: 0.0001390752634277386
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -532,7 +532,7 @@ actuators:
   joint: r_ring_finger_pip
   kd: 0.01059512121009555
   kp: 0.24930151196247122
-  mass_ii_home: 2.41795781548298e-05
+  mass_ii_home: 2.4179578154832914e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -543,7 +543,7 @@ actuators:
   joint: r_ring_finger_dip
   kd: 0.009917602877441107
   kp: 0.2285032688178066
-  mass_ii_home: 1.6963058694266778e-06
+  mass_ii_home: 1.696305869426583e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -554,7 +554,7 @@ actuators:
   joint: r_pinky_mcp_flex
   kd: 0.018616960278988272
   kp: 0.3655325975433942
-  mass_ii_home: 0.00018133395414610527
+  mass_ii_home: 0.00018133395414610508
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -565,7 +565,7 @@ actuators:
   joint: r_pinky_mcp_abd
   kd: 0.018732177029667153
   kp: 0.41393113081120425
-  mass_ii_home: 0.00010829173464364664
+  mass_ii_home: 0.00010829173464364013
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -576,7 +576,7 @@ actuators:
   joint: r_pinky_pip
   kd: 0.00951005441616486
   kp: 0.22729367621965954
-  mass_ii_home: 2.082085740385416e-05
+  mass_ii_home: 2.082085740385107e-05
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0
@@ -587,7 +587,7 @@ actuators:
   joint: r_pinky_dip
   kd: 0.009017295241756363
   kp: 0.1964723550341816
-  mass_ii_home: 1.696305869748055e-06
+  mass_ii_home: 1.6963058697465782e-06
   metrics:
     force_saturation_ratio: 0.0
     overshoot_rad: 0.0

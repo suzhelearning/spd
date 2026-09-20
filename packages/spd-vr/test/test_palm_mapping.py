@@ -87,6 +87,29 @@ def test_frozen_head_yaw_maps_forward_left_up_and_standard_palms_down(yaw, side)
     np.testing.assert_allclose(target_palm[:3, :3], np.eye(3), atol=1e-12)
 
 
+def test_calibrated_palm_preserves_slow_motion_after_stationary_dwell():
+    mapping = PalmMapping.from_urdf(URDF)
+    wrists, palms = standard_inputs(np.eye(3))
+    mapping.calibrate(np.eye(4), wrists, palms, epoch=1)
+    alignment = SideAlignment(neutral_robot=pose((0.4, 0.2, 0.8)), stable_frames=1)
+    mapping.configure_alignment("left", alignment)
+    offset = mapping.robot_wrist_to_palm["left"]
+    for frame in range(1, 31):
+        baseline = alignment.accept(wrists["left"], True, 1, frame * 20_000_000)
+    baseline_palm = baseline.target_pose @ offset
+    for frame in range(1, 21):
+        displacement = np.array((frame * 0.001, 0.0, 0.0))
+        turn = rotation((0, 0, 1), frame * 0.001)
+        moved = wrists["left"].copy()
+        moved[:3, :3] = turn @ moved[:3, :3]
+        moved[:3, 3] = palms["left"] + displacement - turn @ (palms["left"] - wrists["left"][:3, 3])
+        result = alignment.accept(moved, True, 1, (30 + frame) * 20_000_000)
+        target = result.target_pose @ offset
+        assert result.valid
+        np.testing.assert_allclose(target[:3, 3] - baseline_palm[:3, 3], displacement, atol=1e-12)
+        np.testing.assert_allclose(target[:3, :3], turn, atol=1e-12)
+
+
 @pytest.mark.parametrize("side", ["left", "right"])
 def test_local_palm_offsets_rotate_with_both_human_and_robot_wrists(side):
     mapping = PalmMapping.from_urdf(URDF)

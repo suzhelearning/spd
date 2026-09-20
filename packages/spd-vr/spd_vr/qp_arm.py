@@ -166,13 +166,23 @@ class ArmQPSolver:
         self._joint_midpoint[self._bounded_joints] = np.mean(self.position_limits[self._bounded_joints], axis=1)
         self._joint_half_range[self._bounded_joints] = np.diff(self.position_limits[self._bounded_joints], axis=1).ravel() / 2
         self._weights = np.array((self.config.position_weight,) * 3 + (self.config.orientation_weight,) * 3)
-        self._row_count = 7 + 96 + 6
+        self._row_count = 7 + 96
         self._a = np.zeros((self._row_count, 7), order="F")
         self._a[:7] = np.eye(7)
         self._p_values = np.zeros(28, dtype=float)
         self._q_values = np.zeros(7, dtype=float)
         self._lower = np.full(self._row_count, -np.inf, dtype=float)
         self._upper = np.full(self._row_count, np.inf, dtype=float)
+        self._null_basis = np.zeros((7, 7))
+        self._posture_a = np.zeros_like(self._a)
+        self._posture_lower = np.empty(self._row_count)
+        self._posture_upper = np.empty(self._row_count)
+        self._constraint_values = np.empty(self._row_count)
+        self._reduced_hessian = np.empty((7, 7))
+        self._h_null = np.empty((7, 7))
+        self._posture_scale = np.empty(self._row_count)
+        self._zero_primal = np.zeros(7)
+        self._zero_dual = np.zeros(self._row_count)
         structure = sparse.csc_matrix(np.ones_like(self._a))
         structure.data[:] = self._a.ravel(order="F")
         self._workspace = osqp.OSQP()
@@ -297,27 +307,44 @@ class ArmQPSolver:
             if not self._feasible(dq):
                 return self._failure("invalid primary solution", position_error, orientation_error)
             primary = dq.copy()
-            # Preserve the primary twist using independent, unit-length task
-            # rows. Raw Cartesian rows become nearly dependent at singular
-            # poses; tiny inequality bands make ADMM falsely infeasible there.
-            # Exact orthonormal equalities avoid both conditioning problems.
-            _, singular_values, task_basis = np.linalg.svd(jacobian, full_matrices=False)
+            # Optimize only the task nullspace: dq = primary + N z.
+            # Explicit task equalities over an almost-saturated primary
+            # solution are numerically fragile and can be falsely infeasible.
+            _, singular_values, task_basis = np.linalg.svd(jacobian, full_matrices=True)
             rank = int(np.count_nonzero(singular_values > 1e-8))
-            self._a[-6:] = 0.0
-            self._a[self._row_count - 6:self._row_count - 6 + rank] = task_basis[:rank]
-            achieved = task_basis[:rank] @ primary
-            self._lower[-6:] = -np.inf
-            self._upper[-6:] = np.inf
-            self._lower[self._row_count - 6:self._row_count - 6 + rank] = achieved
-            self._upper[self._row_count - 6:self._row_count - 6 + rank] = achieved
+            nullity = 7 - rank
+            self._null_basis.fill(0.0)
+            self._null_basis[:, :nullity] = task_basis[rank:].T
+            np.matmul(self._a, self._null_basis, out=self._posture_a)
+            np.matmul(self._a, primary, out=self._constraint_values)
+            np.subtract(self._lower, self._constraint_values, out=self._posture_lower)
+            np.subtract(self._upper, self._constraint_values, out=self._posture_upper)
+            # Preserve the already-validated primary point within the same
+            # feasibility tolerance; final joint-space validation is unchanged.
+            np.minimum(self._posture_lower, 0.0, out=self._posture_lower)
+            np.maximum(self._posture_upper, 0.0, out=self._posture_upper)
+            # Projection can make a bound row arbitrarily small. Normalize
+            # without changing its feasible halfspace before ADMM scaling.
+            np.einsum("ij,ij->i", self._posture_a, self._posture_a, out=self._posture_scale)
+            np.sqrt(self._posture_scale, out=self._posture_scale)
+            np.maximum(self._posture_scale, 1e-12, out=self._posture_scale)
+            self._posture_a /= self._posture_scale[:, None]
+            self._posture_lower /= self._posture_scale
+            self._posture_upper /= self._posture_scale
             self._posture_objective(q_value)
-            self._posture_workspace.update(Px=self._p_values, Ax=self._a.ravel(order="F"), q=self._q_values, l=self._lower, u=self._upper)
-            self._posture_workspace.warm_start(x=primary)
+            self._q_values[:] = self._null_basis.T @ (self._posture_hessian @ primary + self._q_values)
+            np.matmul(self._posture_hessian, self._null_basis, out=self._h_null)
+            np.matmul(self._null_basis.T, self._h_null, out=self._reduced_hessian)
+            # Pad unused coordinates to retain a fixed sparse workspace.
+            self._reduced_hessian.flat[nullity * 8::8] = 1.0
+            self._p_values[:] = self._reduced_hessian[self._p_rows, self._p_cols]
+            self._posture_workspace.update(Px=self._p_values, Ax=self._posture_a.ravel(order="F"), q=self._q_values, l=self._posture_lower, u=self._posture_upper)
+            self._posture_workspace.warm_start(x=self._zero_primal, y=self._zero_dual)
             secondary = self._posture_workspace.solve(raise_error=False)
             secondary_status = str(secondary.info.status).lower()
             if secondary_status not in {"solved", "solved inaccurate"}:
                 return self._failure("posture QP: " + secondary_status, position_error, orientation_error)
-            dq = np.asarray(secondary.x, dtype=float)
+            dq = primary + self._null_basis @ np.asarray(secondary.x, dtype=float)
             if not self._feasible(dq):
                 return self._failure("invalid posture solution", position_error, orientation_error)
             self._last_dq[:] = dq
@@ -350,7 +377,6 @@ class ArmQPSolver:
                 desired = self.config.elbow_gain * (self.config.elbow_clearance_m - clearance)
                 self._posture_hessian += self.config.elbow_weight * np.outer(lateral_jacobian, lateral_jacobian)
                 self._q_values -= self.config.elbow_weight * desired * lateral_jacobian
-        self._p_values[:] = self._posture_hessian[self._p_rows, self._p_cols]
 
     def _feasible(self, dq: np.ndarray) -> bool:
         if dq.shape != (7,) or not np.all(np.isfinite(dq)):
