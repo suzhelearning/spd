@@ -167,7 +167,7 @@ ROS Viewer 在已验证模型上按 `config/sim_cameras.yaml` 添加三路真实
 
 应用就绪仅表示进程已完成自身初始化，不代表 DDS 已发现对端、Viewer 已收到新鲜且通过校验的候选，或控制已授权。应结合 Viewer 的接收／有效计数、候选年龄与 ready/hold 状态判断数据链路；只有符合原有新鲜度及目标差门限的候选才能经显式操作启用。PICO 有效跟踪、H5 播放状态与 SPD 授权也各自独立，直连 DDS 不绕过任何控制门。
 
-### PICO 实时发布 → SPD 拼字场景
+### PICO 实时发布 → 选择并确认任务场景
 
 在头显中打开 PICO 手部跟踪 APK，启用手部跟踪并授权 USB 调试，然后在电脑图形桌面的项目终端运行：
 
@@ -177,13 +177,19 @@ pixi run spd-pico
 # pixi run spd-pico --adb-serial SERIAL
 ```
 
-此入口只加载 `spelling_blocks/spelling`（默认 seed 0，可用 `--seed` 修改），先询问桌沿距离并调整桌子与物体，再启动 PICO 控制窗口和 SPD MuJoCo 窗口，不启动桥。可用 `pixi run spd-pico --table-distance 0.30` 显式指定距离。只改变场景的整体 X 位置，不改变物体尺寸、物理参数、标定或控制逻辑。原有 `spd-demo` H5 入口仍使用无桌子场景，不询问桌距。控制路径为：
+此入口从现有注册表列出六类场景的全部任务，按以下顺序启动：
+
+1. 输入任务编号或完整 `SCENE/TASK`；回车选择 `spelling_blocks/spelling`，`q` 取消。
+2. 输入桌沿距离，桌子与物体同步定位。
+3. 查看最终的**场景、任务、seed、桌沿距离**，输入 `y` 才连接 PICO 并打开两个窗口。回车或 `n` 取消；`Ctrl+C` / 输入结束同样不会启动连接。
+
+可用 `pixi run spd-pico --task mugs/hang_mug --seed 0 --table-distance 0.30` 预选配置，但**仍必须在交互终端最终确认**，非交互启动不会自动放行。只有确认后才检查设备、建立所需 ADB 转发、启动 Viewer 和发布端；确认启动不等于授权机器人运动。场景接入复用原控制路径，不改变物体尺寸、物理参数、标定或控制逻辑，不启动桥。原有 `spd-demo` H5 入口不变，仍使用无桌子场景。控制路径为：
 
 ```text
 PICO_2 TCP → 发布侧真实双臂 IK + Wuji 手部重定向
     → 54-DoF JointCommand / ROS domain 120
     → 直连 Fast DDS → SPD / ROS domain 120
-    → SPD 授权、名称映射与保持 → spelling_blocks/spelling
+    → SPD 授权、名称映射与保持 → 本次已确认的 SCENE/TASK
 ```
 
 操作全部在 **PICO 控制窗口**完成，不再需要切到 MuJoCo 按 `e`：

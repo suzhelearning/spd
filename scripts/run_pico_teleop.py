@@ -1,4 +1,4 @@
-"""Run the PICO control window and spelling viewer; clean up only owned resources."""
+"""Select and confirm a task scene before connecting PICO; clean up owned resources."""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -94,6 +95,51 @@ def log_tail(path: Path) -> str:
         return stream.read().decode(errors="replace")
 
 
+def confirm_scene(args: argparse.Namespace) -> bool:
+    """Resolve the task and table placement before any device or window access."""
+    from spd_envs.registry import TASKS, TASK_REGISTRY
+    from spd_vr.scene import resolve_table_distance
+
+    if not sys.stdin.isatty():
+        raise ValueError("PICO 启动需要在交互终端选择并确认场景，未连接设备或打开窗口。")
+    if args.task is None:
+        print("请选择 PICO 接入的场景 / 任务：", flush=True)
+        for index, spec in enumerate(TASKS, start=1):
+            print(f"  {index:2d}. {spec.qualified_name} — {spec.prompt}")
+        while True:
+            selected = input("输入编号或完整 SCENE/TASK，回车选 spelling_blocks/spelling，q 取消：\n> ").strip()
+            if selected.lower() == "q":
+                return False
+            if not selected:
+                selected = "spelling_blocks/spelling"
+            elif selected.isascii() and selected.isdecimal() and 1 <= int(selected) <= len(TASKS):
+                selected = TASKS[int(selected) - 1].qualified_name
+            if selected in TASK_REGISTRY:
+                args.task = selected
+                break
+            print("无效选择，请输入列表中的编号或完整 SCENE/TASK。", flush=True)
+    if args.task not in TASK_REGISTRY:
+        raise ValueError(f"未知场景 / 任务：{args.task}；省略 --task 可查看并选择。")
+    spec = TASK_REGISTRY[args.task]
+    args.table_distance = resolve_table_distance(args.table_distance)
+    print(
+        f"\n即将接入的 PICO 场景：\n"
+        f"  场景：{spec.scene}\n"
+        f"  任务：{spec.name} — {spec.prompt}\n"
+        f"  seed：{args.seed}\n"
+        f"  桌沿距离：{args.table_distance:g} m（底座原点沿 +X 到近侧桌沿）\n"
+        "  桌子与物体同步定位，进入后桌子固定；启动不等于运动授权。",
+        flush=True,
+    )
+    while True:
+        answer = input("确认接入以上场景并连接 PICO？[y/N] ").strip().lower()
+        if answer in ("y", "yes", "是", "确认"):
+            return True
+        if answer in ("", "n", "no", "否", "q"):
+            return False
+        print("请输入 y 确认，或 n / 回车取消。", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1", help="PICO TCP host (default: 127.0.0.1)")
@@ -103,7 +149,8 @@ def main() -> int:
     parser.add_argument("--adb-serial", help="Select the PICO when multiple ADB devices are attached")
     parser.add_argument("--no-adb-forward", action="store_true", help="Use an existing TCP endpoint; do not require or modify ADB")
     parser.add_argument("--reconnect", type=float, default=2.0, help="Source TCP reconnect delay in seconds")
-    parser.add_argument("--seed", type=int, default=0, help="Spelling scene seed (default: 0)")
+    parser.add_argument("--task", help="Registered SCENE/TASK; prompts for selection when omitted")
+    parser.add_argument("--seed", type=int, default=0, help="Task scene seed (default: 0)")
     parser.add_argument("--table-distance", type=float, help="Robot base to near table edge in metres; prompts if omitted (default: 0.10)")
     args = parser.parse_args()
     if not all(1 <= port <= 65535 for port in (args.port, args.device_port)):
@@ -155,33 +202,17 @@ def main() -> int:
             except BlockingIOError:
                 parser.error("spd-pico or spd-demo is already running; close its windows or use Ctrl+C in its terminal")
         try:
-            distance_command = ["pixi", "run", "-e", "default", "python", "-c", """
-import sys
-from spd_vr.scene import resolve_table_distance
-try:
-    print(resolve_table_distance(float(sys.argv[1]) if len(sys.argv) > 1 else None))
-except (ValueError, EOFError) as exc:
-    print(str(exc) or "Table placement cancelled.", file=sys.stderr)
-    raise SystemExit(2)
-except KeyboardInterrupt:
-    print("\\nTable placement cancelled.", file=sys.stderr)
-    raise SystemExit(130)
-"""]
-            if args.table_distance is not None:
-                distance_command.append(str(args.table_distance))
-            distance = subprocess.run(distance_command, cwd=ROOT, stdout=subprocess.PIPE,
-                                      text=True, check=True)
-            args.table_distance = float(distance.stdout.strip())
-            print(f"Table near edge: {args.table_distance} m from robot base origin (+X).", flush=True)
+            if not confirm_scene(args):
+                print("已取消，未连接 PICO 或打开窗口。", flush=True)
+                return 0
             create_forward = preflight_device(args)
             preflight_display()
             if not (ROOT / ".ros/install/setup.sh").is_file():
                 raise RuntimeError("ROS interfaces missing; run pixi run ros-build-interfaces")
-        except subprocess.CalledProcessError as exc:
-            return exc.returncode
-        except KeyboardInterrupt:
+        except (EOFError, KeyboardInterrupt):
+            print("\n已取消，未连接 PICO 或打开窗口。", flush=True)
             return 130
-        except (OSError, RuntimeError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             parser.error(str(exc))
         control_directory = resources.enter_context(tempfile.TemporaryDirectory(prefix="spd-pico-control-"))
         control_socket = str(Path(control_directory) / "control.sock")
@@ -195,7 +226,7 @@ except KeyboardInterrupt:
                 print(f"ADB forward established for {args.adb_serial}; this does not yet establish live tracking.", flush=True)
             elif not args.no_adb_forward:
                 print(f"Reusing existing PICO ADB forward tcp:{args.port}; it remains externally owned and will not be removed.", flush=True)
-            print(f"Starting PICO spelling stack via direct Fast DDS (domain 120); logs: {directory}", flush=True)
+            print(f"Starting PICO task {args.task} via direct Fast DDS (domain 120); logs: {directory}", flush=True)
             # This supervisor owns the forward; the source must neither create nor remove it.
             source_arguments = ["--host", args.host, "--port", str(args.port),
                                 "--device-port", str(args.device_port), "--adb-path", args.adb_path,
@@ -204,13 +235,13 @@ except KeyboardInterrupt:
             if args.adb_serial:
                 source_arguments.extend(("--adb-serial", args.adb_serial))
             start("viewer", ros_command("spd_vr.ros_viewer", "--output", str(ROOT / "episodes"),
-                                        "--task", "spelling_blocks/spelling", "--seed", str(args.seed),
+                                        "--task", args.task, "--seed", str(args.seed),
                                         "--table-distance", str(args.table_distance),
                                         "--control-socket", control_socket))
             wait_ready("viewer", "SPD subscriber ready")
             start("source", ros_command("spd_vr.ros_publisher", *source_arguments))
             wait_ready("source", "PICO publisher ready")
-            print("PICO UI + spelling viewer ready; this is process/UI readiness, not proof of live PICO tracking.", flush=True)
+            print(f"PICO UI + {args.task} viewer ready; this is process/UI readiness, not proof of live PICO tracking.", flush=True)
             print("Use only the PICO window: Palm calibration (K) -> Align / Preview (C) -> Confirm & Follow (F). SPD checks and confirms authorization before motion.", flush=True)
             print("Hold (Space) stops following. After tracking loss: Align -> Confirm & Follow again. No MuJoCo e key required.", flush=True)
             print("Ctrl+C or closing either window stops this session and only its owned resources.", flush=True)

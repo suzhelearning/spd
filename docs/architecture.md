@@ -26,9 +26,9 @@ Viewer 显示接收/拒绝/保持状态和所选关节的实际应用目标、Mu
 
 应用就绪只说明自身初始化完成，不说明 DDS 已发现对端或订阅器已有通过校验的新鲜候选，更不等于授权。候选接收／有效计数、年龄及 ready/hold 状态与显式授权分别判断。默认仅同机发现；跨主机必须另行显式配置 DDS 发现、网络接口／防火墙与 UTC 时钟同步，不能依赖同机启动器的固定 `LOCALHOST` 配置。domain 不是安全边界，直连不保证网络或负载下的实时性能。
 
-## PICO 发布侧与拼字场景
+## PICO 发布侧与任务场景确认
 
-`pixi run spd-pico` 是独立的同机编排入口：`PICO_2 → TCP → ros_publisher / PicoTeleopCore → JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120, spelling_blocks/spelling)`。PICO 控制窗口和 MuJoCo 窗口保持独立。订阅器仍为 `command_only=True`，不加载 PICO 或求解器；其他场景和 H5 演示入口不变。
+`pixi run spd-pico` 是独立的同机编排入口：`PICO_2 → TCP → ros_publisher / PicoTeleopCore → JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120, 已确认的 SCENE/TASK)`。启动器复用 `spd_envs.registry` 列出的任务，先选择场景/任务，再确定桌距，最后汇总任务、seed 和距离并要求显式 `y` 确认；回车默认取消。`--task` 和 `--table-distance` 只预填配置，不能跳过最终确认，非交互调用拒绝启动。选择和确认发生在设备预检、ADB 转发、窗口及发布端创建之前；启动确认不是运动授权。PICO 控制窗口和 MuJoCo 窗口保持独立，订阅器仍为 `command_only=True`，不加载 PICO 或求解器；标定、控制算法、独立场景和 H5 演示入口不变。
 
 发布侧复用经过模型校验的双臂 IK、`SideAlignment` 和 `WujiRetargetPair`，输出规范名称顺序的有限、限位内 54 维目标。接收线程只排队帧及接收时间；求解状态由单线程拥有，避免重连回调与求解器并发重置。5 ms 求解调度与 60 Hz 发布调度分开，实际输入超过 50 ms 则撤销 ready，不以新的 ROS 时间戳伪装旧跟踪有效。
 
