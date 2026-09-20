@@ -8,7 +8,6 @@ import math
 import os
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import tempfile
 import time
@@ -82,7 +81,10 @@ def preflight_display() -> None:
 
 def ros_command(module: str, *arguments: str) -> list[str]:
     return ["pixi", "run", "-e", "ros-jazzy", "bash", "-c",
-            'source .ros/install/setup.sh && exec python -u -m "$@"',
+            'source .ros/install/setup.sh && '
+            'export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp '
+            'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS="" && '
+            'exec python -u -m "$@"',
             "--", module, *arguments]
 
 
@@ -110,11 +112,9 @@ def main() -> int:
 
     directory = ROOT / ".pixi/pico-teleop"
     children: list[tuple[str, subprocess.Popen, Path, object]] = []
-    environment = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID="121",
+    environment = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID="120",
                        RMW_IMPLEMENTATION="rmw_fastrtps_cpp",
-                       ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST", ROS_STATIC_PEERS="",
-                       SPD_ZENOH_LISTEN="tcp/127.0.0.1:7447",
-                       SPD_ZENOH_CONNECT="tcp/127.0.0.1:7447")
+                       ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST", ROS_STATIC_PEERS="")
 
     def start(name: str, command: list[str]) -> None:
         log_path = directory / f"{name}.log"
@@ -128,20 +128,14 @@ def main() -> int:
             raise
         children.append((name, process, log_path, log))
 
-    def wait_ready(name: str, marker: str | None = None) -> None:
+    def wait_ready(name: str, marker: str) -> None:
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             for child_name, process, log_path, _ in children:
                 code = process.poll()
                 if code is not None:
                     raise RuntimeError(f"{child_name} exited during startup ({code}); log: {log_path}\n{log_tail(log_path)}")
-            if marker is None:
-                try:
-                    with socket.create_connection(("127.0.0.1", 7447), timeout=.2):
-                        return
-                except OSError:
-                    pass
-            elif marker in log_tail(directory / f"{name}.log"):
+            if marker in log_tail(directory / f"{name}.log"):
                 return
             time.sleep(.1)
         path = directory / f"{name}.log"
@@ -151,8 +145,7 @@ def main() -> int:
         raise KeyboardInterrupt
 
     with ExitStack() as resources:
-        # Hold the demo's existing lock too: both launchers must exclude one another,
-        # including the interval before either bridge binds the shared TCP port.
+        # Hold the demo's existing lock too: both launchers must exclude one another.
         for session in (directory, ROOT / ".pixi/recorded-demo"):
             session.mkdir(parents=True, exist_ok=True)
             lock = resources.enter_context((session / "session.lock").open("a"))
@@ -165,15 +158,6 @@ def main() -> int:
             preflight_display()
             if not (ROOT / ".ros/install/setup.sh").is_file():
                 raise RuntimeError("ROS interfaces missing; run pixi run ros-build-interfaces")
-            bridge = ROOT / ".pixi/tools/zenoh-bridge-ros2dds/1.10.0/zenoh-bridge-ros2dds"
-            if not os.access(bridge, os.X_OK):
-                raise RuntimeError("ROS bridge missing; run pixi run ros-bridge-install")
-            with socket.socket() as probe:
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                try:
-                    probe.bind(("127.0.0.1", 7447))
-                except OSError as exc:
-                    raise RuntimeError("Port 7447 is in use; stop its owning bridge/demo from its terminal before starting spd-pico. No existing process was stopped") from exc
         except (OSError, RuntimeError) as exc:
             parser.error(str(exc))
         control_directory = resources.enter_context(tempfile.TemporaryDirectory(prefix="spd-pico-control-"))
@@ -188,10 +172,7 @@ def main() -> int:
                 print(f"ADB forward established for {args.adb_serial}; this does not yet establish live tracking.", flush=True)
             elif not args.no_adb_forward:
                 print(f"Reusing existing PICO ADB forward tcp:{args.port}; it remains externally owned and will not be removed.", flush=True)
-            print(f"Starting PICO spelling stack; logs: {directory}", flush=True)
-            start("spd-bridge", ["bash", "scripts/run_ros_bridge.sh", "spd"])
-            wait_ready("spd-bridge")
-            start("publisher-bridge", ["bash", "scripts/run_ros_bridge.sh", "publisher"])
+            print(f"Starting PICO spelling stack via direct Fast DDS (domain 120); logs: {directory}", flush=True)
             # This supervisor owns the forward; the source must neither create nor remove it.
             source_arguments = ["--host", args.host, "--port", str(args.port),
                                 "--device-port", str(args.device_port), "--adb-path", args.adb_path,
@@ -206,7 +187,7 @@ def main() -> int:
             start("source", ros_command("spd_vr.ros_publisher", *source_arguments))
             wait_ready("source", "PICO publisher ready")
             print("PICO UI + spelling viewer ready; this is process/UI readiness, not proof of live PICO tracking.", flush=True)
-            print("Use only the PICO window: Align (C) -> Confirm & Follow (F). SPD checks and confirms authorization before motion.", flush=True)
+            print("Use only the PICO window: Palm calibration (K) -> Align / Preview (C) -> Confirm & Follow (F). SPD checks and confirms authorization before motion.", flush=True)
             print("Hold (Space) stops following. After tracking loss: Align -> Confirm & Follow again. No MuJoCo e key required.", flush=True)
             print("Ctrl+C or closing either window stops this session and only its owned resources.", flush=True)
             while True:
@@ -252,7 +233,7 @@ def main() -> int:
                     print(f"Warning: could not clean up owned ADB forward tcp:{args.port}: {exc}", flush=True)
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
-            print("PICO session stopped; owned bridge/source/viewer processes cleaned up.", flush=True)
+            print("PICO session stopped; owned source/viewer processes cleaned up.", flush=True)
 
 
 if __name__ == "__main__":

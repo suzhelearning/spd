@@ -6,7 +6,6 @@ import fcntl
 import os
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import time
 
@@ -37,8 +36,6 @@ def main() -> int:
         parser.error("No DISPLAY; run this command from the desktop terminal")
     if not (ROOT / ".ros/install/setup.sh").is_file():
         parser.error("ROS interfaces missing; run pixi run ros-build-interfaces")
-    if not (ROOT / ".pixi/tools/zenoh-bridge-ros2dds/1.10.0/zenoh-bridge-ros2dds").is_file():
-        parser.error("ROS bridge missing; run pixi run ros-bridge-install")
 
     directory = ROOT / ".pixi/recorded-demo"
     directory.mkdir(parents=True, exist_ok=True)
@@ -47,20 +44,10 @@ def main() -> int:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            parser.error("spd-demo is already running; use its windows or Ctrl+C in its terminal")
-        # Do not silently reuse or terminate another operator's bridge session.
-        with socket.socket() as probe:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                probe.bind(("127.0.0.1", 7447))
-            except OSError:
-                parser.error("Port 7447 is in use. Stop the previous demo first: Ctrl+C in its bridge terminal and pixi run spd-teleop-ros-stop")
-
-        environment = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID="121",
+            parser.error("spd-pico or spd-demo is already running; close its windows or use Ctrl+C in its terminal")
+        environment = dict(os.environ, PYTHONUNBUFFERED="1", ROS_DOMAIN_ID="120",
                            RMW_IMPLEMENTATION="rmw_fastrtps_cpp",
-                           ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST", ROS_STATIC_PEERS="",
-                           SPD_ZENOH_LISTEN="tcp/127.0.0.1:7447",
-                           SPD_ZENOH_CONNECT="tcp/127.0.0.1:7447")
+                           ROS_AUTOMATIC_DISCOVERY_RANGE="LOCALHOST", ROS_STATIC_PEERS="")
 
         def start(name: str, command: list[str]) -> subprocess.Popen:
             log_path = directory / f"{name}.log"
@@ -75,26 +62,23 @@ def main() -> int:
             children.append((name, process, log_path, log))
             return process
 
-        def wait_ready(name: str, marker: str | None = None) -> None:
+        def wait_ready(name: str, marker: str) -> None:
             deadline = time.monotonic() + 40
             while time.monotonic() < deadline:
                 for child_name, process, log_path, _ in children:
                     if process.poll() is not None:
                         raise RuntimeError(f"{child_name} exited during startup.\n{log_path.read_text(errors='replace')[-6000:]}")
-                if marker is None:
-                    try:
-                        with socket.create_connection(("127.0.0.1", 7447), timeout=.2):
-                            return
-                    except OSError:
-                        pass
-                elif marker in (directory / f"{name}.log").read_text(errors="replace"):
+                if marker in (directory / f"{name}.log").read_text(errors="replace"):
                     return
                 time.sleep(.1)
             raise RuntimeError(f"Timed out starting {name}; see {directory / (name + '.log')}")
 
         def ros_command(module: str, *arguments: str) -> list[str]:
             return ["pixi", "run", "-e", "ros-jazzy", "bash", "-c",
-                    'source .ros/install/setup.sh && exec python -u -m "$@"',
+                    'source .ros/install/setup.sh && '
+                    'export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp '
+                    'ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS="" && '
+                    'exec python -u -m "$@"',
                     "--", module, *arguments]
 
         def interrupt(*_: object) -> None:
@@ -102,10 +86,7 @@ def main() -> int:
 
         previous = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
-            print(f"Starting two-window demo; logs: {directory}", flush=True)
-            start("spd-bridge", ["bash", "scripts/run_ros_bridge.sh", "spd"])
-            wait_ready("spd-bridge")
-            start("publisher-bridge", ["bash", "scripts/run_ros_bridge.sh", "publisher"])
+            print(f"Starting two-window demo via direct Fast DDS (domain 120); logs: {directory}", flush=True)
             start("viewer", ros_command("spd_vr.ros_viewer", "--output", str(ROOT / "episodes")))
             wait_ready("viewer", "SPD subscriber ready")
             start("player", ros_command("spd_vr.ros_recorded_publisher", *(str(path) for path in paths), "--loop"))
@@ -149,7 +130,7 @@ def main() -> int:
                 log.close()
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
-            print("Demo stopped; owned bridge/player/viewer processes cleaned up.", flush=True)
+            print("Demo stopped; owned player/viewer processes cleaned up.", flush=True)
 
 
 if __name__ == "__main__":

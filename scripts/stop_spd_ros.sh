@@ -11,7 +11,7 @@ fi
 [[ -x "$tmux_bin" ]] || { echo "tmux is required; run pixi install" >&2; exit 1; }
 if "$tmux_bin" -S "$socket" has-session -t "=$session_name" 2>/dev/null; then
   "$tmux_bin" -S "$socket" kill-session -t "=$session_name"
-  echo "Stopped this project's SPD bridge/viewer session: $session_name"
+  echo "Stopped this project's SPD viewer session: $session_name"
 else
-  echo "This project's SPD bridge/viewer session is not running"
+  echo "This project's SPD viewer session is not running"
 fi

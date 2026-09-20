@@ -412,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     initialized = False
     try:
         PlaybackPanel(root, player)
-        # Explicitly ignore ROS_DOMAIN_ID: this is the source side, never domain 121.
+        # Both recorded publisher and SPD subscriber use direct DDS domain 120.
         rclpy.init(args=[], domain_id=120)
         initialized = True
         node = rclpy.create_node("spd_recorded_target_publisher")

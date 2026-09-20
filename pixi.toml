@@ -49,9 +49,6 @@ spd-teleop-e2e = "python scripts/test_spd_teleop_e2e.py --json /tmp/spd-teleop-e
 ros-build-interfaces = "pixi run -e ros-jazzy bash -lc 'colcon build --base-paths packages/tianji-spd-interfaces --build-base .ros/build --install-base .ros/install --merge-install'"
 spd-teleop-ros = "bash scripts/start_spd_ros.sh"
 spd-teleop-ros-stop = "bash scripts/stop_spd_ros.sh"
-ros-bridge-install = "bash scripts/install_ros_bridge.sh"
-ros-bridge-publisher = "bash scripts/run_ros_bridge.sh publisher"
-ros-bridge-spd = "bash scripts/run_ros_bridge.sh spd"
 
 [feature.ros-jazzy.dependencies]
 python = "3.11.*"
@@ -78,7 +75,7 @@ coacd = "==1.0.14"
 
 [feature.ros-jazzy.activation.env]
 RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
-ROS_DOMAIN_ID = "121"
+ROS_DOMAIN_ID = "120"
 ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
 ROS_STATIC_PEERS = ""
 

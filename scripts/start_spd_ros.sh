@@ -14,7 +14,7 @@ seed="0"
 
 usage() {
   echo "Usage: start_spd_ros.sh [--attach] [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--max-enable-delta-rad RAD]"
-  echo "Starts only the SPD ROS2DDS bridge (domain 121) and MuJoCo subscriber viewer."
+  echo "Starts only the MuJoCo subscriber viewer (direct Fast DDS, domain 120)."
 }
 while (($#)); do
   case "$1" in
@@ -41,9 +41,6 @@ if [[ -z "$tmux_bin" ]]; then
   export TERMINFO="$repo_root/.pixi/envs/default/share/terminfo"
 fi
 [[ -x "$tmux_bin" ]] || { echo "tmux is required; run pixi install" >&2; exit 1; }
-[[ -x "$repo_root/.pixi/tools/zenoh-bridge-ros2dds/1.10.0/zenoh-bridge-ros2dds" ]] || {
-  echo "Missing ROS2DDS bridge; run bash scripts/install_ros_bridge.sh" >&2; exit 1;
-}
 [[ -f "$repo_root/.ros/install/setup.sh" ]] || {
   echo "Missing ROS interfaces; run pixi run ros-build-interfaces" >&2; exit 1;
 }
@@ -52,19 +49,17 @@ if "$tmux_bin" -S "$socket" has-session -t "=$session_name" 2>/dev/null; then
   exit 1
 fi
 mkdir -p "$output"
-viewer_inner="source .ros/install/setup.sh && export ROS_DOMAIN_ID=121 ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS='' && exec python -m spd_vr.ros_viewer --output $(printf '%q' "$output") --max-enable-delta-rad $(printf '%q' "$max_enable_delta")"
+viewer_inner="source .ros/install/setup.sh && export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS='' && exec python -m spd_vr.ros_viewer --output $(printf '%q' "$output") --max-enable-delta-rad $(printf '%q' "$max_enable_delta")"
 if ((headless)); then viewer_inner+=" --headless"; fi
 viewer_inner+=" --seed $(printf '%q' "$seed")"
 if [[ -n "$scene" ]]; then viewer_inner+=" --scene $(printf '%q' "$scene")"; fi
 if [[ -n "$task" ]]; then viewer_inner+=" --task $(printf '%q' "$task")"; fi
-bridge="cd $(printf '%q' "$repo_root") && exec env SPD_ZENOH_LISTEN=$(printf '%q' "${SPD_ZENOH_LISTEN:-tcp/127.0.0.1:7447}") bash scripts/run_ros_bridge.sh spd"
 viewer="cd $(printf '%q' "$repo_root") && exec pixi run -e ros-jazzy bash -c $(printf '%q' "$viewer_inner")"
-"$tmux_bin" -S "$socket" new-session -d -s "$session_name" -n bridge "$bridge"
+"$tmux_bin" -S "$socket" new-session -d -s "$session_name" -n viewer "$viewer"
 trap '"$tmux_bin" -S "$socket" kill-session -t "=$session_name" 2>/dev/null || true' ERR
 "$tmux_bin" -S "$socket" set-option -t "=$session_name:" remain-on-exit on >/dev/null
-"$tmux_bin" -S "$socket" new-window -t "=$session_name:" -n viewer "$viewer"
 trap - ERR
-echo "Launched SPD subscriber session: $session_name (ROS domain 121)"
+echo "Launched SPD subscriber session: $session_name (direct Fast DDS, ROS domain 120)"
 echo "No publisher, PICO input, IK, or hardware controller was started."
 echo "Control terminal / viewer: e=enable/disable, c=clear control; viewer r=start, s=save, d=discard"
 printf 'Inspect/attach: %q -S %q attach-session -t %q\n' "$tmux_bin" "$socket" "=$session_name"

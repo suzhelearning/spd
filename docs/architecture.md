@@ -6,38 +6,45 @@
 
 ## 外部关节订阅入口
 
-`pixi run spd-teleop-ros` 只启动 SPD 侧 DDS/Zenoh 桥和 ROS Viewer：
+`pixi run spd-teleop-ros` 只启动 ROS Viewer，tmux 会话只含 `viewer` 窗口：
 
 ```text
 外部 tianji_teleop（标定 / IK / 手部重定向）或模拟发布器
     → ROS JointCommand，domain 120
-    → 发布侧 zenoh-bridge-ros2dds
-    → Zenoh TCP
-    → SPD 侧 zenoh-bridge-ros2dds，domain 121
+    → 直连 Fast DDS
+    → SPD ROS Viewer，domain 120
     → 校验 / 会话授权 / 最新目标邮箱 / 名称映射
     → MuJoCo position actuators / 物理积分
     → Viewer 目标与实际位置曲线 / 仿真 episode
 ```
 
-SPD 此入口不接 PICO、不初始化手部重定向、不运行 IK，也不启动发布器；`PlantController(command_only=True)` 拒绝旧 tracking/arm-target 输入。两侧使用不同 ROS domain，桥采用显式 TCP 端点和 loopback DDS 单播发现，避免同机 DDS 绕过桥。ROS 节点使用 Jazzy/Fast DDS，桥内部的 CycloneDDS 不改变 ROS 节点后端。
+SPD 此入口不接 PICO、不初始化手部重定向、不运行 IK，也不启动发布器；`PlantController(command_only=True)` 拒绝旧 tracking/arm-target 输入。发布器和 Viewer 均使用 Jazzy/Fast DDS：`ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`，在 Pixi 激活和接口 overlay 加载后显式 export。当前 ROS 路径不启动桥，旧非 ROS tracking/Zenoh 入口及依赖保持独立。
 
 54 维目标必须满足固定名称顺序、有限值、ready 组范围、会话、递增序号和 UTC 新鲜度。范围检查通过后才原子更新目标；实际消费再次检查年龄。映射按 manifest 名称预计算 qpos/执行器地址，场景 free joints 不占用机器人索引。启用须检查新鲜候选相对保持目标的差值；100 ms 组级超时锁存，新会话解除授权，恢复需本地显式启用。
 
 Viewer 显示接收/拒绝/保持状态和所选关节的实际应用目标、MuJoCo qpos 曲线；`F8/F9` 切换关节，`e/c` 启用或清除控制，`r/s/d` 独立控制录制。相机按既有配置附着在世界/腕部，仿真状态按名称取值；不把未 ready 输入占位值记录为实际动作。当前同步相机渲染仍可能触发控制超时，不宣称已满足录制开启时的实时频率。启动命令和网络配置见根 README。
 
+应用就绪只说明自身初始化完成，不说明 DDS 已发现对端或订阅器已有通过校验的新鲜候选，更不等于授权。候选接收／有效计数、年龄及 ready/hold 状态与显式授权分别判断。默认仅同机发现；跨主机必须另行显式配置 DDS 发现、网络接口／防火墙与 UTC 时钟同步，不能依赖同机启动器的固定 `LOCALHOST` 配置。domain 不是安全边界，直连不保证网络或负载下的实时性能。
+
 ## PICO 发布侧与拼字场景
 
-`pixi run spd-pico` 是独立的同机编排入口：`PICO_2 → TCP → ros_publisher / PicoTeleopCore → JointCommand(domain 120) → 两侧 DDS/Zenoh 桥 → ros_viewer(domain 121, spelling_blocks/spelling)`。订阅器仍为 `command_only=True`，不加载 PICO 或求解器；其他场景和 H5 演示入口不变。
+`pixi run spd-pico` 是独立的同机编排入口：`PICO_2 → TCP → ros_publisher / PicoTeleopCore → JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120, spelling_blocks/spelling)`。PICO 控制窗口和 MuJoCo 窗口保持独立。订阅器仍为 `command_only=True`，不加载 PICO 或求解器；其他场景和 H5 演示入口不变。
 
 发布侧复用经过模型校验的双臂 IK、`SideAlignment` 和 `WujiRetargetPair`，输出规范名称顺序的有限、限位内 54 维目标。接收线程只排队帧及接收时间；求解状态由单线程拥有，避免重连回调与求解器并发重置。5 ms 求解调度与 60 Hz 发布调度分开，实际输入超过 50 ms 则撤销 ready，不以新的 ROS 时间戳伪装旧跟踪有效。
 
 PICO 控制窗口以 `K 标准掌姿校准 → C 实际位置对齐/仅预览 → F 确认并跟随 → 空格保持` 划分控制边界。`PalmMapping` 冻结 K 时头部水平前向，分别标定人体腕到标准掌面的刚体偏置，并由 URDF 的固定 MCP 根部建立机器人腕到掌面的变换。C 只重建实际机器人掌位的相对平移基准，保留 K 朝向；K/C 均保持并更换会话撤销旧授权。确认经本次会话私有 0700 目录内的 Unix socket 请求 SPD 授权；物理线程检查候选会话、三组就绪状态、原有新鲜度及 0.15 rad 差值门。仅匹配且未过期的成功回执，加上仍有效的本地标定／输入，才允许跟随。Hold 冻结源目标并请求撤权，不重置姿态。
 
-授权 IPC 由独立工作线程处理；编号、会话、有效期和源端操作代次隔离迟到回复。成功回复附带物理线程采样的规范 14 关节实际位置／速度、保留目标、单调时钟与实际场景 XML；状态按 50 ms 周期轮询，不启动运动。发布侧拒绝过期、非有限、乱序或场景不可用的反馈，C/K 还要求机器人已静止并接近保留目标。撤权或通道不可用后需显式恢复。生产 PICO 发布器必须接入该反馈通道；H5 和普通订阅入口不变。54 维运动目标仍走 ROS/DDS/Zenoh，订阅侧原有 100 ms 保持门限不放宽；双臂共用 ready 位、左右手分别失效。
+授权 IPC 由独立工作线程处理；编号、会话、有效期和源端操作代次隔离迟到回复。成功回复附带物理线程采样的规范 14 关节实际位置／速度、保留目标、单调时钟与实际场景 XML；状态按 50 ms 周期轮询，不启动运动。发布侧拒绝过期、非有限、乱序或场景不可用的反馈，C/K 还要求机器人已静止并接近保留目标。撤权或通道不可用后需显式恢复。生产 PICO 发布器必须接入该反馈通道；H5 和普通订阅入口不使用此 PICO 专属控制 socket，操作不变。54 维运动目标走直连 ROS/Fast DDS（两端 domain 120），不走 socket；订阅侧原有 100 ms 保持门限不放宽；双臂共用 ready 位、左右手分别失效。
 
 `arm_ik` / `qp_arm` 在腕掌刚体转换后求解位置和朝向，主任务之后才优化速度连续性、关节中位与向外肘姿；显式限制关节速度、加速度和限位制动。`ArmCollisionScene` 使用反馈指明的场景几何约束静态躯干／桌面、非相邻自碰及双臂碰撞，并检查双臂联合提议和实际到命令的离散路径。可移动任务物体、未观测的活动手指及 mocap 分支不在此避碰覆盖内。模型凸碰撞、有限采样与未感知几何均不构成硬件安全保证。受限／不可达保持 blocked 和真实残差；跟踪失效与数值错误分别处理，不以 QP success 宣称到位。`palm_preview` 只绘制目标、源目标 FK 与实际 FK，不拥有运动授权。
 
-编排器只持有本次子进程组及新建的 ADB 转发；完全匹配的已有转发可复用，但不获取其清理所有权。窗口关闭或 Ctrl+C 清理本次资源。与 H5 编排器共享互斥锁，拒绝抢占 7447 端口。进程就绪、跟踪有效和本地控制授权是三个不同状态。
+编排器只持有本次子进程组及新建的 ADB 转发；完全匹配的已有转发可复用，但不获取其清理所有权。窗口关闭或 Ctrl+C 清理本次资源。与 H5 编排器共享互斥锁，不能同时启动。进程就绪、跟踪有效、收到新鲜候选和本地控制授权是不同状态。
+
+## HDF5 观测发布侧
+
+`pixi run spd-demo` 保持独立的 H5 演示入口：文件路径确认后启动 `ros_recorded_publisher` 的原始画面播放窗口和无任务场景的 MuJoCo 订阅窗口，不使用 tmux。`JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120)` 与 PICO 使用相同的同机 DDS 配置，但发布器、输入来源和窗口操作不合并，不启动桥或 PICO 授权 socket。
+
+H5 只读已有观测作为合成目标，不恢复原始控制命令；RGB 仅由播放面板本地读取，不经命令话题传输。启动后 WAITING 持续发送 HOME 目标，应用就绪不等于 Viewer 已收到新鲜候选。先在 MuJoCo 窗口按 `e` 显式授权，再在播放器 **Play**；**Pause** 持续发送最后目标，**Next** 切换文件并过渡，不自动授权或开始播放。关闭任一窗口或 Ctrl+C 仅清理本次进程；与 `spd-pico` 共用会话锁，禁止并行运行。DDS 直连不改变会话、新鲜度、保持或启用目标差门限。
 
 ## 保留的 PICO 跟踪入口
 

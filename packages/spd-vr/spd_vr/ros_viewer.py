@@ -191,7 +191,7 @@ class RosViewerApp:
         age_ms = (time.time_ns() - candidate.stamp_ns) * 1e-6 if candidate else None
         values = {
             "Control": self.executor.state,
-            "Link": "DDS -> Zenoh bridge -> DDS",
+            "Link": "Direct DDS / Fast DDS (domain 120)",
             "RX": f"{mailbox.received} total / {mailbox.accepted} valid / {mailbox.rejected} rejected ({self._receive_hz:.1f} Hz)",
             "Session": (mailbox.authorized_session or (candidate.session_id if candidate else "none"))[:16],
             "Candidate": f"seq={candidate.sequence} age={age_ms:.1f} ms ready={candidate.ready_mask:03b}" if candidate else "none",
