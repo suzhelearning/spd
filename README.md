@@ -51,7 +51,7 @@ pixi run spd-scene --task bottles/toss_in_bin --seed 0
 pixi run spd-scene --task spelling_blocks/spelling --seed 0
 ```
 
-每条命令打开一个 MuJoCo 窗口；关闭后可启动另一个任务。鼠标操作沿用 MuJoCo，`Esc` / `q` 退出。独立查看器保持机器人 HOME 目标，不启动 ROS、PICO 或自动任务策略。
+每次启动先在终端询问桌子近侧边缘距离机器人底座原点多少米，确认位置后才打开 MuJoCo 窗口；关闭后可启动另一个任务。鼠标操作沿用 MuJoCo，`Esc` / `q` 退出。独立查看器保持机器人 HOME 目标，不启动 ROS、PICO 或自动任务策略。
 
 | 任务 | 初始场景与接触几何 |
 |---|---|
@@ -64,7 +64,9 @@ pixi run spd-scene --task spelling_blocks/spelling --seed 0
 
 桌面高度为 **0.75 m**，适配 Tianji HOME 前臂和手掌的碰撞间隙。盘子半径 100 mm、积木 75×25×15 mm、杯高 90 mm、瓶高 180 mm、箱内尺寸 350×250×150 mm；这些是工程选型，不是论文提供的精确尺寸。物体使用真实碰撞、重力和摩擦，不以焊接、禁用接触或允许杯子穿透来维持摆放。随机质量、摩擦、颜色与位置可由 seed 重现。
 
-桌面中心为 `(0.50, 0, 0.725) m`，尺寸为 `0.80 × 1.10 × 0.05 m`；靠近机器人的边缘位于 `X=0.10 m`，与桌面高度处的基座立柱留出约 `17.5 mm` 间隙。桌面沿机器人前方 `+X` 平移，不改变任务物体的初始位置。
+桌子尺寸为 `0.80 × 1.10 × 0.05 m`。输入距离 `d` 表示沿机器人前方 `+X` 从**底座原点到近侧桌沿**的距离，不是桌面中心距离，也不是底座外表面的净空；桌面中心为 `(d + 0.40, 0, 0.725) m`。桌子、任务物体和固定支架一起平移，保留相对摆放、字母分配和物理参数；进入仿真后桌子固定，不增加滑动关节。
+
+交互启动留空回车采用原位置 `d=0.10 m`；该位置与桌面高度处的基座立柱约有 `17.5 mm` 间隙。无效输入会重新询问，`Ctrl+C` / 输入结束可在开窗前取消。可用 `--table-distance 0.25` 显式指定位置并跳过询问；无交互终端时必须指定此参数。接受有限非负数，但输入距离不等于已验证的碰撞净空或机械臂可达范围。实际桌沿、中心、尺寸和平移后的工作区写入 `scene_manifest.json` 的 `table` 字段。
 
 机器人主体结构材质为 **6061 铝合金**（用户提供的实物信息），不表示电机、减速器、轴承和手部接触面均为铝合金。机器人动力学仍使用 URDF 给定的各连杆质量、质心和惯性张量；不以外观/碰撞网格的实心铝体积重算装配体惯性。当前采用刚体仿真，不模拟铝合金弹性或屈服；接触摩擦需结合实际表面处理和接触材料确定，不能仅由 6061 牌号指定。
 
@@ -89,7 +91,7 @@ pixi run spd-scene --task spelling_blocks/spelling --seed 0
 
 ```bash
 pixi run spd-scene --task cups/pyramid --seed 0 \
-  --headless --duration 3 --output data/task_scenes
+  --table-distance 0.10 --headless --duration 3 --output data/task_scenes
 ```
 
 输出为 `data/task_scenes/cups/pyramid/seed_0/{scene.xml,scene_manifest.json,state.json,final.png}`。其他任务目录同理；重复运行同一输出目录、任务和 seed 会更新这些输出，不修改已验证的基础机器人模型。`--duration 0` 导出初始状态；`--screenshot PATH` 指定截图路径。无图形模式默认使用 EGL。
@@ -175,7 +177,7 @@ pixi run spd-pico
 # pixi run spd-pico --adb-serial SERIAL
 ```
 
-此入口只加载 `spelling_blocks/spelling`（默认 seed 0，可用 `--seed` 修改），同时启动 PICO 控制窗口和 SPD MuJoCo 窗口，不启动桥。不改变六个任务的几何、物理参数或原有 `spd-demo` H5 入口。控制路径为：
+此入口只加载 `spelling_blocks/spelling`（默认 seed 0，可用 `--seed` 修改），先询问桌沿距离并调整桌子与物体，再启动 PICO 控制窗口和 SPD MuJoCo 窗口，不启动桥。可用 `pixi run spd-pico --table-distance 0.30` 显式指定距离。只改变场景的整体 X 位置，不改变物体尺寸、物理参数、标定或控制逻辑。原有 `spd-demo` H5 入口仍使用无桌子场景，不询问桌距。控制路径为：
 
 ```text
 PICO_2 TCP → 发布侧真实双臂 IK + Wuji 手部重定向

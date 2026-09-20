@@ -12,6 +12,7 @@ import argparse
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 import queue
+import sys
 import time
 from typing import Any
 
@@ -31,6 +32,7 @@ class RosViewerApp:
     def __init__(self, args: argparse.Namespace) -> None:
         import rclpy
 
+        scene_result = build_selected_scene(args.scene, args.task, args.seed, args.table_distance)
         self.args = args
         self.stop = False
         self.episode_counter = 0
@@ -42,9 +44,10 @@ class RosViewerApp:
         self._record_operation = ""
         self._accept_recording = False
         self.recorder = EpisodeRecorder(args.output, camera_names=CAMERA_NAMES)
-        scene_result = build_selected_scene(args.scene, args.task, args.seed)
         args.scene = scene_result.scene if scene_result is not None else "hardware_free"
         args.task = scene_result.task if scene_result is not None else "external_joint_command"
+        if scene_result is not None:
+            args.table_distance = scene_result.table_near_edge_m
         self.plant = PlantController(
             strict_artifacts=True, command_only=True,
             camera_config_path=Path(__file__).resolve().parents[1] / "config" / "sim_cameras.yaml",
@@ -200,6 +203,8 @@ class RosViewerApp:
             "Joint F8 / F9": f"{selected + 1}/54 {JOINT_NAMES[selected]}",
             "Position rad": f"target={targets[selected]:+.4f} actual={actual[selected]:+.4f} error={targets[selected] - actual[selected]:+.4f}",
         }
+        if self.plant.scene_manifest is not None:
+            values["Table"] = f"near edge X={self.args.table_distance:g} m; fixed"
         errors = [
             float(np.max(np.abs(targets[start:end] - actual[start:end])))
             for start, end in ((0, 7), (7, 14), (14, 34), (34, 54))
@@ -228,7 +233,7 @@ class RosViewerApp:
             if handle is not None:
                 with handle.lock():
                     if self.plant.scene_manifest is not None:
-                        frame_scene(handle.cam, handle.opt)
+                        frame_scene(handle.cam, handle.opt, self.args.table_distance)
                     else:
                         visual_positions = self.plant.data.geom_xpos[self.plant.model.geom_group == 1]
                         low, high = visual_positions.min(axis=0), visual_positions.max(axis=0)
@@ -241,6 +246,7 @@ class RosViewerApp:
             print(f"SPD subscriber ready: {TOPIC}; explicit local enable required", flush=True)
             if self.plant.scene_model_path is not None:
                 print(f"Scene: {self.args.scene}/{self.args.task}; seed={self.args.seed}; "
+                      f"table near edge X={self.args.table_distance:g} m; "
                       f"model={self.plant.scene_model_path}; manifest={self.plant.scene_manifest_path}", flush=True)
             while not self.stop and rclpy.ok() and self.window.is_running():
                 rclpy.spin_once(self.node, timeout_sec=0.0)
@@ -286,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scene", help="Scene name (default: hardware_free)")
     parser.add_argument("--task", help="Task name or qualified SCENE/TASK ID")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--table-distance", type=float,
+                        help="Base origin to near table edge along +X, metres; prompts for table scenes")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--control-socket", type=Path,
                         help="Private local PICO control socket (optional; parent directory must be 0700)")
@@ -294,7 +302,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not np.isfinite(args.max_enable_delta_rad) or args.max_enable_delta_rad <= 0:
         parser.error("--max-enable-delta-rad must be positive and finite")
-    return RosViewerApp(args).run()
+    try:
+        app = RosViewerApp(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    except (EOFError, KeyboardInterrupt):
+        print("\n已取消，未打开场景。", file=sys.stderr)
+        return 130
+    return app.run()
 
 
 if __name__ == "__main__":

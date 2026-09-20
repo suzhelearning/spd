@@ -81,6 +81,8 @@ PICO_2 APK → ADB/TCP → pico_hand_tracking
 
 五个 Figure 4/A.4 场景可通过 `pixi run spd-scene --task SCENE/TASK --seed N` 独立查看，也可通过 `spd-teleop-ros --task SCENE/TASK --seed N` 加载到既有关节订阅链。`PlantController` 先验证基础机器人资产，再合入场景；不覆盖基础 MJCF，不因场景 free joints 改变机器人索引。桌高 0.75 m 适配 Tianji 初始姿态，盘架、杯架和箱体固定，盘/杯/积木/瓶自由运动；杯体和把手使用非凸组合碰撞，不允许初始穿透。构造参数及 seed 写入 scene manifest，ROS episode 保存完整 task manifest。此功能是可交互物理场景，不包含自动策略、任务评分或原论文视觉资产的精确复刻。
 
+带桌场景的交互入口（`spd-pico`、`spd-scene`、带任务的 `spd-teleop-ros`）在创建窗口前通过 `spd_vr.scene.resolve_table_distance` 询问桌沿位置；`--table-distance METRES` 可显式指定，无交互终端时必须提供。距离沿 +X 从机器人底座原点测到近侧桌沿，回车默认 0.10 m。`SceneBuildResult.with_table_near_edge` 在不重新采样的前提下同步平移桌子、物体和固定支架，保留原始结果；桌子仍为静态碰撞体。模型、任务 manifest 和 Viewer 取景使用调整后的位置，PICO 继续通过原反馈通道读取实际场景模型，标定和避碰算法本身不变。H5 和其他 `hardware_free` 入口无桌子，不触发询问。
+
 ## 论文目标与当前实现的区别
 
 论文仿真 480 Hz，控制/流传输/记录 60 Hz，训练网格 30 Hz。频率是不同阶段的契约，不是三个名称相同的循环，也不是当前机器的性能保证。

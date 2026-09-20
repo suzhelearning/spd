@@ -8,7 +8,8 @@ real collision-free space, not visual meshes over solid collision proxies.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 import math
 from typing import Any, Iterable
 import xml.etree.ElementTree as ET
@@ -164,17 +165,56 @@ class SceneBuildResult:
     objects: tuple[ObjectSpec, ...]
     sampled_values: dict[str, Any]
     worldbody: ET.Element
+    table_near_edge_m: float = 0.10
+
+    def with_table_near_edge(self, distance: float) -> SceneBuildResult:
+        """Translate the table and task together along +X without resampling.
+
+        Distance is measured from the robot base origin to the near table edge.
+        The returned result owns independent XML, geometry and sampled metadata.
+        """
+        distance = float(distance)
+        if not math.isfinite(distance) or distance < 0:
+            raise ValueError("table near-edge distance must be finite and nonnegative")
+        result = deepcopy(self)
+        delta = distance - self.table_near_edge_m
+        if delta == 0:
+            return result
+        objects = tuple(
+            replace(obj, position=(obj.position[0] + delta, *obj.position[1:]))
+            for obj in result.objects
+        )
+        positions = {obj.name: obj.position for obj in objects}
+        for child in result.worldbody:
+            if child.tag == "body":
+                # Fixtures and painted labels move with their parent bodies.
+                position = positions[child.attrib["name"]]
+            elif child.tag == "geom" and child.attrib.get("name") == "scene_table":
+                x, y, z = map(float, child.attrib["pos"].split())
+                position = (x + delta, y, z)
+            else:
+                continue
+            child.set("pos", " ".join(map(str, position)))
+        return replace(result, objects=objects, table_near_edge_m=distance)
 
     def manifest(self) -> dict[str, Any]:
+        translation = self.table_near_edge_m - 0.10
+        table = self.worldbody.find("geom[@name='scene_table']")
+        center = [float(value) for value in table.attrib["pos"].split()]
+        size = [2 * float(value) for value in table.attrib["size"].split()]
         return {
             "scene": self.scene,
             "task": self.task,
             "seed": self.seed,
             "candidate": self.candidate,
             "table": {
-                "top_z_m": TABLE_Z,
-                "workspace_center": list(WORKSPACE_CENTER),
-                "x_range_m": list(WORKSPACE_X),
+                "top_z_m": center[2] + size[2] / 2,
+                "center_xyz_m": center,
+                "size_xyz_m": size,
+                "near_edge_x_m": self.table_near_edge_m,
+                "translation_x_m": translation,
+                "workspace_center": [WORKSPACE_CENTER[0] + translation, *WORKSPACE_CENTER[1:]],
+                "x_range_m": [value + translation for value in WORKSPACE_X],
                 "y_range_m": list(WORKSPACE_Y),
             },
             "sampled_values": self.sampled_values,

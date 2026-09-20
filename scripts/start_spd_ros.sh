@@ -12,15 +12,17 @@ scene=""
 task=""
 seed="0"
 
+table_distance=""
 usage() {
-  echo "Usage: start_spd_ros.sh [--attach] [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--max-enable-delta-rad RAD]"
+  echo "Usage: start_spd_ros.sh [--attach] [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD]"
   echo "Starts only the MuJoCo subscriber viewer (direct Fast DDS, domain 120)."
+  echo "Table scenes ask for the robot-base-to-near-edge distance unless --table-distance is given."
 }
 while (($#)); do
   case "$1" in
     --attach) mode="attach"; shift ;;
     --headless) headless=1; shift ;;
-    --output|--max-enable-delta-rad|--scene|--task|--seed)
+    --output|--max-enable-delta-rad|--scene|--task|--seed|--table-distance)
       [[ $# -ge 2 && -n "$2" ]] || { echo "Missing value for $1" >&2; exit 2; }
       case "$1" in
         --output) output="$2" ;;
@@ -28,6 +30,7 @@ while (($#)); do
         --scene) scene="$2" ;;
         --task) task="$2" ;;
         --seed) seed="$2" ;;
+        --table-distance) table_distance="$2" ;;
       esac
       shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -48,12 +51,35 @@ if "$tmux_bin" -S "$socket" has-session -t "=$session_name" 2>/dev/null; then
   echo "refusing duplicate session: $session_name" >&2
   exit 1
 fi
+if [[ -n "$table_distance" || "$task" == */* || ( -n "$scene" && "$scene" != "hardware_free" ) ]]; then
+  distance_arguments=()
+  if [[ -n "$table_distance" ]]; then distance_arguments+=("$table_distance"); fi
+  table_distance="$(
+    cd "$repo_root"
+    pixi run -e default python -c '
+import sys
+from spd_vr.scene import resolve_table_distance
+try:
+    print(resolve_table_distance(float(sys.argv[1]) if len(sys.argv) > 1 else None))
+except (ValueError, EOFError) as exc:
+    print(str(exc) or "Table placement cancelled.", file=sys.stderr)
+    raise SystemExit(2)
+except KeyboardInterrupt:
+    print("\nTable placement cancelled.", file=sys.stderr)
+    raise SystemExit(130)
+' "${distance_arguments[@]}"
+  )"
+  if [[ "$task" == */* || ( -n "$scene" && "$scene" != "hardware_free" ) ]]; then
+    printf 'Table near edge: %s m from robot base origin (+X).\n' "$table_distance"
+  fi
+fi
 mkdir -p "$output"
 viewer_inner="source .ros/install/setup.sh && export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS='' && exec python -m spd_vr.ros_viewer --output $(printf '%q' "$output") --max-enable-delta-rad $(printf '%q' "$max_enable_delta")"
 if ((headless)); then viewer_inner+=" --headless"; fi
 viewer_inner+=" --seed $(printf '%q' "$seed")"
 if [[ -n "$scene" ]]; then viewer_inner+=" --scene $(printf '%q' "$scene")"; fi
 if [[ -n "$task" ]]; then viewer_inner+=" --task $(printf '%q' "$task")"; fi
+if [[ -n "$table_distance" ]]; then viewer_inner+=" --table-distance $(printf '%q' "$table_distance")"; fi
 viewer="cd $(printf '%q' "$repo_root") && exec pixi run -e ros-jazzy bash -c $(printf '%q' "$viewer_inner")"
 "$tmux_bin" -S "$socket" new-session -d -s "$session_name" -n viewer "$viewer"
 trap '"$tmux_bin" -S "$socket" kill-session -t "=$session_name" 2>/dev/null || true' ERR

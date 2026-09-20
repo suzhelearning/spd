@@ -104,6 +104,7 @@ def main() -> int:
     parser.add_argument("--no-adb-forward", action="store_true", help="Use an existing TCP endpoint; do not require or modify ADB")
     parser.add_argument("--reconnect", type=float, default=2.0, help="Source TCP reconnect delay in seconds")
     parser.add_argument("--seed", type=int, default=0, help="Spelling scene seed (default: 0)")
+    parser.add_argument("--table-distance", type=float, help="Robot base to near table edge in metres; prompts if omitted (default: 0.10)")
     args = parser.parse_args()
     if not all(1 <= port <= 65535 for port in (args.port, args.device_port)):
         parser.error("--port and --device-port must be in 1..65535")
@@ -154,10 +155,32 @@ def main() -> int:
             except BlockingIOError:
                 parser.error("spd-pico or spd-demo is already running; close its windows or use Ctrl+C in its terminal")
         try:
+            distance_command = ["pixi", "run", "-e", "default", "python", "-c", """
+import sys
+from spd_vr.scene import resolve_table_distance
+try:
+    print(resolve_table_distance(float(sys.argv[1]) if len(sys.argv) > 1 else None))
+except (ValueError, EOFError) as exc:
+    print(str(exc) or "Table placement cancelled.", file=sys.stderr)
+    raise SystemExit(2)
+except KeyboardInterrupt:
+    print("\\nTable placement cancelled.", file=sys.stderr)
+    raise SystemExit(130)
+"""]
+            if args.table_distance is not None:
+                distance_command.append(str(args.table_distance))
+            distance = subprocess.run(distance_command, cwd=ROOT, stdout=subprocess.PIPE,
+                                      text=True, check=True)
+            args.table_distance = float(distance.stdout.strip())
+            print(f"Table near edge: {args.table_distance} m from robot base origin (+X).", flush=True)
             create_forward = preflight_device(args)
             preflight_display()
             if not (ROOT / ".ros/install/setup.sh").is_file():
                 raise RuntimeError("ROS interfaces missing; run pixi run ros-build-interfaces")
+        except subprocess.CalledProcessError as exc:
+            return exc.returncode
+        except KeyboardInterrupt:
+            return 130
         except (OSError, RuntimeError) as exc:
             parser.error(str(exc))
         control_directory = resources.enter_context(tempfile.TemporaryDirectory(prefix="spd-pico-control-"))
@@ -182,6 +205,7 @@ def main() -> int:
                 source_arguments.extend(("--adb-serial", args.adb_serial))
             start("viewer", ros_command("spd_vr.ros_viewer", "--output", str(ROOT / "episodes"),
                                         "--task", "spelling_blocks/spelling", "--seed", str(args.seed),
+                                        "--table-distance", str(args.table_distance),
                                         "--control-socket", control_socket))
             wait_ready("viewer", "SPD subscriber ready")
             start("source", ros_command("spd_vr.ros_publisher", *source_arguments))

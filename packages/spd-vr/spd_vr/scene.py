@@ -6,12 +6,38 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import time
 from typing import Any
 
 
-def build_selected_scene(scene: str | None, task: str | None, seed: int) -> Any:
-    """Accept a qualified task ID or an explicit scene/task pair."""
+def resolve_table_distance(value: float | None) -> float:
+    """Resolve the near table edge before starting any viewer or publisher."""
+    if value is not None:
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("桌沿距离必须是有限的非负数（单位 m）。")
+        return value
+    if not sys.stdin.isatty():
+        raise ValueError("带桌子的场景需要交互输入；非交互启动请指定 --table-distance METRES。")
+    while True:
+        print(
+            "桌子近侧边缘距离机器人底座原点多少 m？沿 +X 测量，"
+            "桌上物体一起平移，进入后固定。[回车 = 0.10 m]\n> ",
+            end="", file=sys.stderr, flush=True,
+        )
+        selected = input().strip()
+        try:
+            distance = float(selected) if selected else 0.10
+            return resolve_table_distance(distance)
+        except ValueError:
+            print("请输入有限的非负数，例如 0.25；Ctrl+C 取消。", file=sys.stderr)
+
+
+def build_selected_scene(
+    scene: str | None, task: str | None, seed: int,
+    table_near_edge_m: float | None = 0.10,
+) -> Any:
+    """Accept a task and table edge; None prompts only for procedural scenes."""
     from spd_envs.registry import get_task
 
     if task is not None and "/" in task:
@@ -27,13 +53,15 @@ def build_selected_scene(scene: str | None, task: str | None, seed: int) -> Any:
         spec = get_task(scene, task)
     except KeyError as exc:
         raise ValueError(str(exc)) from exc
-    return spec.build(seed)
+    distance = resolve_table_distance(table_near_edge_m)
+    return spec.build(seed).with_table_near_edge(distance)
 
 
-def frame_scene(camera: Any, options: Any) -> None:
+def frame_scene(camera: Any, options: Any, table_near_edge_m: float = 0.10) -> None:
     """Show the tabletop and both arms, hiding duplicate robot collision meshes."""
-    camera.lookat[:] = (0.40, 0.0, 0.85)
-    camera.distance = 2.0
+    shift = table_near_edge_m - 0.10
+    camera.lookat[:] = (0.40 + shift * 0.5, 0.0, 0.85)
+    camera.distance = 2.0 + abs(shift)
     camera.azimuth = 135.0
     camera.elevation = -30.0
     options.geomgroup[0] = 0
@@ -44,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task", required=True, help="Qualified task ID, e.g. dishes/rack_dishes")
     parser.add_argument("--scene", help="Scene name when --task is not qualified")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--table-distance", type=float,
+                        help="Base origin to near table edge along +X, metres; prompts when omitted")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--duration", type=float, help="Simulation seconds; required in headless mode")
     parser.add_argument("--output", type=Path, help="Save SCENE/TASK/seed_N/{scene.xml,scene_manifest.json,final.png,state.json}")
@@ -61,11 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.headless:
         os.environ.setdefault("MUJOCO_GL", "egl")
     try:
-        result = build_selected_scene(args.scene, args.task, args.seed)
+        result = build_selected_scene(args.scene, args.task, args.seed, args.table_distance)
     except ValueError as exc:
         parser.error(str(exc))
+    except (EOFError, KeyboardInterrupt):
+        print("\n已取消，未打开场景。", file=sys.stderr)
+        return 130
     if result is None:
         parser.error("spd-scene requires a procedural task")
+    print(f"桌沿 X={result.table_near_edge_m:g} m；桌面与物体已同步定位，进入后固定。", flush=True)
 
     import mujoco
     import numpy as np
@@ -84,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         window.open()
         if window.window is not None:
             with window.window.lock():
-                frame_scene(window.window.cam, window.window.opt)
+                frame_scene(window.window.cam, window.window.opt, result.table_near_edge_m)
         if "prompt" in result.sampled_values:
             window.update_hud({"Task": result.sampled_values["prompt"]})
             print(result.sampled_values["prompt"], flush=True)
@@ -110,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             plant.model.vis.global_.offheight = max(int(plant.model.vis.global_.offheight), args.height)
             camera, options = mujoco.MjvCamera(), mujoco.MjvOption()
             mujoco.mjv_defaultCamera(camera)
-            frame_scene(camera, options)
+            frame_scene(camera, options, result.table_near_edge_m)
             with mujoco.Renderer(plant.model, height=args.height, width=args.width) as renderer:
                 renderer.update_scene(plant.data, camera=camera, scene_option=options)
                 screenshot = screenshot.resolve()
