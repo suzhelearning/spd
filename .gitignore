@@ -42,7 +42,8 @@ data/pico_hand_samples/raw/*
 **/calibration_local/
 **/benchmark_results/
 **/checkpoints/
-packages/spd-vr/collision_cache/
+src/description/tianji_wuji2/collision_cache/
+.ros/
 
 # Future long-duration collection
 **/*75h*/

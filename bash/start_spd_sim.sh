@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+output="${SPD_EPISODE_OUTPUT:-$repo_root/data/episodes}"
+headless=0
+max_enable_delta="0.15"
+scene=""
+task=""
+seed="0"
+
+table_distance=""
+usage() {
+  echo "Usage: start_spd_sim.sh [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD]"
+  echo "Runs only the MuJoCo subscriber in this terminal; Ctrl+C exits."
+  echo "Table scenes ask for the robot-base-to-near-edge distance unless --table-distance is given."
+}
+while (($#)); do
+  case "$1" in
+    --headless) headless=1; shift ;;
+    --output|--max-enable-delta-rad|--scene|--task|--seed|--table-distance)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "Missing value for $1" >&2; exit 2; }
+      case "$1" in
+        --output) output="$2" ;;
+        --max-enable-delta-rad) max_enable_delta="$2" ;;
+        --scene) scene="$2" ;;
+        --task) task="$2" ;;
+        --seed) seed="$2" ;;
+        --table-distance) table_distance="$2" ;;
+      esac
+      shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+command -v pixi >/dev/null || { echo "pixi is required" >&2; exit 1; }
+[[ -f "$repo_root/.ros/install/setup.sh" ]] || {
+  echo "Missing ROS interfaces; run pixi run ros-build-interfaces" >&2; exit 1;
+}
+mkdir -p "$output"
+viewer_args=(--output "$output" --max-enable-delta-rad "$max_enable_delta" --seed "$seed")
+if ((headless)); then viewer_args+=(--headless); fi
+if [[ -n "$scene" ]]; then viewer_args+=(--scene "$scene"); fi
+if [[ -n "$task" ]]; then viewer_args+=(--task "$task"); fi
+if [[ -n "$table_distance" ]]; then viewer_args+=(--table-distance "$table_distance"); fi
+if [[ "${CONDA_PREFIX:-}" != "$repo_root/.pixi/envs/ros-jazzy" ]]; then
+  exec pixi run --manifest-path "$repo_root/pixi.toml" -e ros-jazzy \
+    bash "$repo_root/bash/start_spd_sim.sh" "${viewer_args[@]}"
+fi
+echo "Starting SPD subscriber in the foreground (Fast DDS, ROS domain 120)."
+echo "Terminal: e=enable/hold, c=clear, r=start, s=save, d=discard; Ctrl+C=exit."
+cd "$repo_root"
+# Generated colcon setup scripts do not support nounset.
+set +u
+source "$repo_root/.ros/install/setup.sh"
+set -u
+export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS=""
+exec python -m spd_vr.simulation.ros_viewer "${viewer_args[@]}"

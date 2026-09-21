@@ -1,123 +1,93 @@
 # 仿真采集架构
 
-## 唯一目标
+## 1. 边界与数据流
 
-参考 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、附录 A.1，在 MuJoCo 内通过人类遥操作采集目标机器人本体的示范。机器人替换为 tianji_arm + wuji-hand2，跟踪输入替换为 PICO_2。实机控制与真实传感器融合不在范围内。
-
-## 外部关节订阅入口
-
-`pixi run spd-teleop-ros` 只启动 ROS Viewer，tmux 会话只含 `viewer` 窗口：
+SPD 是 **ROS 关节命令订阅端与 MuJoCo 仿真数据采集端**。输入设备接入、人体标定、共享根坐标下的 Franka DLS + Ruckig、Hand2 映射和 ROS 发布属于独立上游 `tianji_teleop-ros2`；已定稿入口是在其工作区运行 `bash bash/run_pico_hand_sim.sh --height-m 1.75`。SPD 不启动上游，不包含 PICO/IK/重定向/命令发布器，不发布实机控制。上游最多 60 Hz 发布 54 维 rad 目标，`--headless` 只关闭辅助窗口，发布继续；C、跟随、失鲜和 P／H／Q 制动／回程的 readiness 与会话由上游负责。
 
 ```text
-外部 tianji_teleop（标定 / IK / 手部重定向）或模拟发布器
-    → ROS JointCommand，domain 120
-    → 直连 Fast DDS
-    → SPD ROS Viewer，domain 120
-    → 校验 / 会话授权 / 最新目标邮箱 / 名称映射
-    → MuJoCo position actuators / 物理积分
-    → Viewer 目标与实际位置曲线 / 仿真 episode
+独立上游：输入 / 标定 / 求解 / ROS JointCommand 发布
+                              ↓
+SPD interfaces：校验 → 最新候选 → 会话与显式授权 → 分组 hold
+                              ↓
+SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理积分
+                              ↓
+              实际关节 qpos / 任务物体与接触状态
+                     ↙                    ↘
+            cameras：真实多视角       Viewer：状态与目标曲线
+                     ↓
+       data_collector：实际状态 + RGB + 实际应用命令扩展
+                     ↓
+            .partial.h5 → 校验 → .h5
 ```
 
-SPD 此入口不接 PICO、不初始化手部重定向、不运行 IK，也不启动发布器；`PlantController(command_only=True)` 拒绝旧 tracking/arm-target 输入。发布器和 Viewer 均使用 Jazzy/Fast DDS：`ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`，在 Pixi 激活和接口 overlay 加载后显式 export。当前 ROS 路径不启动桥，旧非 ROS tracking/Zenoh 入口及依赖保持独立。
+正式入口为前台 `pixi run spd-sim`，以及模型、场景、数据检查命令。不存在独立停止命令、旧 PICO、HDF5 命令发布或 Zenoh 遥操作启动器和转发 shim。`replay_episode` 只读检查数据，不把历史观测用作合成发布目标。
 
-54 维目标必须满足固定名称顺序、有限值、ready 组范围、会话、递增序号和 UTC 新鲜度。范围检查通过后才原子更新目标；实际消费再次检查年龄。映射按 manifest 名称预计算 qpos/执行器地址，场景 free joints 不占用机器人索引。启用须检查新鲜候选相对保持目标的差值；100 ms 组级超时锁存，新会话解除授权，恢复需本地显式启用。
+## 2. 源码与资源职责
 
-Viewer 显示接收/拒绝/保持状态和所选关节的实际应用目标、MuJoCo qpos 曲线；`F8/F9` 切换关节，`e/c` 启用或清除控制，`r/s/d` 独立控制录制。相机按既有配置附着在世界/腕部，仿真状态按名称取值；不把未 ready 输入占位值记录为实际动作。当前同步相机渲染仍可能触发控制超时，不宣称已满足录制开启时的实时频率。启动命令和网络配置见根 README。
-
-应用就绪只说明自身初始化完成，不说明 DDS 已发现对端或订阅器已有通过校验的新鲜候选，更不等于授权。候选接收／有效计数、年龄及 ready/hold 状态与显式授权分别判断。默认仅同机发现；跨主机必须另行显式配置 DDS 发现、网络接口／防火墙与 UTC 时钟同步，不能依赖同机启动器的固定 `LOCALHOST` 配置。domain 不是安全边界，直连不保证网络或负载下的实时性能。
-
-## PICO 发布侧与任务场景确认
-
-`pixi run spd-pico` 是独立的同机编排入口：`PICO_2 → TCP → ros_publisher / PicoTeleopCore → JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120, 已确认的 SCENE/TASK)`。启动器复用 `spd_envs.registry` 列出的任务，先选择场景/任务，再确定桌距，最后汇总任务、seed 和距离并要求显式 `y` 确认；回车默认取消。`--task` 和 `--table-distance` 只预填配置，不能跳过最终确认，非交互调用拒绝启动。选择和确认发生在设备预检、ADB 转发、窗口及发布端创建之前；启动确认不是运动授权。PICO 控制窗口和 MuJoCo 窗口保持独立，订阅器仍为 `command_only=True`，不加载 PICO 或求解器；标定、控制算法、独立场景和 H5 演示入口不变。
-
-发布侧复用经过模型校验的双臂 IK、`SideAlignment` 和 `WujiRetargetPair`，输出规范名称顺序的有限、限位内 54 维目标。接收线程只排队帧及接收时间；求解状态由单线程拥有，避免重连回调与求解器并发重置。5 ms 求解调度与 60 Hz 发布调度分开，实际输入超过 50 ms 则撤销 ready，不以新的 ROS 时间戳伪装旧跟踪有效。
-
-PICO 控制窗口以 `K 标准掌姿校准 → C 实际位置对齐/仅预览 → F 确认并跟随 → 空格保持` 划分控制边界。`PalmMapping` 冻结 K 时头部水平前向，分别标定人体腕到标准掌面的刚体偏置，并由 URDF 的固定 MCP 根部建立机器人腕到掌面的变换。C 只重建实际机器人掌位的相对平移基准，保留 K 朝向；K/C 均保持并更换会话撤销旧授权。确认经本次会话私有 0700 目录内的 Unix socket 请求 SPD 授权；物理线程检查候选会话、三组就绪状态、原有新鲜度及 0.15 rad 差值门。仅匹配且未过期的成功回执，加上仍有效的本地标定／输入，才允许跟随。Hold 冻结源目标并请求撤权，不重置姿态。
-
-授权 IPC 由独立工作线程处理；编号、会话、有效期和源端操作代次隔离迟到回复。成功回复附带物理线程采样的规范 14 关节实际位置／速度、保留目标、单调时钟与实际场景 XML；状态按 50 ms 周期轮询，不启动运动。发布侧拒绝过期、非有限、乱序或场景不可用的反馈，C/K 还要求机器人已静止并接近保留目标。撤权或通道不可用后需显式恢复。生产 PICO 发布器必须接入该反馈通道；H5 和普通订阅入口不使用此 PICO 专属控制 socket，操作不变。54 维运动目标走直连 ROS/Fast DDS（两端 domain 120），不走 socket；订阅侧原有 100 ms 保持门限不放宽；双臂共用 ready 位、左右手分别失效。
-
-`arm_ik` / `qp_arm` 在腕掌刚体转换后求解位置和朝向，主任务之后才优化速度连续性、关节中位与向外肘姿；显式限制关节速度、加速度和限位制动。`ArmCollisionScene` 使用反馈指明的场景几何约束静态躯干／桌面、非相邻自碰及双臂碰撞，并检查双臂联合提议和实际到命令的离散路径。可移动任务物体、未观测的活动手指及 mocap 分支不在此避碰覆盖内。模型凸碰撞、有限采样与未感知几何均不构成硬件安全保证。受限／不可达保持 blocked 和真实残差；跟踪失效与数值错误分别处理，不以 QP success 宣称到位。`palm_preview` 只绘制目标、源目标 FK 与实际 FK，不拥有运动授权。
-
-编排器只持有本次子进程组及新建的 ADB 转发；完全匹配的已有转发可复用，但不获取其清理所有权。窗口关闭或 Ctrl+C 清理本次资源。与 H5 编排器共享互斥锁，不能同时启动。进程就绪、跟踪有效、收到新鲜候选和本地控制授权是不同状态。
-
-## HDF5 观测发布侧
-
-`pixi run spd-demo` 保持独立的 H5 演示入口：文件路径确认后启动 `ros_recorded_publisher` 的原始画面播放窗口和无任务场景的 MuJoCo 订阅窗口，不使用 tmux。`JointCommand(domain 120) → 直连 Fast DDS → ros_viewer(domain 120)` 与 PICO 使用相同的同机 DDS 配置，但发布器、输入来源和窗口操作不合并，不启动桥或 PICO 授权 socket。
-
-H5 只读已有观测作为合成目标，不恢复原始控制命令；RGB 仅由播放面板本地读取，不经命令话题传输。启动后 WAITING 持续发送 HOME 目标，应用就绪不等于 Viewer 已收到新鲜候选。先在 MuJoCo 窗口按 `e` 显式授权，再在播放器 **Play**；**Pause** 持续发送最后目标，**Next** 切换文件并过渡，不自动授权或开始播放。关闭任一窗口或 Ctrl+C 仅清理本次进程；与 `spd-pico` 共用会话锁，禁止并行运行。DDS 直连不改变会话、新鲜度、保持或启用目标差门限。
-
-## 保留的 PICO 跟踪入口
-
-```text
-PICO_2 APK → ADB/TCP → pico_hand_tracking
-                         ↓
-                 spd_vr.pico2_bridge
-                         ↓
-              Zenoh spd/vr/v1/tracking
-                    ↙             ↘
-               arm_ik            viewer
-                    ↘             ↑
-                 机械臂目标 + 手部重定向
-                         ↓
-               Tianji/Wuji MuJoCo 模型
-```
-
-输入包只负责原始协议、有效标记与传输。统一 tracking 协议隔离设备差异；机器人模型、关节顺序和控制语义由 spd-vr 管理。场景状态及机器人实际状态必须由仿真产生，不能用操作者人体位姿替代。
-
-`packages/spd-vr/spd_vr/` 内按现有职责组织：
-
-| 模块 | 职责 |
+| 路径 | 职责 |
 |---|---|
-| `pico2_bridge`, `wire`, `zenoh_transport` | 跟踪、控制和状态消息 |
-| `arm_ik`, `qp_arm`, `retarget_pair`, `alignment` | 机械臂求解、灵巧手映射与操作者对齐 |
-| `model_compiler`, `manifest` | URDF 编译、碰撞资产和关节契约 |
-| `simulator`, `viewer`, `camera` | 物理状态推进、查看和相机数据 |
-| `episode`, `recorder` | episode 生命周期与 schema-v1 HDF5 输出 |
-| `replay` | schema-v1 文件校验与只读检查；时间对齐由训练端负责 |
+| `src/spd/spd_vr/interfaces/` | JointCommand wire 契约、校验、邮箱、订阅执行器与授权／保持门 |
+| `src/spd/spd_vr/simulation/` | 机器人 MuJoCo 物理执行、ROS Viewer、窗口与场景查看 |
+| `src/spd/spd_vr/cameras/` | 世界／腕部仿真相机与 RGB 获取 |
+| `src/spd/spd_vr/data_collector/` | episode 生命周期、HDF5 写入／校验、只读检查与数据处理 |
+| `src/spd/spd_vr/description/` | manifest、模型编译与资源定位 |
+| `src/spd/test/` | 与保留运行时对应的测试 |
+| `src/environments/spd_envs/` | 独立环境包，任务注册、随机化、场景生成与重置检查 |
+| `src/description/tianji_wuji2/assets/` | 原始 URDF、网格和碰撞资产 |
+| `src/description/tianji_wuji2/generated/` | 编译后的可加载模型与 manifest |
+| `src/interfaces/tianji_spd_interfaces/` | ROS 2 `JointCommand.msg` 与接口构建元数据 |
+| `config/` | 相机等运行配置 |
+| `bash/` | 项目专属订阅会话的启动／停止 |
+| `data/` | 采集产物和已有样本，不随代码清理删除 |
 
-`packages/spd-envs/spd_envs/` 独立管理环境：`registry` 注册六类场景、Table 2 的 17 个任务及 A.4 的 `jenga/playing`，`scene_builder` 生成带接触几何的物体和随机参数，`model_scene` 将场景合入调用者提供的机器人 MJCF，`validate` 检查重置。它只依赖 NumPy 和 MuJoCo，不依赖 PICO、Zenoh 或 `spd_vr`。未报告的 A.4 时长和数据集统计为 `None`，不伪造 Table 2 数据。
+Python 包名保留 `spd_vr`、`spd_envs`。依赖方向为 `spd-vr → spd-envs`；环境包只负责场景，不依赖 ROS 或遥操作算法，也不硬编码机器人路径。资源定位通过 `description/model_builder.py` 的 `workspace_root()`、`description_root()` 和 `config_root()`，不以调用者当前目录猜测资源位置。
 
-依赖方向为 `spd-vr → spd-envs`。原 `spd_vr.scenes` 已迁移为 `spd_envs`，不保留转发层。机器人 `generated/` 与 `config/` 留在 `spd-vr`；原始机器人资产独立放在根目录 `assets/`。环境包不硬编码 Tianji/Wuji 模型路径。
+`pixi.toml` / `pixi.lock` 是受维护运行环境；ROS 接口构建到 `.ros/{build,install}`，与原始源文件和机器人生成模型分离。`ros-build-interfaces` 使用 `src/interfaces/tianji_spd_interfaces`，SPD 不自动构建上游工作区。
 
-五个 Figure 4/A.4 场景可通过 `pixi run spd-scene --task SCENE/TASK --seed N` 独立查看，也可通过 `spd-teleop-ros --task SCENE/TASK --seed N` 加载到既有关节订阅链。`PlantController` 先验证基础机器人资产，再合入场景；不覆盖基础 MJCF，不因场景 free joints 改变机器人索引。桌高 0.75 m 适配 Tianji 初始姿态，盘架、杯架和箱体固定，盘/杯/积木/瓶自由运动；杯体和把手使用非凸组合碰撞，不允许初始穿透。构造参数及 seed 写入 scene manifest，ROS episode 保存完整 task manifest。此功能是可交互物理场景，不包含自动策略、任务评分或原论文视觉资产的精确复刻。
+## 3. 订阅契约与授权状态
 
-带桌场景的交互入口（`spd-pico`、`spd-scene`、带任务的 `spd-teleop-ros`）在创建窗口前通过 `spd_vr.scene.resolve_table_distance` 询问桌沿位置；`--table-distance METRES` 可显式指定，无交互终端时必须提供。距离沿 +X 从机器人底座原点测到近侧桌沿，回车默认 0.10 m。`SceneBuildResult.with_table_near_edge` 在不重新采样的前提下同步平移桌子、物体和固定支架，保留原始结果；桌子仍为静态碰撞体。模型、任务 manifest 和 Viewer 取景使用调整后的位置，PICO 继续通过原反馈通道读取实际场景模型，标定和避碰算法本身不变。H5 和其他 `hardware_free` 入口无桌子，不触发询问。
+接口类型 `tianji_spd_interfaces/msg/JointCommand`，话题 `/spd/tianji_wuji2/v1/joint_command`，`schema_version=1`，`robot_config=tianji_wuji2_v1`。54 维顺序是左臂 7、右臂 7、左手 20、右手 20，单位 rad。消息保留原 wire 字段，不因目录迁移改变。
 
-## 论文目标与当前实现的区别
+订阅回调校验名称顺序、维度、有限值、ready 组限位、session、递增 sequence 与 UTC 新鲜度，完整通过后才原子替换最新候选。物理 tick 消费时再次校验年龄；按 manifest 名称预计算 qpos/actuator 地址，场景 free joints 不改变机器人索引。
 
-论文仿真 480 Hz，控制/流传输/记录 60 Hz，训练网格 30 Hz。频率是不同阶段的契约，不是三个名称相同的循环，也不是当前机器的性能保证。
+显式 `e` 启用要求新鲜候选，且 ready 组每个关节相对保留目标的差不超过默认 `0.15 rad`；该门限可通过 `--max-enable-delta-rad` 调整。新 session 撤销已有授权，`c` 清除控制与授权但不回 HOME 或重置场景。
 
-目标采集流为：
+ready/hold 三组分别为双臂（bit 0）、右手（bit 1）、左手（bit 2）。未 ready 组保持目标；每组超过 100 ms 没有新鲜 ready 目标后锁存 hold，其他新鲜组仍可执行。数据恢复不能自动恢复该组运动，须再次显式禁用／启用。目标保持不是冻结 qpos：物理积分、接触和跟随误差继续存在。
 
-```text
-任务与随机化 → 仿真交互 → 轨迹与动作记录
-                              ↓
-                  长时间无接触片段裁剪
-                              ↓
-                  多视角回放渲染 + 分割
-                              ↓
-           按时间对齐的视觉 / 本体状态 / 动作数据
-```
+Viewer 用 `F8/F9` 选择关节，展示实际应用目标与实际 qpos；HUD 展示接收／有效／拒绝计数、候选年龄、session、ready/hold 与跟踪误差。进程 ready、DDS 对端发现、有效候选和运动授权是四种不同状态。
 
-当前存在相关 Python 模块，但还不能把 `spd-teleop` 等同为完整论文采集入口：
+## 4. 进程与网络边界
 
-1. PICO_2 预构建 APK 不接收 MuJoCo 场景；VR 闭环场景显示未完成。
-2. 实时查看与 episode 录制模块需要完整联调，启动 Viewer 不代表开始录制。
-3. 与论文六场景、离线批量渲染及数据增强的等价性尚未验收。
-4. 实机后训练、策略训练和部署不属于本次项目整理。
+`bash/start_spd_sim.sh` 在 ROS Pixi 环境中以 `exec` 启动前台订阅进程，直接使用当前终端，不创建 tmux 会话、不后台运行。`pixi run spd-sim` 直接选择 `ros-jazzy` 环境，避免嵌套任务启动；脚本从裸 shell 调用时自行进入同一环境。当前终端 `Ctrl+C` 或 Viewer 退出只结束 SPD，不停止上游或硬件控制器。启动不代替运动授权；一次只运行一个采集进程，不共享输出目录。
 
-## schema-v1 订阅与发布
+Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATILE`。在 Pixi 激活和接口 overlay 加载后显式设置 `ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`；无桥接进程。
 
-核心观测为仿真/设备反馈形成的双臂 14 维 qpos、双手 40 维 qpos，以及启用相机的 RGB 帧。ROS Viewer 当前只提供仿真反馈；关节与完整 RGB 帧使用采集主机单调时间，以 episode 起点归零。写入线程负责 JPEG 编码和 HDF5 发布，保存/丢弃由录制协调线程等待，不在控制回调中同步等待。
+启动器固定同机发现。跨主机需另外配置发现范围／静态 peers 或发现服务、网络接口、防火墙和 UTC 同步。domain 不是安全边界；DDS 直连也不是延迟、丢包或实时性能保证。
 
-录制中的文件为 `episode_XXXXXX.partial.h5`。收到成功确认后完成字段、维度、有限值、时间戳和 JPEG 解码校验，通过后发布为 `.h5`；中断或校验失败保留 partial 文件。当前录制器还要求 `observations/commands`，保存实际应用目标及 session/sequence/UTC/ready/hold/物理应用时间；这是仿真命令扩展，并不符合 `docs/schema-v1.md` 排除命令的原始文件契约。文件不包含速度、深度、IMU、分割图或 30 Hz 训练副本。
+## 5. 物理场景、随机化与模型限制
 
-## 数据与资源约定
+环境注册表保留六类场景、Table 2 的 17 个任务和 A.4 的 `jenga/playing`。`spd-scene --task SCENE/TASK --seed N` 可独立查看；`spd-sim` 使用同样的任务／seed 参数接入订阅仿真。场景在启动时选择，不运行中切换。
 
-- `assets/`：原始 URDF、网格与必须保留的机器人资产。
-- `packages/spd-vr/generated/`：可加载的编译模型和 manifest；改模型后重新编译并验证。
-- `data/`：采集输出与已有样本；不随代码清理删除。
-- `docs/papers/`：研究依据；论文不作为可执行规范替代代码验证。
-- 根目录 `pixi.toml` 和 `pixi.lock` 是唯一受维护运行环境；系统 ADB 和图形会话为外部前置条件。
+先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。桌高 0.75 m；固定盘架、杯架和箱体，任务物体通过 free joints、重力、摩擦与真实接触运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放，RGB 来自该状态渲染，不是录制画面的替代粘贴。
 
-此前移除的旧 ROS 2 采集、鱼眼、IMU、Odin、PXREA 和实机控制入口不恢复。新的 ROS 入口仅订阅外部关节目标驱动仿真，不发布实机控制命令。
+带桌场景在创建窗口前解析 `simulation.scene.resolve_table_distance`；`--table-distance` 显式指定或交互询问，非交互必须显式提供。距离沿 +X 从底座原点到近侧桌沿，默认 0.10 m。桌子、物体和固定支架整体平移，不重新采样随机参数；实际距离、几何和 seed 保存到 scene/task manifest。
+
+机器人保留 URDF 质量、质心和惯性；物体材质参数是工程默认值，不是实物标定结果。显示透明度不改变碰撞。模型保留 `Link5_L–Link7_L`、`Link5_R–Link7_R` 两对临时碰撞排除，记录在 `collision.temporary_excludes`；它们也会忽略真实碰撞，不得作为硬件安全保证。SPD 保留模型限位和控制门，不承担上游轨迹求解或避碰。
+
+## 6. 相机与录制
+
+`config/sim_cameras.yaml` 定义世界 `top` 和左右腕相机；每路使用真实仿真视角，不复制 overview。配置仍为 provisional，不能宣称完成标定。实际关节状态目标采样 120 Hz、RGB 目标 30 Hz；名义调度不是负载下频率保证。
+
+运动与录制独立：已启用时 `r` 请求准备新 episode，完成后进入录制；`s` 由操作员确认成功并请求保存；`d` 丢弃当前段。Viewer 无需回车，终端输入需回车。准备／保存／丢弃期间不能重复开始。清除授权、采集错误或退出不自动发布成功文件。
+
+录制使用同一主机单调时间并按 episode 起点归零。状态源为 MuJoCo 实际 qpos，图像时间在完整帧可用且 JPEG 编码之前记录。JPEG/HDF5 写入由后台线程执行，保存／丢弃协调不在控制回调同步等待；相机创建和同步渲染仍可能阻塞物理循环并触发 100 ms hold，不为渲染放宽门限。
+
+写入中为 `episode_XXXXXX.partial.h5`，成功保存前校验字段、维数、有限值、时间戳与 JPEG，通过后原子发布 `.h5`；中断／失败保留 partial。目录默认 `data/episodes`，可改 `--output` 或 `SPD_EPISODE_OUTPUT`，已有配置不兼容时拒绝追加。
+
+当前文件在原始状态／RGB schema-v1 上保留 `observations/commands` 扩展，包含实际应用目标、session/sequence、UTC、ready/hold、物理应用时间和状态字段，并保存 task manifest。版本和 wire/schema 字段不因本次整理改变。扩展不是原始“只存观测”契约；详见 [schema-v1.md](schema-v1.md)，不得以当前扩展校验器通过来宣称符合原始排除命令的约定。
+
+## 7. 研究与验证边界
+
+论文参考为 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、附录 A.1。论文物理 480 Hz、控制／流传输／记录 60 Hz、训练网格 30 Hz 是不同阶段的契约，不等同于当前实现各流频率或机器性能保证。
+
+上游发布契约已定稿；这里不宣称真实 PICO → 上游 → SPD 已完成端到端验收。多视角离线批量渲染、训练增强、完整任务示范质量与论文等价性均须单独验证。实机控制、真实传感器融合、策略训练与部署不属于 SPD。启动窗口、模块存在或接口匹配，都不能替代物理行为和采集数据的实际验收。
