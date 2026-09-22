@@ -110,12 +110,50 @@ export ROS_STATIC_PEERS=''
 | `r` | 已启用且至少一组命令新鲜、ready、未 hold 时准备新 episode |
 | `s` | 停止接收本段数据，后台校验并保存为成功 episode |
 | `d` | 丢弃当前未完成段，不删除以前保存的数据 |
+| `k` | 创建／替换本段最新检查点；任一手接触任务物体时拒绝 |
+| 本地 `p` | 暂停／恢复切换；恢复按下即显式授权，但须通过新鲜度与对齐门限 |
+| `b` | 回到最新检查点，删除失败分支并保持暂停，不自动恢复跟随 |
+| `n` | 跳过并丢弃当前段，撤销授权；不自动换任务或重置场景 |
+| `u` | 独立恢复管理命令，仍要求先用 `e` 授权；三键脚踏不需要它 |
 
 Viewer 按键不需要回车；控制终端输入需要回车。运动授权与录制独立，启动订阅器或按 `e` 不会自动录制。
 
 启用检查只针对 ready 组，相对当前保留目标计算，默认最大差值 `0.15 rad`（`--max-enable-delta-rad` 可调整）。双臂共用 ready 位，左右手各自独立；未 ready 组保持已有目标。每组超过 **100 ms** 未获得新鲜 ready 命令后锁存 hold，仍新鲜的其他组可继续。消息恢复不自动解除 hold，需要显式禁用后重新启用。合法新 session 撤销原有授权；物理 tick 消费目标时再次检查年龄，不把接收时合法等同于应用时仍有效。
 
 应用输出 `ready` 仅表示初始化完成，不代表发现了发布端、已收到有效候选或已授权。查看 HUD 的接收／有效／拒绝计数、候选年龄、session、ready/hold 和跟踪误差。曲线的实际应用目标与 MuJoCo 实际 qpos 是两条不同数据，目标不是观测。
+
+### 论文 A.1 检查点与失败回退
+
+典型流程：键盘 `e → r` 开始；左踏创建检查点；失误后短按右踏回退；对齐上游目标后按中踏恢复；最后键盘 `s` 成功保存。键盘等价为 `k → b → 对齐 → p`，恢复不再需要额外 `e/u`。
+
+- 检查点仅属于当前 episode，保留最新一个。保存完整内存 `MjData`（包括执行器控制、求解器历史）、保留目标、物理 tick 和尚未采样的接触累计；不是从 HDF5 观测反推控制状态。
+- 存档前在独立 scratch 状态刷新当前接触，任一手与任务物体有 solver-active 接触就拒绝，已有检查点不变。手–桌接触、自碰撞不属于此判据；无接触不等于物体静止。
+- 暂停和回退冻结物理／命令应用，但继续接收 ROS、显示状态和处理操作。回退先由唯一写线程按队列顺序裁去检查点后的全部轨迹行，完成刷盘后恢复物理与接触累计；失败保留 partial，不伪装成功。
+- 回退与暂停清除候选及运动授权。上游不会被自动回程或重标定；人工对齐后按中踏（或 SPD 本地 `p`）即明确请求授权并恢复，必须有新鲜 ready 目标且通过原有 `0.15 rad` 门限，否则保持暂停和未授权。ROS `resume`／独立触发终端不具备此授权能力，仍要求本地先 `e`。
+- 三键职责对齐论文的 `checkpoint / pause / revert·skip`。中键暂停／恢复切换、右键短按回退／长按至少 1 秒后松开跳过，是论文未详述部分的本项目交互规则。长按不会先触发短按回退；没有检查点的短按只拒绝，不自动丢弃。`skip` 只丢弃当前段，不自动换任务。
+- 检查点不跨进程持久化。最终 HDF5 只保留选择后的轨迹和 `/collection_events/rewind` 分支边界；失败片段不作为正常演示保留。暂停期间仿真时钟不走，真实单调时钟继续走。
+
+#### 三键脚踏设备
+
+脚踏板需提供三个独立的键盘按下／松开事件，不能配置成仅发送瞬时宏。默认按左／中／右顺序使用 `k/p/b`（Linux EV_KEY 码 `37,25,48`）。程序不修改脚踏板固件；设备当前配置不同，可先设置三个键或通过 `--pedal-keys CODE,CODE,CODE` 指定实际码。
+
+```bash
+pixi run spd-sim --task cups/pyramid --table-distance 0.10 \
+  --pedal-device /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd \
+  --pedal-keys 37,25,48
+```
+
+`--pedal-device` 显式启用；不传时不读取或占用输入设备。只选择脚踏板的键盘 event 节点，不选择普通键盘。Linux evdev 独占读取不依赖窗口焦点，也不会将脚踏事件重复送到 Viewer／终端。普通键盘的 `b` 仍是直接回退，长按判定只在 evdev 脚踏入口执行。
+
+三键均在松开时触发一次；自动重复、重复按下、启动时已经踩住的键和启动前排队事件不会触发操作。使用内核单调时钟判断按压时长。设备断开或 `SYN_DROPPED` 丢事件会取消未结束按压、释放设备，通知物理线程暂停录制并撤权；不会自动重连或自动恢复。
+
+当前机器已发现 PCsensor FootSwitch，但采集用户读取其键盘节点返回 `Permission denied`。需管理员仅给该设备授予读取权限，例如当前插接期间使用：
+
+```bash
+sudo setfacl -m "u:$USER:r" /dev/input/by-id/usb-PCsensor_FootSwitch-event-kbd
+```
+
+重新插拔可能需要重新授权；长期使用可配置设备专用 udev／ACL。不要给全部 `/dev/input` 开放权限，也不要以 root 启动仿真。实体踏板按键映射和踩踏尚未验收；本次未修改系统权限或硬件配置。
 
 ## 任务场景与模型
 
@@ -189,7 +227,7 @@ pixi run spd-collect-trigger
 # 或 bash bash/collect_trigger.sh
 ```
 
-触发终端直接按键，无需回车：`r` 开始、`s` 保存并确认成功、`d` 丢弃、`q`／`Ctrl+C` 仅退出触发器。退出触发器**不会结束正在进行的录制**，也不会保存、丢弃或停止 SPD。它没有运动使能按键；SPD 自身终端的 `e/c/r/s/d` 仍需回车。
+触发终端直接按键，无需回车：`r/s/d` 开始／保存／丢弃，`k/p/u/b/n` 检查点／暂停／恢复／回退／跳过，`q`／`Ctrl+C` 仅退出触发器。这里 `p/u` 保持分开的远程请求，不等同于本地中踏的授权＋恢复。退出触发器**不会结束正在进行的录制**，也不会保存、丢弃或停止 SPD。它没有运动使能按键；SPD 自身终端输入均需回车。
 
 非交互调用：
 
@@ -198,6 +236,12 @@ pixi run spd-collect-trigger --command status
 pixi run spd-collect-trigger --command start
 pixi run spd-collect-trigger --command save
 pixi run spd-collect-trigger --command discard
+pixi run spd-collect-trigger --command checkpoint
+pixi run spd-collect-trigger --command pause
+pixi run spd-collect-trigger --command revert
+# 在 SPD 本地对齐、按 e 重新授权后：
+pixi run spd-collect-trigger --command resume
+pixi run spd-collect-trigger --command skip
 ```
 
 这些是按需执行的独立操作，不是一组连续运行的脚本。客户端等待匹配的 collector／operation 完成，显示状态、帧数和路径；`save completed` 才表示关闭、校验及文件发布完成。拒绝、服务缺失、多实例冲突、状态失鲜或超时会明确报错，不自动重试；超时不能解释为操作未发生。默认 `--timeout 30`，失败后先检查 SPD 终端和当前状态。
@@ -219,7 +263,7 @@ max_frames: 0
 - 到达上限自动结束、校验并保存为 **`success=false`**，不会自动开启下一段。只有显式 `s`／`save` 标记成功。
 - 每段记录实际生效的配置与配置文件路径；采样直接读取当前物理状态，不等待新的 ROS cmd，也不补写录制前缓存。
 
-服务为 `/spd/collection/{start,save,discard}`（`std_srvs/srv/Trigger`）；状态为 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local）。服务成功响应表示操作已接受，最终结果由携带 `collector_id`、`operation_id` 的状态确认。采集服务不授予运动权限，不放宽 100 ms 失鲜保持或启用目标差门限。
+服务为 `/spd/collection/{start,save,discard,checkpoint,pause,resume,revert,skip}`（`std_srvs/srv/Trigger`）；状态为 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local），包括 `physics_paused` 和可空的 `checkpoint_frames`。服务成功响应表示操作已接受，最终结果由携带 `collector_id`、`operation_id` 的状态确认。采集服务不授予运动权限，不放宽 100 ms 失鲜保持或启用目标差门限。升级后采集器和触发客户端均需重启。
 
 ## 物理轨迹、场景恢复与离线渲染边界
 
@@ -229,7 +273,7 @@ max_frames: 0
 
 `config/sim_cameras.yaml` 的三路相机当前只是 `provisional-v1` 预览定义，位置尚未定稿。离线渲染器只使用模型中已有的 `top`、`left_wrist`、`right_wrist` 命名相机，不硬编码外参，不新增或替代缺失相机。正式渲染默认拒绝临时或缺少标定确认的快照。最终位置将由用户提供的 URDF 相机安装定义转换到模型；标准 URDF 无原生相机标签，具体 link/joint 或 Gazebo 扩展转换待实际文件格式确定后接入，本次不猜测实现。
 
-新段写入 `episode_<UUID>.partial.h5`。每个后台队列事件是一整帧，所有数据集严格同长。重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
+新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
 每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。**升级后请指定新的采集根目录，例如 `--output /data/TianjiSim-trajectories`。** 历史数据不迁移、不删除。
 
@@ -241,7 +285,7 @@ pixi run replay_episode '/data/TianjiSim-trajectories/YYYYMMDD/episode_<UUID>.h5
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
 
-数据契约见 [docs/schema-v2.md](docs/schema-v2.md)。检查点／回退、超过 10 秒无接触裁剪和 30 Hz 训练样本构建仍未实现；离线渲染作为独立步骤生成所有源帧的图像，不改变采样时间网格。旧 `align_30hz`、`filter_contacts` 入口依赖已废弃契约，已移除；不能从 state-only 文件恢复未记录的原始命令。
+数据契约见 [docs/schema-v2.md](docs/schema-v2.md)。在线无接触检查点、暂停与失败回退已实现；超过 10 秒无接触裁剪和 30 Hz 训练样本构建仍未实现，属于后续数据处理。离线渲染生成所有保留源帧的图像，不改变采样时间网格。旧 `align_30hz`、`filter_contacts` 入口依赖已废弃契约，已移除；不能从 state-only 文件恢复未记录的原始命令。
 
 ## 8×RTX 5090 离线渲染服务器
 
@@ -292,6 +336,20 @@ pixi run -e render spd-render \
 
 真实头显到上游再到 SPD 的端到端采集、硬件安全、跨主机网络、录制负载下的实时性能及论文数据等价性必须分别验收，不能以进程启动或模块存在替代。上游发布契约已定稿；本次 SPD 验证范围见下文，不宣称已完成真实头显联调。架构与职责见 [docs/architecture.md](docs/architecture.md)。
 
+### 三键脚踏交互验证（2026-09-22）
+
+- 生产 evdev 二进制事件解码与三键状态机驱动真实 ROS／MuJoCo 采集：无检查点短按不丢段；右键短按回退、满 1 秒松开跳过；中键拒绝超门限／失鲜目标，在新鲜且对齐时一次完成授权＋续采；远程 `resume` 不获得授权能力。
+- 注入断开通知后暂停并撤权；最终 9 帧文件通过独立恢复，机器人与物体状态误差均为 0。18 项采集／脚踏回归通过，包括自动重复、初始踩住、丢事件、断开及设备初始化失败后的资源释放。
+- 实际 PCsensor 节点打开被操作系统权限拒绝，`spd-sim --pedal-device ...` 以退出码 2 给出权限诊断，未进入 ready。未验证实体按下／松开与实际固件映射；未改动设备权限。
+
+### 检查点与失败回退验证（2026-09-22）
+
+- 真实 Fast DDS 服务、MuJoCo `cups/pyramid` 场景和 HDF5 写入验证：暂停期间新命令不改变物理状态或帧数；无授权恢复被拒绝；实际手–杯接触拒绝替换已有检查点。
+- 失败分支后连续两次回退，再授权续采并保存；10 帧完整文件通过独立恢复，机器人位置／速度和物体位姿最大误差均为 0；回退事件保留、tick 间隔为 8、主机时间严格递增。跳过仅删除当前段，暂停退出保留不完整文件。
+- 实际 `spd-sim --headless` 终端 `e/r/u/p/k` 与独立 `spd-collect-trigger --command checkpoint/revert/save` 完成操作；917 帧回退到 441 帧，保存的 441 帧逐帧恢复误差为 0。
+- `pixi run python -m unittest discover -s tests -v` 两项物理回归通过：完整检查点继续积分结果逐元素一致、当前接触检查不修改在线状态、重复裁剪保留前缀并更新分支边界。
+- 未验证桌面 Viewer 的实际按键／HUD、实体脚踏板或真实 PICO 上游重新对齐；未扩展离线渲染、无接触裁剪或训练样本生成。
+
 ### 服务器渲染适配验证（2026-09-22）
 
 - 本机实际 NVIDIA RTX 5060 Ti、驱动 580.173.02、MuJoCo 3.12.0 的 EGL 预检通过；使用同一卡上的两个 spawn worker，实际渲染六个 episode、18 个源帧，产生 54 组 RGB／实例掩码，原轨迹哈希未变。此结果不是 8×5090 性能测试。
@@ -318,7 +376,7 @@ pixi run -e render spd-render \
 
 ### spd-syz 重构验证（2026-09-21）
 
-以下为旧 schema 的历史验收记录，不代表当前完整场景轨迹契约；当前工作区已移除回归测试目录及测试命令。
+以下为旧 schema 的历史验收记录，不代表当前完整场景轨迹契约；旧回归目录与测试命令已移除，当前检查点回归见上节。
 
 - `pixi install --all --locked`、`pixi run ros-build-interfaces` 成功；发布端与本仓库的 `JointCommand.msg` 已逐字节比较一致。
 - 当时回归测试 49 项通过。无效碰撞输入回归触发一条 trimesh 数值警告，不影响通过结果。

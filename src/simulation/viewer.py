@@ -25,6 +25,16 @@ class PlantStep:
     finite: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _PlantCheckpoint:
+    plant: Any
+    model: Any
+    data: Any
+    tick: int
+    targets: np.ndarray
+    hold_mask: int
+
+
 class PlantController:
     """Own model/data and integrate retained actuator targets at physics ticks.
 
@@ -233,6 +243,52 @@ class PlantController:
             if not effective_hold & bit:
                 self._command_targets[wire] = values[wire]
         self.set_joint_command_hold(effective_hold)
+
+    def _validate_checkpoint(self, snapshot: _PlantCheckpoint) -> None:
+        if not isinstance(snapshot, _PlantCheckpoint) or snapshot.plant is not self or snapshot.model is not self.model:
+            raise ValueError("checkpoint belongs to a different plant or model")
+        if (
+            type(snapshot.tick) is not int or snapshot.tick < 0
+            or type(snapshot.hold_mask) is not int
+            or snapshot.hold_mask < 0 or snapshot.hold_mask & ~VALID_READY_MASK
+            or not isinstance(snapshot.targets, np.ndarray)
+            or snapshot.targets.shape != self._command_targets.shape
+            or not np.all(np.isfinite(snapshot.targets))
+            or np.any(snapshot.targets < self._command_limits[:, 0])
+            or np.any(snapshot.targets > self._command_limits[:, 1])
+        ):
+            raise ValueError("checkpoint has invalid tick, targets or hold mask")
+        state_spec = self._mujoco.mjtState.mjSTATE_INTEGRATION
+        state = np.empty(self._mujoco.mj_stateSize(self.model, state_spec), dtype=np.float64)
+        self._mujoco.mj_getState(self.model, snapshot.data, state, state_spec)
+        if (
+            not np.all(np.isfinite(state))
+            or not np.all(np.isfinite(snapshot.data.qacc))
+            or snapshot.data.time < 0
+        ):
+            raise ValueError("checkpoint contains invalid physics state")
+
+    def capture_checkpoint(self) -> _PlantCheckpoint:
+        """Copy the full integration state and retained commands on the physics thread."""
+        if self._closed:
+            raise RuntimeError("plant is shut down")
+        data = self._mujoco.MjData(self.model)
+        self._mujoco.mj_copyData(data, self.model, self.data)
+        targets = self._command_targets.copy()
+        targets.flags.writeable = False
+        snapshot = _PlantCheckpoint(self, self.model, data, self.tick, targets, self.hold_mask)
+        self._validate_checkpoint(snapshot)
+        return snapshot
+
+    def restore_checkpoint(self, snapshot: _PlantCheckpoint) -> None:
+        """Restore exactly, without a forward pass or physics step; snapshots stay reusable."""
+        if self._closed:
+            raise RuntimeError("plant is shut down")
+        self._validate_checkpoint(snapshot)
+        self._mujoco.mj_copyData(self.data, self.model, snapshot.data)
+        self.tick = snapshot.tick
+        self._command_targets[:] = snapshot.targets
+        self.hold_mask = snapshot.hold_mask
 
     def physics_tick(self) -> PlantStep:
         if self._closed:

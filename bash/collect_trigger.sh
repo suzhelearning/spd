@@ -5,9 +5,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 for argument in "$@"; do
   case "$argument" in
     --help|-h)
-      echo "Usage: collect_trigger.sh [--command start|save|discard|status] [--timeout SECONDS]"
+      echo "Usage: collect_trigger.sh [--command start|save|discard|checkpoint|pause|resume|revert|skip|status] [--timeout SECONDS]"
       echo "Controls the existing SPD collector only (Fast DDS, localhost, ROS domain 120)."
-      echo "Interactive: r=start, s=save-success, d=discard, q/Ctrl+C=exit client only."
+      echo "Interactive: r=start, s=save-success, d=discard, k=checkpoint, p=pause, u=resume, b=revert, n=skip."
+      echo "q/Ctrl+C exits this client only. Resume requires fresh local control authorization."
       echo "--command works without a TTY; --timeout must be positive finite seconds (default 30)."
       echo "Acceptance is not completion. Unknown outcomes are not retried automatically."
       exit 0

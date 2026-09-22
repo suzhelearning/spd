@@ -1,6 +1,7 @@
 """Portable, state-only whole-scene snapshots; binary models require exact MuJoCo versions."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -210,6 +211,12 @@ def _provenance(plant: Any, task_manifest: dict[str, Any]) -> tuple[dict[str, An
     return {"sources": sources, "artifact_hash": getattr(plant, "artifact_hash", None)}, camera_config
 
 
+@dataclass(frozen=True, slots=True)
+class _ContactState:
+    source: Any
+    contacts: np.ndarray
+
+
 class TrajectorySource:
     """Capture owned snapshots on the physics thread without changing live data."""
 
@@ -256,6 +263,44 @@ class TrajectorySource:
 
     def reset_contacts(self) -> None:
         self._contacts.fill(False)
+
+    def capture_contact_state(self) -> _ContactState:
+        """Copy the unfinished recording interval independently of future captures."""
+        contacts = self._contacts.copy()
+        contacts.flags.writeable = False
+        return _ContactState(self, contacts)
+
+    def restore_contact_state(self, snapshot: _ContactState) -> None:
+        """Restore an interval only to the source whose geometry mapping produced it."""
+        if (
+            not isinstance(snapshot, _ContactState) or snapshot.source is not self
+            or not isinstance(snapshot.contacts, np.ndarray)
+            or snapshot.contacts.shape != self._contacts.shape
+            or snapshot.contacts.dtype != self._contacts.dtype
+        ):
+            raise TrajectoryError("invalid contact interval checkpoint")
+        self._contacts[:] = snapshot.contacts
+
+    def has_hand_object_contact(self) -> bool:
+        """Check current contacts, not the previous step or accumulated recording interval."""
+        if not len(self._object_ids):
+            return False
+        # mj_step leaves contacts at the pre-integration pose. Recompute on scratch
+        # data so checking a checkpoint never alters live solver/integrator history.
+        data = self._pose_data
+        mujoco.mj_copyData(data, self._model, self._plant.data)
+        mujoco.mj_fwdPosition(self._model, data)
+        for index in range(data.ncon):
+            contact = data.contact[index]
+            first, second = int(contact.geom1), int(contact.geom2)
+            if first < 0 or second < 0 or contact.efc_address < 0:
+                continue
+            if (
+                (self._geom_hand[first] >= 0 and self._geom_object[second] >= 0)
+                or (self._geom_hand[second] >= 0 and self._geom_object[first] >= 0)
+            ):
+                return True
+        return False
 
     def observe_contacts(self) -> None:
         """Accumulate solver-active contacts immediately after each recorded mj_step."""

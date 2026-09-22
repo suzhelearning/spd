@@ -15,12 +15,21 @@ from typing import Any
 
 
 STATUS_MAX_AGE = 2.0  # Collector heartbeat is at most 0.5 seconds apart.
-STATES = {"idle", "preparing", "recording", "saving", "discarding", "aborting", "error"}
+STATES = {"idle", "preparing", "recording", "paused", "reverting", "saving", "discarding", "aborting", "error"}
 STRING_FIELDS = (
     "collector_id", "operation_id", "operation", "state", "message", "error",
     "episode_path", "last_saved_path",
 )
 COUNT_FIELDS = ("state_frames", "max_frames")
+KEY_COMMANDS = {
+    "r": "start", "s": "save", "d": "discard",
+    "k": "checkpoint", "p": "pause", "u": "resume", "b": "revert", "n": "skip",
+}
+FINAL_STATES = {
+    "start": {"recording"}, "save": {"idle"}, "discard": {"idle"},
+    "checkpoint": {"recording", "paused"}, "pause": {"paused"},
+    "resume": {"recording"}, "revert": {"paused"}, "skip": {"idle"},
+}
 
 
 class ClientError(RuntimeError):
@@ -61,7 +70,7 @@ def json_object(payload: str) -> dict[str, Any]:
 
 def parse_status(payload: str) -> dict[str, Any]:
     status = json_object(payload)
-    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s"}
+    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused", "checkpoint_frames"}
     if set(status) != fields:
         raise ClientError("Malformed collector status: unexpected or missing fields")
     if any(not isinstance(status[key], str) for key in STRING_FIELDS):
@@ -70,6 +79,11 @@ def parse_status(payload: str) -> dict[str, Any]:
         raise ClientError("Malformed collector status: invalid identity or state")
     if any(type(status[key]) is not int or status[key] < 0 for key in COUNT_FIELDS):
         raise ClientError("Malformed collector status: counts must be nonnegative integers")
+    if type(status["physics_paused"]) is not bool:
+        raise ClientError("Malformed collector status: physics_paused must be a boolean")
+    checkpoint_frames = status["checkpoint_frames"]
+    if checkpoint_frames is not None and (type(checkpoint_frames) is not int or checkpoint_frames < 0):
+        raise ClientError("Malformed collector status: checkpoint_frames must be null or a nonnegative integer")
     elapsed = status["elapsed_s"]
     try:
         valid_elapsed = type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0
@@ -88,6 +102,7 @@ def show_status(status: dict[str, Any]) -> None:
         f"operation_id={json.dumps(status['operation_id'])}\n"
         f"  state_frames={status['state_frames']} "
         f"elapsed_s={status['elapsed_s']:.3f} max_frames={status['max_frames']}\n"
+        f"  physics_paused={status['physics_paused']} checkpoint_frames={status['checkpoint_frames']}\n"
         f"  episode_path={json.dumps(status['episode_path'])} "
         f"last_saved_path={json.dumps(status['last_saved_path'])}\n"
         f"  message={json.dumps(status['message'])} error={json.dumps(status['error'])}",
@@ -208,7 +223,7 @@ class CollectionTrigger:
             key = read_key()
             if key == "q":
                 raise ClientExit
-            if key in "rsd" and key:
+            if key in KEY_COMMANDS:
                 print("Operation pending; key ignored. q exits this client only.", flush=True)
 
     def require_fresh_status(self) -> None:
@@ -287,13 +302,13 @@ class CollectionTrigger:
                     if status["state"] == "error" or status["error"]:
                         show_status(status)
                         raise ClientError(f"{command} failed; see collector error above.")
-                    final_state = "recording" if command == "start" else "idle"
+                    final_states = FINAL_STATES[command]
                     auto_finished = (
-                        command == "start" and status["state"] == "idle"
+                        command in {"start", "resume", "checkpoint"} and status["state"] == "idle"
                         and status["state_frames"] > 0 and bool(status["last_saved_path"])
                         and status["last_saved_path"] != previous_saved_path
                     )
-                    if status["state"] == final_state or auto_finished:
+                    if status["state"] in final_states or auto_finished:
                         show_status(status)
                         print(f"{command} completed (matching collector and operation).", flush=True)
                         return
@@ -304,16 +319,18 @@ class CollectionTrigger:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--command", choices=("start", "save", "discard", "status"))
+    parser.add_argument("--command", choices=(*FINAL_STATES, "status"))
     parser.add_argument("--timeout", type=positive_seconds, default=30.0, metavar="SECONDS")
     args = parser.parse_args(argv)
     interactive = args.command is None
     if interactive and not sys.stdin.isatty():
-        parser.error("interactive mode needs a terminal; use --command start|save|discard|status")
+        parser.error("interactive mode needs a terminal; use --command " + "|".join((*FINAL_STATES, "status")))
     if interactive:
         print(
             "SPD collection client (no motion controls)\n"
             "  r = start recording   s = save-success   d = discard\n"
+            "  k = checkpoint   p = pause   u = resume   b = revert   n = skip\n"
+            "  Resume requires a fresh command explicitly authorized in the local viewer/terminal.\n"
             "  q / Ctrl+C = exit client ONLY; never save, discard, or stop capture on exit.\n"
             "Commands wait for collector completion; unknown outcomes are never retried.",
             flush=True,
@@ -346,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
                 key = read_key()
                 if key == "q":
                     raise ClientExit
-                command = {"r": "start", "s": "save", "d": "discard"}.get(key)
+                command = KEY_COMMANDS.get(key)
                 if command:
                     client.execute(command, args.timeout)
     except (ClientExit, KeyboardInterrupt):

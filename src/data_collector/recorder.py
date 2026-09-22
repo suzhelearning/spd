@@ -1,7 +1,7 @@
 """Bounded asynchronous storage and validation for whole-scene trajectories."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -10,6 +10,7 @@ import queue
 import re
 import threading
 import tempfile
+import time
 from typing import Any, Mapping
 
 import h5py
@@ -24,6 +25,7 @@ STATE_RATE_HZ = 60
 TICKS_PER_FRAME = PHYSICS_HZ // STATE_RATE_HZ
 JOINT_UNIT = "rad"
 _VALIDATION_ROWS = 256
+_REWIND_DTYPE = np.dtype([("frame_count", "<i8"), ("monotonic_ns", "<i8")])
 
 
 class RecorderError(RuntimeError):
@@ -38,6 +40,14 @@ class RecorderQueueOverflow(RecorderError):
 class _Event:
     kind: str
     payload: Any
+
+
+@dataclass
+class _TruncateRequest:
+    frame_count: int
+    acknowledged: threading.Event = field(default_factory=threading.Event)
+    previous: tuple[int, int, float] | None = None
+    error: BaseException | None = None
 
 
 def _as_attr_text(value: Any) -> str:
@@ -261,10 +271,46 @@ class EpisodeRecorder:
                     raise
                 raise error from exc
 
+    def truncate_frames(self, frame_count: int) -> None:
+        """Retain a written prefix and acknowledge its flush before returning.
+
+        Call only from the serialized collection control worker with physics
+        paused. Append and finish are rejected until the mutation completes.
+        Rewind events identify boundaries before zero-based ``frame_count``;
+        their monotonic timestamps are real wall-clock observations, not rewound.
+        """
+        if isinstance(frame_count, (bool, np.bool_)) or not isinstance(frame_count, (int, np.integer)) or frame_count < 0:
+            raise ValueError("frame_count must be a non-negative integer")
+        request = _TruncateRequest(int(frame_count))
+        with self._lock:
+            if self._error is not None:
+                raise RecorderError(str(self._error)) from self._error
+            if self._state != "recording" or self._queue is None:
+                raise RuntimeError("no episode is recording")
+            self._state = "truncating"
+        # Never hold the state lock while waiting for queue space or the writer:
+        # its failure path needs that lock before it can signal completion.
+        self._put_end(_Event("truncate", request))
+        while not request.acknowledged.wait(timeout=0.1):
+            if self._done.is_set():
+                break
+        with self._lock:
+            if self._error is not None:
+                raise RecorderError(str(self._error)) from self._error
+            if not request.acknowledged.is_set():
+                self._state = "failed"
+                self._error = RecorderError("writer stopped before acknowledging truncation")
+                raise self._error
+            self._state = "recording"
+            if request.error is not None:
+                raise request.error
+            self._previous = request.previous
+
     def _writer(self) -> None:
         assert self._partial_path is not None and self._queue is not None
         path = self._partial_path
         finish_requested = False
+        pending_truncate: _TruncateRequest | None = None
         try:
             with h5py.File(path, "r+") as handle:
                 datasets = dict(handle["trajectory"].items())
@@ -287,6 +333,36 @@ class EpisodeRecorder:
                                 dataset.resize(index, axis=0)
                             raise
                         index += 1
+                    elif event.kind == "truncate":
+                        pending_truncate = event.payload
+                        count = pending_truncate.frame_count
+                        if count > index:
+                            pending_truncate.error = ValueError("frame_count exceeds the written trajectory prefix")
+                        else:
+                            previous = None if count == 0 else (
+                                int(datasets["tick"][count - 1]),
+                                int(datasets["monotonic_ns"][count - 1]),
+                                float(datasets["sim_time"][count - 1]),
+                            )
+                            for dataset in datasets.values():
+                                dataset.resize(count, axis=0)
+                            events = handle.require_group("collection_events")
+                            if "rewind" not in events:
+                                events.create_dataset("rewind", shape=(0,), maxshape=(None,),
+                                                      dtype=_REWIND_DTYPE, chunks=(64,))
+                            rewinds = events["rewind"]
+                            # Counts are sorted: every rewind removes the events
+                            # belonging to the suffix that it discards.
+                            retained = rewinds.shape[0]
+                            while retained and int(rewinds[retained - 1]["frame_count"]) > count:
+                                retained -= 1
+                            rewinds.resize(retained + 1, axis=0)
+                            rewinds[retained] = (count, time.monotonic_ns())
+                            handle.flush()
+                            index = count
+                            pending_truncate.previous = previous
+                        pending_truncate.acknowledged.set()
+                        pending_truncate = None
                     elif event.kind == "finish":
                         if not self._abort_event.is_set():
                             handle.attrs["success"] = event.payload
@@ -335,6 +411,9 @@ class EpisodeRecorder:
             except Exception:
                 pass  # Preserve the original failure, including an unusable partial.
         finally:
+            if pending_truncate is not None:
+                pending_truncate.error = self._error
+                pending_truncate.acknowledged.set()
             self._done.set()
 
     def _put_end(self, event: _Event) -> None:
@@ -385,6 +464,8 @@ class EpisodeRecorder:
         with self._lock:
             if self._state == "idle" or self._queue is None:
                 return
+            if self._state == "truncating":
+                raise RuntimeError("cannot end an episode during truncation")
             self._state = "ending"
             self._abort_reason = reason
             self._abort_event.set()
@@ -456,8 +537,8 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
             raise ValueError("episode is incomplete")
         if complete and "abort_reason" in handle.attrs:
             raise ValueError("an aborted episode cannot be complete")
-        if set(handle) != {"model", "trajectory"}:
-            raise ValueError("schema-v2 must contain only model and trajectory groups")
+        if set(handle) - {"model", "trajectory", "collection_events"} or not {"model", "trajectory"} <= set(handle):
+            raise ValueError("schema-v2 requires model and trajectory, with optional collection_events")
         model_group = handle["model"]
         if not isinstance(model_group, h5py.Group) or set(model_group) != {"mjb", "metadata"}:
             raise ValueError("model must contain only mjb and metadata")
@@ -499,6 +580,23 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
             dataset = trajectory[name]
             if not isinstance(dataset, h5py.Dataset) or dataset.dtype != dtype or dataset.shape != (frames, *shape):
                 raise ValueError(f"trajectory/{name} dtype, shape or row count mismatch")
+        if "collection_events" in handle:
+            events = handle["collection_events"]
+            if not isinstance(events, h5py.Group) or set(events) != {"rewind"} or events.attrs:
+                raise ValueError("collection_events must contain only rewind, with no attributes")
+            rewinds = events["rewind"]
+            if (not isinstance(rewinds, h5py.Dataset) or rewinds.ndim != 1
+                    or rewinds.dtype != _REWIND_DTYPE or rewinds.attrs):
+                raise ValueError("collection_events/rewind must be (frame_count:int64, monotonic_ns:int64) rows")
+            previous_count, previous_time = -1, -1
+            for start in range(0, rewinds.shape[0], _VALIDATION_ROWS):
+                for event in rewinds[start:start + _VALIDATION_ROWS]:
+                    count, timestamp = int(event["frame_count"]), int(event["monotonic_ns"])
+                    if count < 0 or count > frames or count < previous_count:
+                        raise ValueError("rewind frame counts must be ordered retained-prefix boundaries")
+                    if timestamp < 0 or timestamp <= previous_time:
+                        raise ValueError("rewind monotonic timestamps must be non-negative and strictly increasing")
+                    previous_count, previous_time = count, timestamp
         qpos_indices = metadata["robot_qpos_indices"]
         qvel_indices = metadata["robot_qvel_indices"]
         if specs["qpos"][1] != (model.nq,) or specs["qvel"][1] != (model.nv,):

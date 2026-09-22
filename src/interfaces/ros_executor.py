@@ -170,7 +170,7 @@ class RosJointCommandExecutor:
         self.mailbox.receive(message)
 
     def authorize(self, enabled: bool) -> bool:
-        """Thread-safe operator gate; never reset or modify MuJoCo state."""
+        """Physics-thread operator gate; never reset or modify MuJoCo state."""
         with self.mailbox._lock:
             if not enabled:
                 self._hold_mask = self._latched_hold = VALID_READY_MASK
@@ -198,9 +198,10 @@ class RosJointCommandExecutor:
 
 
     def clear(self) -> None:
-        """Clear control only; physical positions and retained targets do not move."""
+        """Clear control and re-sync held targets, including after a plant restore."""
         with self.mailbox._lock:
             self.mailbox.clear()
+            self._held_targets = self.plant.joint_command_targets()
             self._last_ready_ns.clear()
             self._hold_mask = self._latched_hold = VALID_READY_MASK
 
@@ -244,9 +245,9 @@ class RosJointCommandExecutor:
 class ControlTerminal:
     """Optional stdin authorization and recording controls."""
 
-    def __init__(self, executor: RosJointCommandExecutor,
+    def __init__(self, joint_control: Callable[[str], None],
                  recording_control: Callable[[str], None]) -> None:
-        self.executor = executor
+        self._joint_control = joint_control
         self._recording_control = recording_control
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -261,12 +262,14 @@ class ControlTerminal:
                 key = input().strip().lower()
             except EOFError:
                 return
-            if key == "c":
-                self.executor.clear()
-            elif key == "e":
-                self.executor.authorize(not self.executor.mailbox.enabled)
-            elif key in {"r", "s", "d"}:
-                self._recording_control({"r": "start", "s": "success", "d": "discard"}[key])
+            if key in {"c", "e"}:
+                self._joint_control(key)
+            elif key in {"r", "s", "d", "k", "p", "u", "b", "n"}:
+                self._recording_control({
+                    "r": "start", "s": "success", "d": "discard",
+                    "k": "checkpoint", "p": "pause_toggle", "u": "resume",
+                    "b": "revert", "n": "skip",
+                }[key])
 
     def close(self) -> None:
         self._stop.set()

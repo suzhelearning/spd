@@ -105,14 +105,8 @@ class ViewerWindow:
                 return "escape"
             if key in (297, 298):
                 return "f8" if key == 297 else "f9"
-            if key in (ord("e"), ord("E"), ord("c"), ord("C"), ord("q"), ord("Q")):
+            if 0 <= key < 128 and chr(key).lower() in "ecqrsdkpubn":
                 return chr(key).lower()
-            if key in (ord("r"), ord("R")):
-                return "r"
-            if key in (ord("s"), ord("S")):
-                return "s"
-            if key in (ord("d"), ord("D")):
-                return "d"
         return str(key).strip().lower().removeprefix("key_")
 
     def on_key(self, key: Any) -> None:
@@ -126,15 +120,14 @@ class ViewerWindow:
                 self._shutdown()
         elif self._joint_control is not None and name in {"e", "c", "f8", "f9"}:
             self._joint_control(name)
-        elif name == "r":
-            if self._recording_control is not None:
-                self._recording_control("start")
-        elif name == "s":
-            if self._recording_control is not None:
-                self._recording_control("success")
-        elif name == "d":
-            if self._recording_control is not None:
-                self._recording_control("discard")
+        elif self._recording_control is not None:
+            operation = {
+                "r": "start", "s": "success", "d": "discard",
+                "k": "checkpoint", "p": "pause_toggle", "u": "resume",
+                "b": "revert", "n": "skip",
+            }.get(name)
+            if operation is not None:
+                self._recording_control(operation)
     def update_hud(self, values: Mapping[str, Any]) -> None:
         self.hud = dict(values)
         if self._window is None:

@@ -88,7 +88,7 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 `config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机定义仍由 `config/sim_cameras.yaml` 注入模型并保存，但在线采集不创建渲染器、不采 RGB。Viewer 是操作反馈，与后续训练渲染无关。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
 
-运动与录制独立：已启用且至少一组新鲜 ready／非 hold 命令时，`r` 准备新 episode；`s` 确认成功并保存；`d` 丢弃当前段。准备／保存／丢弃期间拒绝新操作。退出、撤权、队列溢出或数据错误保留不完整 partial。没有新 ROS 命令时仍按物理步记录实际状态，分组 hold 不冻结物理。
+运动与录制独立：已启用且至少一组新鲜 ready／非 hold 命令时，`r` 准备新 episode；`s` 确认成功并保存；`d/n` 丢弃／跳过当前段。左踏／`k` 创建本段最新无手–物接触检查点，中踏／本地 `p` 暂停或请求授权恢复，右踏短按／`b` 回退并保持暂停，右踏长按至少 1 秒后松开跳过本段。暂停时的中踏属于显式本地授权，必须重新检查目标新鲜度和对齐门限，不再额外需要 `e/u`。准备／保存／丢弃／回退期间拒绝新采集操作。退出、非暂停造成的撤权、队列溢出或数据错误保留不完整 partial。正常录制无新 ROS 命令时仍按物理步记录实际状态，分组 hold 不冻结物理。
 
 `TrajectorySource` 在会话初始化时序列化完整 MuJoCo 模型，包含网格、纹理和相机。SHA-256、精确 MuJoCo 版本、物理设置、源资产溯源、任务随机参数及关节／物体地址映射随 episode 保存。原场景 XML 删除或搬迁不影响恢复；不支持不同 MuJoCo 版本之间直接加载二进制快照。
 
@@ -98,13 +98,19 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 `CollectionSession` 是本地按键和 ROS 请求共享的唯一录制状态机。单个协调 worker 负责准备／保存／丢弃；单个 HDF5 写线程接收有界整帧队列。队列满、数据不合法或漏 tick 立即报错，绝不覆盖旧样本或静默丢帧。完成后校验全部行、数据类型、时间轴、模型和元数据哈希，才发布 `.h5`；完整性 `complete` 与任务结果 `success` 分离。帧数上限为 `success=false`，仅显式保存为 true。
 
+检查点按论文 A.1 拒绝任一手与任务物体的当前 solver-active 接触；使用独立 scratch MjData 刷新接触，不以旧接触缓存或整个采样区间判定。在线检查点通过 `mj_copyData` 保存完整 MjData、tick、保留目标和未结束接触区间，仅存在内存中且不可跨模型／episode 使用。回退先冻结物理并清除授权，由协调 worker 向唯一写线程发送 FIFO 裁剪事件，缩短全部轨迹数据集并刷盘；完成后恢复检查点和采样计数，再次清空邮箱并同步执行器保留目标。主循环暂停时继续 ROS、控制操作、HUD 和心跳，不执行目标应用或物理积分。恢复要求操作者对齐后显式授权，不改动上游 IK、标定或会话。
+
+`interfaces.foot_pedal` 通过显式 `--pedal-device` 选择 Linux evdev 键盘节点；默认三个码为 `37,25,48`，可用 `--pedal-keys` 按检查点／暂停切换／回退或跳过的顺序配置。设备独占读取防止同一事件再次进入窗口或 stdin；使用 CLOCK_MONOTONIC 的完整按下／松开周期，忽略重复和启动前输入。右踏仅松开时按时长选择一个操作，不先回退再跳过。丢事件／断开立即终止读取、释放占用并经动作队列通知物理线程暂停和撤权，不自动重连。`request_local("pause_toggle")` 是唯一新增本地授权入口，ROS `request("resume")` 继续要求已有授权，不提供远程 pause-toggle 服务。
+
+裁剪移除失败分支而保留前缀，恢复原仿真 tick／时间和采样相位，真实单调时钟不回退。可选 `/collection_events/rewind` 记录保留帧数与回退墙钟时间，后续样本不得跨该分支边界。三键职责与论文一致；暂停同时冻结物理、右键短／长按区分回退／跳过、跳过不自动换任务，是论文未详述行为的工程选择。
+
 每次接受 start 时按本机日期固定 `YYYYMMDD/`。跨午夜不拆段，下一段重新选日期；每日 `dataset_config.json` 仅约束模型无关的共享 schema。旧 schema-v1 目录拒绝追加，不修改历史数据。输出优先级保持 `--output`、`SPD_EPISODE_OUTPUT`、配置 `data_dir`。
 
 `replay_episode` 加载内嵌模型，在独立 MjData 逐帧赋值并调用前向计算，验证机器人投影和物体位姿；不调用 `mj_step`、不发送目标、不渲染。记录不包含 ctrl 或全部积分器历史，不能当作恢复原控制运行的检查点。公开校验和恢复拒绝 partial／未完成文件，且拒绝 schema、模型、元数据和 MuJoCo 版本不匹配。详见 [schema-v2.md](schema-v2.md)。
 
-`CollectionRosControl` 仍在同一节点提供 `/spd/collection/{start,save,discard}`；服务响应只表示接受，最终状态带 collector／operation ID。可靠 transient-local `/spd/collection/status` 包含状态、完整轨迹帧数、路径、错误和 elapsed，不再含 camera_frames。独立触发客户端同步采用该字段集合，无运动授权能力。升级后两端均须重启。
+`CollectionRosControl` 在同一节点提供 `/spd/collection/{start,save,discard,checkpoint,pause,resume,revert,skip}`；服务响应只表示接受，最终状态带 collector／operation ID。可靠 transient-local `/spd/collection/status` 包含状态、完整轨迹帧数、路径、错误、elapsed、`physics_paused` 和可空 `checkpoint_frames`。独立触发客户端支持全部采集操作但无运动授权能力；本地终端通过动作队列将授权／清除也交给物理线程。升级后两端均须重启。
 
-采集侧不实现检查点／回退、接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染只输出当前完整轨迹的所有源帧，不代替这些处理。
+采集侧已实现在线检查点／回退，不实现采后接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染输出当前保留轨迹的所有源帧，不代替这些处理。
 
 ## 7. 八 GPU 离线渲染
 

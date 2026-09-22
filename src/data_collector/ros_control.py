@@ -6,7 +6,10 @@ import time
 from typing import Any
 
 
-SERVICE_NAMES = {name: f"/spd/collection/{name}" for name in ("start", "save", "discard")}
+SERVICE_NAMES = {
+    name: f"/spd/collection/{name}"
+    for name in ("start", "save", "discard", "checkpoint", "pause", "resume", "revert", "skip")
+}
 STATUS_TOPIC = "/spd/collection/status"
 
 
