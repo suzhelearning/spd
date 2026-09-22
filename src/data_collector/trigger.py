@@ -2,16 +2,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import json
 import math
 import os
-import select
 import sys
-import termios
 import time
-import tty
 from typing import Any
+
+from interfaces.keyboard_control import KEY_COMMANDS, read_key, terminal_input
 
 
 STATUS_MAX_AGE = 2.0  # Collector heartbeat is at most 0.5 seconds apart.
@@ -21,15 +19,15 @@ STRING_FIELDS = (
     "episode_path", "last_saved_path",
 )
 COUNT_FIELDS = ("state_frames", "max_frames")
-KEY_COMMANDS = {
-    "r": "start", "s": "save", "d": "discard",
-    "k": "checkpoint", "p": "pause", "u": "resume", "b": "revert", "n": "skip",
-}
 FINAL_STATES = {
     "start": {"recording"}, "save": {"idle"}, "discard": {"idle"},
     "checkpoint": {"recording", "paused"}, "pause": {"paused"},
     "resume": {"recording"}, "revert": {"paused"}, "skip": {"idle"},
 }
+CONFIRMATION_FIELDS = (
+    "collector_id", "episode_path", "operation_id", "state", "checkpoint_frames",
+    "skip_confirmation", "message", "error",
+)
 
 
 class ClientError(RuntimeError):
@@ -70,7 +68,7 @@ def json_object(payload: str) -> dict[str, Any]:
 
 def parse_status(payload: str) -> dict[str, Any]:
     status = json_object(payload)
-    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused", "checkpoint_frames"}
+    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused", "checkpoint_frames", "skip_confirmation"}
     if set(status) != fields:
         raise ClientError("Malformed collector status: unexpected or missing fields")
     if any(not isinstance(status[key], str) for key in STRING_FIELDS):
@@ -81,6 +79,8 @@ def parse_status(payload: str) -> dict[str, Any]:
         raise ClientError("Malformed collector status: counts must be nonnegative integers")
     if type(status["physics_paused"]) is not bool:
         raise ClientError("Malformed collector status: physics_paused must be a boolean")
+    if type(status["skip_confirmation"]) is not bool:
+        raise ClientError("Malformed collector status: skip_confirmation must be a boolean")
     checkpoint_frames = status["checkpoint_frames"]
     if checkpoint_frames is not None and (type(checkpoint_frames) is not int or checkpoint_frames < 0):
         raise ClientError("Malformed collector status: checkpoint_frames must be null or a nonnegative integer")
@@ -110,29 +110,6 @@ def show_status(status: dict[str, Any]) -> None:
     )
 
 
-@contextmanager
-def terminal_input(enabled: bool):
-    if not enabled:
-        yield
-        return
-    fd = sys.stdin.fileno()
-    previous = termios.tcgetattr(fd)
-    try:
-        tty.setcbreak(fd)  # Keep ISIG: Ctrl+C still raises KeyboardInterrupt.
-        yield
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
-
-
-def read_key() -> str:
-    if select.select([sys.stdin], [], [], 0)[0]:
-        key = os.read(sys.stdin.fileno(), 1)
-        if not key:
-            raise ClientExit
-        return key.decode("ascii", errors="ignore").lower()
-    return ""
-
-
 class CollectionTrigger:
     def __init__(self, node: Any, interactive: bool) -> None:
         import rclpy
@@ -156,6 +133,7 @@ class CollectionTrigger:
         self.collector_id = ""
         self.transition = None
         self.observed: dict[str, dict[str, Any]] | None = None
+        self.skip_confirmation: tuple[Any, ...] | None = None
         self.subscription = node.create_subscription(
             String, STATUS_TOPIC, self.on_status,
             QoSProfile(
@@ -171,8 +149,11 @@ class CollectionTrigger:
             if self.collector_id and status["collector_id"] != self.collector_id:
                 raise ClientError("Collector identity changed; outcome unknown. Reconnect explicitly.")
         except ClientError as exc:
+            self.skip_confirmation = None
             self.status_error = str(exc)
             return
+        if self.skip_confirmation != tuple(status[key] for key in CONFIRMATION_FIELDS):
+            self.skip_confirmation = None
         self.collector_id = status["collector_id"]
         self.status = status
         self.received_at = time.monotonic()
@@ -221,6 +202,8 @@ class CollectionTrigger:
             raise ClientError(self.status_error)
         if waiting and self.interactive:
             key = read_key()
+            if key:
+                self.skip_confirmation = None
             if key == "q":
                 raise ClientExit
             if key in KEY_COMMANDS:
@@ -248,6 +231,8 @@ class CollectionTrigger:
         raise ClientError(f"Collector unavailable: {problem}; no command sent.")
 
     def execute(self, command: str, timeout: float) -> None:
+        if command != "revert_skip":
+            self.skip_confirmation = None
         deadline = time.monotonic() + timeout
         self.wait_ready(deadline)
         if command == "status":
@@ -259,6 +244,28 @@ class CollectionTrigger:
         if problem:
             raise ClientError(f"Collector unavailable: {problem}; no command sent.")
         self.require_fresh_status()
+        if command == "pause_toggle":
+            command = "resume" if self.status["state"] == "paused" else "pause"
+        elif command == "revert_skip":
+            if self.status["checkpoint_frames"] is not None:
+                self.skip_confirmation = None
+                command = "revert"
+            elif self.status["state"] not in {"recording", "paused"}:
+                self.skip_confirmation = None
+                print("d requires a recording or paused episode; no command sent.", flush=True)
+                return
+            else:
+                context = tuple(self.status[key] for key in CONFIRMATION_FIELDS)
+                if self.skip_confirmation != context:
+                    self.skip_confirmation = context
+                    print(
+                        "No checkpoint: tap d again to confirm skipping this episode; "
+                        "another key or collector state change cancels.",
+                        flush=True,
+                    )
+                    return
+                self.skip_confirmation = None
+                command = "skip"
         collector_id = self.collector_id
         previous_saved_path = self.status["last_saved_path"]
         self.observed = {}
@@ -328,9 +335,10 @@ def main(argv: list[str] | None = None) -> int:
     if interactive:
         print(
             "SPD collection client (no motion controls)\n"
-            "  r = start recording   s = save-success   d = discard\n"
-            "  k = checkpoint   p = pause   u = resume   b = revert   n = skip\n"
-            "  Resume requires a fresh command explicitly authorized in the local viewer/terminal.\n"
+            "  r = checkpoint   s = pause/resume   d = revert; without a checkpoint, d twice skips\n"
+            "  g = start recording   f = save-success\n"
+            "  Resume never authorizes motion: use local e with a fresh command first.\n"
+            "  Focus this terminal; tap only. Held-key autorepeat can confirm skip; no long press.\n"
             "  q / Ctrl+C = exit client ONLY; never save, discard, or stop capture on exit.\n"
             "Commands wait for collector completion; unknown outcomes are never retried.",
             flush=True,
@@ -361,12 +369,14 @@ def main(argv: list[str] | None = None) -> int:
                         raise ClientError(f"Collector unavailable: {problem}")
                     next_graph_check = time.monotonic() + 0.5
                 key = read_key()
+                if key and key != "d":
+                    client.skip_confirmation = None
                 if key == "q":
                     raise ClientExit
                 command = KEY_COMMANDS.get(key)
                 if command:
                     client.execute(command, args.timeout)
-    except (ClientExit, KeyboardInterrupt):
+    except (ClientExit, EOFError, KeyboardInterrupt):
         print("Client exiting only. Already submitted operations may still complete; no exit operation sent.")
         return 130 if sys.exc_info()[0] is KeyboardInterrupt else 0
     except Exception as exc:

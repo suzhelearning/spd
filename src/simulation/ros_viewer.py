@@ -21,7 +21,6 @@ import numpy as np
 from data_collector.config import load_collection_config
 from data_collector.ros_control import CollectionRosControl
 from data_collector.session import CollectionSession
-from interfaces.foot_pedal import FootPedal, parse_pedal_keys
 from interfaces.ros_executor import ControlTerminal, RosJointCommandExecutor
 from interfaces.ros_joint_command import JOINT_NAMES, TOPIC
 from simulation.viewer import PlantController
@@ -77,8 +76,6 @@ class RosViewerApp:
         )
         self.collection_ros = CollectionRosControl(self.node, self.collection)
         self.control_terminal = ControlTerminal(self.joint_control, self.recording_control)
-        self.foot_pedal: FootPedal | None = None
-        self.pedal_error = ""
         self._started_ns = time.monotonic_ns()
         self._last_received = 0
         self._rate_ns = self._started_ns
@@ -89,11 +86,8 @@ class RosViewerApp:
         self.stop = True
 
     def recording_control(self, command: str) -> None:
-        # Viewer/stdin/pedal callbacks run off-thread; queue all model access.
+        # Viewer/stdin callbacks run off-thread; queue all model access.
         self._actions.put(("record", command))
-
-    def pedal_failed(self, message: str) -> None:
-        self._actions.put(("pedal_error", message))
 
     def joint_control(self, key: str) -> None:
         self._actions.put(("control", key))
@@ -104,20 +98,12 @@ class RosViewerApp:
                 category, command = self._actions.get_nowait()
             except queue.Empty:
                 return
-            if category == "pedal_error":
-                self.pedal_error = command
-                self.notice = f"Foot pedal stopped: {command}"
-                print(self.notice, file=sys.stderr, flush=True)
-                try:
-                    if self.collection.state == "recording":
-                        self.collection.request_local("pause")
-                finally:
-                    self.executor.authorize(False)
-                continue
             if category == "control":
+                self.collection.cancel_skip_confirmation()
                 if command == "e":
                     if self.collection.state not in {"idle", "error", "recording", "paused"}:
                         self.notice = f"Control authorization unavailable while {self.collection.state}"
+                        print(self.notice, flush=True)
                         continue
                     enabled = self.executor.mailbox.enabled
                     self.executor.authorize(not enabled)
@@ -125,12 +111,15 @@ class RosViewerApp:
                 elif command == "c":
                     self.executor.clear()
                     self.notice = "Mailbox cleared; holding last targets, no HOME/reset"
+                elif command == "q":
+                    self.request_stop()
                 else:
                     self.selected_joint = (self.selected_joint + (1 if command == "f9" else -1)) % len(JOINT_NAMES)
                 continue
-            operation = "save" if command == "success" else command
-            _, response = self.collection.request_local(operation)
+            accepted, response = self.collection.request_local(command)
             self.notice = response["message"]
+            if not accepted:
+                print(f"SPD collection: {self.notice}", flush=True)
 
     def _update_display(self, now: int) -> None:
         mailbox = self.executor.mailbox
@@ -170,12 +159,10 @@ class RosViewerApp:
         values["Checkpoint"] = f"states={checkpoint_frames}" if checkpoint_frames is not None else "none"
         values["Operation"] = f"{status['operation']} / {status['operation_id']}"
         values["Collection"] = self.collection.message[:90]
-        values["Keys"] = "e enable/hold, c clear, F8/F9 joint, r/s/d record/save/discard, q quit"
-        values["Recovery k/p/b"] = "checkpoint / pause-resume / revert; u resume, n skip"
-        values["Pedals L/M/R"] = "checkpoint / pause-resume / short revert, hold >=1s + release skip"
-        values["Pedal input"] = str(getattr(self.args, "pedal_device", None) or "disabled (use --pedal-device)")
-        if self.pedal_error:
-            values["Pedal error"] = self.pedal_error
+        values["Keys"] = "e enable/hold, c clear, F8/F9 joint, g start, f save, q quit"
+        values["Pedals r/s/d"] = "checkpoint / pause-resume / revert; no checkpoint: d twice skips"
+        if status["skip_confirmation"]:
+            values["Confirm skip"] = "No checkpoint: tap d again to skip; another control cancels"
         values["Notice"] = self.notice[:90]
         self.window.update_hud(values)
         self.window.update_joint_plot(JOINT_NAMES[selected], (now - self._started_ns) * 1e-9, targets[selected], actual[selected])
@@ -192,23 +179,6 @@ class RosViewerApp:
             for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
         }
         try:
-            pedal_device = getattr(self.args, "pedal_device", None)
-            if pedal_device is not None:
-                try:
-                    self.foot_pedal = FootPedal(
-                        pedal_device, self.recording_control, self.pedal_failed,
-                        keys=getattr(self.args, "pedal_keys", (37, 25, 48)),
-                    )
-                    self.foot_pedal.start()
-                except (OSError, ValueError) as exc:
-                    print(
-                        f"Cannot start foot pedal {pedal_device}: {exc}. "
-                        "Check --pedal-device points to the pedal's evdev device, "
-                        "close any other process grabbing it, and grant this user read access "
-                        "with a device-specific udev rule/ACL; do not run the simulator as root.",
-                        file=sys.stderr, flush=True,
-                    )
-                    return 2
             self.window.open()
             handle = self.window.window
             if handle is not None:
@@ -227,17 +197,11 @@ class RosViewerApp:
             self.control_terminal.start()
             print(f"SPD subscriber ready: {TOPIC}; explicit local enable required", flush=True)
             print(
-                "Keyboard: r start, s save, d discard; k checkpoint, p pause/resume, b revert; "
-                "u resume, n skip; e enable/hold, c clear.",
+                "Keyboard/pedals: r checkpoint, s pause/resume, d revert (no checkpoint: d twice skips); "
+                "g start, f save; e enable/hold, c clear, q/Ctrl+C quit. "
+                "Focus this terminal or viewer. Tap only: held-key autorepeat can confirm skip.",
                 flush=True,
             )
-            if self.foot_pedal is not None:
-                print(
-                    f"Foot pedal: {pedal_device}; left checkpoint, middle pause/resume, "
-                    "right short press+release revert, hold >=1s then release skip. "
-                    "Start/save remain on the keyboard; pedal works without viewer focus.",
-                    flush=True,
-                )
             if self.plant.scene_model_path is not None:
                 print(f"Scene: {self.args.scene}/{self.args.task}; seed={self.args.seed}; "
                       f"table near edge X={self.args.table_distance:g} m; "
@@ -264,8 +228,6 @@ class RosViewerApp:
                 else:
                     deadline = time.monotonic_ns()
         finally:
-            if self.foot_pedal is not None:
-                self.foot_pedal.close()
             self.control_terminal.close()
             self.collection.close()
             self.window.close()
@@ -290,10 +252,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--table-distance", type=float,
                         help="Base origin to near table edge along +X, metres; prompts for table scenes")
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--pedal-device", type=Path,
-                        help="Explicit foot-pedal evdev path (exclusive grab); disabled unless supplied")
-    parser.add_argument("--pedal-keys", type=parse_pedal_keys, default=(37, 25, 48),
-                        help="Left,middle,right Linux key codes (default: 37,25,48 for k,p,b)")
     parser.add_argument("--max-enable-delta-rad", type=float, default=0.15,
                         help="Simulation-only maximum ready-joint target jump allowed at local enable")
     args = parser.parse_args(argv)

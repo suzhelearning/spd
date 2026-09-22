@@ -49,6 +49,7 @@ class CollectionSession:
         self._closed = False
         self._physics_paused = False
         self._checkpoint: dict[str, Any] | None = None
+        self._skip_confirmation = False
 
     @property
     def physics_paused(self) -> bool:
@@ -66,9 +67,11 @@ class CollectionSession:
             "max_frames": self.config.max_frames,
             "physics_paused": self.physics_paused,
             "checkpoint_frames": self._checkpoint["frames"] if self._checkpoint else None,
+            "skip_confirmation": self._skip_confirmation,
         }
 
     def _transition(self, state: str, message: str) -> None:
+        self.cancel_skip_confirmation()
         self.state, self.message = state, message
         print("SPD collection: " + json.dumps(self.snapshot(), ensure_ascii=False), flush=True)
         if self.on_transition is not None:
@@ -85,8 +88,27 @@ class CollectionSession:
             return "External command is stale; no currently ready command group"
         return ""
 
+    def cancel_skip_confirmation(self) -> None:
+        """Any other operator action or lifecycle transition cancels pending skip."""
+        if self._skip_confirmation:
+            self.message = "Skip confirmation cancelled"
+        self._skip_confirmation = False
+
     def request_local(self, operation: str) -> tuple[bool, dict]:
         """Local pause pedal is explicit authorization; ROS requests never use this gate."""
+        if operation == "revert_skip":
+            if self._closed or self._job is not None or self.state not in {"recording", "paused"}:
+                return self.request("revert")
+            if self._checkpoint is not None:
+                return self.request("revert")
+            if self._skip_confirmation:
+                return self.request("skip")
+            self._skip_confirmation = True
+            self.message = "No checkpoint: press d again to confirm skipping this episode; another control cancels"
+            if self.on_transition is not None:
+                self.on_transition()
+            return False, {"collector_id": self.collector_id, "operation_id": "", "message": self.message}
+        self.cancel_skip_confirmation()
         if operation != "pause_toggle":
             return self.request(operation)
         if self.state != "paused":
@@ -97,7 +119,6 @@ class CollectionSession:
         # must still align with the retained/restored targets at this press.
         if not self.executor.authorize(True):
             reason = self.executor.mailbox.last_reject_reason or "No fresh aligned command candidate"
-            print(f"SPD collection rejected local resume: {reason}", flush=True)
             return False, {"collector_id": self.collector_id, "operation_id": "", "message": reason}
         accepted, payload = self.request("resume")
         if not accepted or self.state != "recording":
@@ -106,6 +127,7 @@ class CollectionSession:
 
     def request(self, operation: str) -> tuple[bool, dict]:
         """Accept on the physics thread; disk mutations run on the control worker."""
+        self.cancel_skip_confirmation()
         reason = ""
         operations = {"start", "save", "discard", "checkpoint", "pause", "resume", "revert", "skip"}
         if self._closed:
@@ -140,7 +162,6 @@ class CollectionSession:
             elif not self.state_frames:
                 reason = "Waiting for the first actual whole-scene trajectory sample"
         if reason:
-            print(f"SPD collection rejected {operation}: {reason}", flush=True)
             return False, {"collector_id": self.collector_id, "operation_id": "", "message": reason}
 
         self.operation_id = uuid4().hex
@@ -174,7 +195,7 @@ class CollectionSession:
             elif operation == "pause":
                 self._physics_paused = True
                 self.executor.clear()
-                self._transition("paused", "Paused physics and recording; align targets, then press local p / middle pedal")
+                self._transition("paused", "Paused physics and recording; align targets, then tap s / middle pedal")
             elif operation == "resume":
                 self._physics_paused = False
                 self._transition("recording", "Resume completed")
@@ -246,7 +267,7 @@ class CollectionSession:
                     self._first_tick = checkpoint["first_tick"]
                     self._last_tick = checkpoint["last_tick"]
                     self.executor.clear()
-                    self._transition("paused", "Revert completed; align restored targets, then press local p / middle pedal")
+                    self._transition("paused", "Revert completed; align restored targets, then tap s / middle pedal")
                 elif previous == "aborting":
                     self.episode_path = result
                     self._transition("error", f"{self.error}; partial episode preserved")

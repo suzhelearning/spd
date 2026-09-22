@@ -12,6 +12,8 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 
+from interfaces.keyboard_control import KEY_COMMANDS
+
 
 class ViewerWindow:
     def __init__(
@@ -105,7 +107,7 @@ class ViewerWindow:
                 return "escape"
             if key in (297, 298):
                 return "f8" if key == 297 else "f9"
-            if 0 <= key < 128 and chr(key).lower() in "ecqrsdkpubn":
+            if 0 <= key < 128:
                 return chr(key).lower()
         return str(key).strip().lower().removeprefix("key_")
 
@@ -116,16 +118,14 @@ class ViewerWindow:
             if self._shutdown_sent:
                 return
             self._shutdown_sent = True
-            if self._shutdown is not None:
+            if self._joint_control is not None:
+                self._joint_control("q")
+            elif self._shutdown is not None:
                 self._shutdown()
         elif self._joint_control is not None and name in {"e", "c", "f8", "f9"}:
             self._joint_control(name)
         elif self._recording_control is not None:
-            operation = {
-                "r": "start", "s": "success", "d": "discard",
-                "k": "checkpoint", "p": "pause_toggle", "u": "resume",
-                "b": "revert", "n": "skip",
-            }.get(name)
+            operation = KEY_COMMANDS.get(name)
             if operation is not None:
                 self._recording_control(operation)
     def update_hud(self, values: Mapping[str, Any]) -> None:

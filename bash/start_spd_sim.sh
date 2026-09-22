@@ -10,21 +10,20 @@ task=""
 seed="0"
 collection_config="$repo_root/config/collect_sim.yaml"
 max_frames=""
-pedal_device=""
-pedal_keys=""
 
 table_distance=""
 usage() {
-  echo "Usage: start_spd_sim.sh [--headless] [--collection-config PATH] [--output PATH] [--max-frames N] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD] [--pedal-device PATH] [--pedal-keys LEFT,MIDDLE,RIGHT]"
+  echo "Usage: start_spd_sim.sh [--headless] [--collection-config PATH] [--output PATH] [--max-frames N] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD]"
   echo "Runs only the MuJoCo subscriber in this terminal; Ctrl+C exits."
   echo "Table scenes ask for the robot-base-to-near-edge distance unless --table-distance is given."
-  echo "Pedal input is opt-in: pass its evdev path; default Linux key codes are 37,25,48 (k,p,b)."
-  echo "Pedals: left checkpoint; middle pause/resume; right short revert, hold >=1s then release skip."
+  echo "Keyboard pedals: left r checkpoint; middle s pause/resume; right d revert, or d twice to skip without a checkpoint."
+  echo "g start; f save; e enable/hold; c clear; q/Ctrl+C exit. Focus this terminal or viewer."
+  echo "Tap only: ordinary keyboard autorepeat can confirm skip; no long-press detection."
 }
 while (($#)); do
   case "$1" in
     --headless) headless=1; shift ;;
-    --output|--collection-config|--max-frames|--max-enable-delta-rad|--scene|--task|--seed|--table-distance|--pedal-device|--pedal-keys)
+    --output|--collection-config|--max-frames|--max-enable-delta-rad|--scene|--task|--seed|--table-distance)
       [[ $# -ge 2 && -n "$2" ]] || { echo "Missing value for $1" >&2; exit 2; }
       case "$1" in
         --output) output="$2" ;;
@@ -35,8 +34,6 @@ while (($#)); do
         --task) task="$2" ;;
         --seed) seed="$2" ;;
         --table-distance) table_distance="$2" ;;
-        --pedal-device) pedal_device="$2" ;;
-        --pedal-keys) pedal_keys="$2" ;;
       esac
       shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -54,17 +51,13 @@ if ((headless)); then viewer_args+=(--headless); fi
 if [[ -n "$scene" ]]; then viewer_args+=(--scene "$scene"); fi
 if [[ -n "$task" ]]; then viewer_args+=(--task "$task"); fi
 if [[ -n "$table_distance" ]]; then viewer_args+=(--table-distance "$table_distance"); fi
-if [[ -n "$pedal_device" ]]; then viewer_args+=(--pedal-device "$pedal_device"); fi
-if [[ -n "$pedal_keys" ]]; then viewer_args+=(--pedal-keys "$pedal_keys"); fi
 if [[ "${CONDA_PREFIX:-}" != "$repo_root/.pixi/envs/ros-jazzy" ]]; then
   exec pixi run --manifest-path "$repo_root/pixi.toml" -e ros-jazzy \
     bash "$repo_root/bash/start_spd_sim.sh" "${viewer_args[@]}"
 fi
 echo "Starting SPD subscriber in the foreground (Fast DDS, ROS domain 120)."
-echo "Terminal: e=enable/hold, c=clear, r=start, s=save, d=discard, k=checkpoint, p=pause/resume, b=revert; management u=resume, n=skip; Ctrl+C=exit."
-if [[ -n "$pedal_device" ]]; then
-  echo "Pedals: left=checkpoint, middle=pause/resume, right=short press+release revert / hold >=1s+release skip; start/save remain keyboard."
-fi
+echo "Terminal/pedals: r=checkpoint, s=pause/resume, d=revert (no checkpoint: d twice skips); g=start, f=save; e=enable/hold, c=clear, q/Ctrl+C=exit."
+echo "Focus this terminal or viewer. Tap only: held-key autorepeat can confirm skip."
 cd "$repo_root"
 # Generated colcon setup scripts do not support nounset.
 set +u
