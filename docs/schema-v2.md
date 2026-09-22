@@ -2,7 +2,7 @@
 
 ## 范围与迁移
 
-在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入接入、标定与 IK 属于外部 `tianji_teleop`；训练图像由后续离线渲染生成，`src/offline_rendering/` 当前仍仅预留。
+在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入接入、标定与 IK 属于外部 `tianji_teleop`；`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
 
 本版是不兼容的 schema-v2：旧的机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除。校验器拒绝旧 schema，同日 `dataset_config.json` 冲突时拒绝追加。升级应使用新的输出根目录，例如 `/data/TianjiSim-trajectories`，并将自定义采集配置更新为 version 2、state_rate_hz 60，删除 camera_rate_hz。
 
@@ -115,4 +115,41 @@ replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每
 
 这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。后续离线渲染应从记录的实际状态逐帧渲染，而不是重跑目标控制来猜物体轨迹。
 
-本次不实现离线图像／分割生成、检查点／回退、接触裁剪、30 Hz 重采样、动作标签或数据增强。旧 align_30hz／filter_contacts 入口已移除；未来样本构建不得跨 episode、回退或裁剪边界，也不得把未来实测 qpos 伪称未记录的原始控制命令。
+本版不实现检查点／回退、接触裁剪、30 Hz 重采样、动作标签或数据增强。旧 align_30hz／filter_contacts 入口已移除；离线渲染逐行保留源帧，不代替时间网格处理。未来样本构建不得跨 episode、回退或裁剪边界，也不得把未来实测 qpos 伪称未记录的原始控制命令。
+
+## 离线渲染伴随文件（render schema 1）
+
+渲染产物为独立的 `episode_<ID>.render.h5`，不是采集 schema-v2 的新字段。源完整轨迹及同目录 dataset_config.json 必须可用；服务器只需匹配 MuJoCo 精确版本，无须采集主机上的源 XML、纹理目录或 ROS。
+
+相机逻辑名固定为 top、left_wrist、right_wrist，位置和投影参数完全来自内嵌模型。位置尚未定稿；模型 camera_config.calibration_revision 缺失／空白／含 provisional 时默认拒绝。只有显式诊断开关允许预览，结果标为 diagnostic_only，不把临时相机升级为正式标定。URDF 相机安装格式及转换尚待用户定稿，不在渲染配置中添加猜测外参。
+
+```text
+episode_<ID>.render.h5
+├── @render_schema_version = 1
+├── @complete
+├── @source_sha256 / @model_sha256 / @source_metadata_sha256
+├── @settings_sha256 / @metadata_sha256
+├── metadata                       scalar canonical UTF-8 JSON
+├── frames/
+│   ├── source_index               int64[N]，逐行 0..N-1
+│   ├── tick                       int64[N]，等于源轨迹
+│   ├── sim_time                   float64[N]，等于源轨迹
+│   └── monotonic_ns               int64[N]，等于源轨迹
+└── cameras/{top,left_wrist,right_wrist}/
+    ├── jpeg                       vlen uint8[N]，RGB JPEG
+    ├── instance_id                int32[N,H,W]，无损 LZF
+    ├── position                   float64[N,3]，相机世界位置
+    └── rotation                   float64[N,3,3]，camera-to-world 旋转
+```
+
+默认 W=224、H=168、JPEG quality=90，subsampling=0；尺寸与编码设置进入 metadata 和 settings_sha256。所有 dataset 带逐行内容 SHA-256；JPEG 摘要包含每帧长度，固定宽度数组按连续 little-endian 字节累积。发布前和复用时流式验证实际 JPEG 解码、类型／维度、掩码 ID、时钟关联、变换矩阵与校验和，不一次读入整段图像。
+
+metadata 包含源身份、原始编译相机定义与临时／已确认状态、渲染配置与引擎版本、实际 GL vendor／renderer／version、GPU EGL 设备号、实例映射、恢复误差摘要。相机世界变换从每帧 mj_forward 后的 cam_xpos／cam_xmat 获取，不用机器人腕部位置代替相机光学位姿。
+
+正实例 ID 复用当前 episode 的 scene_manifest.objects.instance_id，所有属于同一物体子树的外观 mesh 共享同一个 ID。0=天空或无 GEOM，-1=机器人外观（非任务 group1），-2=非任务环境。盘架／杯架／箱体是任务物体，仍使用其正 ID。实例 ID 不意味着跨 episode 追踪同一个实物。底层 MuJoCo 分割返回 `(object_id, object_type)`，仅 GEOM 类型可索引几何映射；不能将 RGB 编码色号直接当实例 ID。
+
+源文件只读，并在渲染／复用前后核验整文件 SHA-256。每帧恢复还会检查机器人状态和任务物体位姿；不调用 mj_step。每个 episode 的一个 EGL worker 顺序渲染三视角，帧间队列不传输图像。
+
+独占 `.lock` 保护目标文件，先写 `.render.partial.h5`，完成并校验后通过同目录硬链接无覆盖发布，再移除 partial。失败不覆盖已有完整文件；已存在 partial／lock 需人工确认无活动进程后处理。中断不自动重试，完整结果仅在源和设置身份匹配、全部内容校验通过后复用。改变分辨率、相机／源模型或编码设置应使用新输出目录。
+
+不同 GPU／驱动上下文的光栅化和 JPEG 不保证字节级一致，输出记录实际环境用于溯源。正常恢复误差容限为 1e-6，复用时相机变换比较为 1e-12；哈希保证已有输出未改变，不是跨硬件图像完全相同的承诺。

@@ -1,6 +1,6 @@
 # SPD Simulation Collection — Tianji + Wuji Hand 2
 
-SPD **只负责仿真数据采集**：订阅外部 ROS 2 `JointCommand`，在 MuJoCo 中推进 Tianji 双臂 + Wuji Hand 2 双手与任务物体，在线记录 60 Hz 完整场景物理轨迹及接触信息。训练图像由后续离线渲染产生；在线采集不创建相机渲染器、不保存 RGB。SPD 不接收 PICO 原始输入，不做标定、IK 或手部重定向，不提供命令发布器，也不控制实机。
+SPD **负责仿真轨迹采集与离线渲染**：订阅外部 ROS 2 `JointCommand`，在线记录 60 Hz 完整场景物理轨迹及接触信息；离线进程再恢复实际状态，生成 RGB 和实例分割。在线采集不创建相机渲染器、不保存 RGB。SPD 不接收 PICO 原始输入，不做标定、IK 或手部重定向，不提供命令发布器，也不控制实机。
 
 上游 `tianji_teleop-ros2` 已定稿：负责 PICO 标定、共享根坐标下的 Franka DLS + Ruckig、Hand2 映射及默认 ROS 关节命令发布。其入口是在上游工作区运行 `bash bash/run_pico_hand_sim.sh --height-m 1.75`。SPD 启动器不会启动或管理上游进程；上游功能定稿不替代本工作区的真实头显端到端验收。
 
@@ -16,14 +16,14 @@ src/
   simulation/                       MuJoCo 物理执行、ROS Viewer、场景查看
   cameras/                          仿真多视角相机
   data_collector/                   完整场景轨迹、模型快照、ROS 采集控制及独立恢复检查
-  offline_rendering/                预留：从物理轨迹离线生成 RGB／实例分割，尚未实现
+  offline_rendering/                EGL 多 GPU 调度、只读状态恢复、RGB／实例分割输出
   description/                      manifest、资源定位、机器人模型编译
   environments/spd_envs/             独立环境包：任务、随机重置、场景生成
   tianji_wuji2/tianji_wuji2/
     assets/                          原始 URDF、网格与碰撞资产
     generated/                       编译后的模型与 manifest
   interfaces/tianji_spd_interfaces/   ROS 2 JointCommand 消息包
-config/                              collect_sim.yaml 采集配置与相机配置
+config/                              采集、临时预览相机与 8×5090 渲染服务器配置
 bash/                                仿真／采集前台入口与独立采集触发器
 data/                                采集输出和已有数据；不随代码清理删除
 docs/                                架构、数据契约与论文
@@ -227,7 +227,7 @@ max_frames: 0
 
 每段内嵌 MuJoCo 编译模型（含网格、纹理与相机）、版本与 SHA-256、任务和实际随机参数、关节／物体映射与相机元数据。采集开始后的样本直接来自完成物理积分的场景，不等新的 ROS 命令、不补录旧缓存。手–物接触在每个物理步观察，按采样区间累计，避免只看 60 Hz 瞬间漏掉短接触；不会把桌面接触和机器人自碰撞当作手–物接触。
 
-`config/sim_cameras.yaml` 的 `top`、`left_wrist`、`right_wrist` 定义仍注入模型并记录，但不在采集循环中渲染。在线 Viewer 是操作者反馈，不是训练图像流。配置仍为 `provisional-v1`，尚未完成相机标定。`src/offline_rendering/` 继续仅预留，尚不生成 RGB 或实例分割。
+`config/sim_cameras.yaml` 的三路相机当前只是 `provisional-v1` 预览定义，位置尚未定稿。离线渲染器只使用模型中已有的 `top`、`left_wrist`、`right_wrist` 命名相机，不硬编码外参，不新增或替代缺失相机。正式渲染默认拒绝临时或缺少标定确认的快照。最终位置将由用户提供的 URDF 相机安装定义转换到模型；标准 URDF 无原生相机标签，具体 link/joint 或 Gazebo 扩展转换待实际文件格式确定后接入，本次不猜测实现。
 
 新段写入 `episode_<UUID>.partial.h5`。每个后台队列事件是一整帧，所有数据集严格同长。重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
@@ -241,13 +241,64 @@ pixi run replay_episode '/data/TianjiSim-trajectories/YYYYMMDD/episode_<UUID>.h5
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
 
-数据契约见 [docs/schema-v2.md](docs/schema-v2.md)。检查点／回退、超过 10 秒无接触裁剪、30 Hz 训练样本构建和离线图像渲染尚不属于当前采集实现。旧 `align_30hz`、`filter_contacts` 入口依赖已废弃且不匹配的 action／image schema，已移除，避免误处理轨迹；不能从 state-only 文件恢复未记录的原始命令。
+数据契约见 [docs/schema-v2.md](docs/schema-v2.md)。检查点／回退、超过 10 秒无接触裁剪和 30 Hz 训练样本构建仍未实现；离线渲染作为独立步骤生成所有源帧的图像，不改变采样时间网格。旧 `align_30hz`、`filter_contacts` 入口依赖已废弃契约，已移除；不能从 state-only 文件恢复未记录的原始命令。
+
+## 8×RTX 5090 离线渲染服务器
+
+`config/render_server.yaml` 默认选择 EGL 设备 0–7、每卡 1 个独立进程、每进程 1 个数值库 CPU 线程；episode 动态分配给空闲 worker，图像不经进程间队列传输。同一段由单个进程完成，不把八张卡显存当作一个池。`--workers-per-gpu` 可调整并发，但应先测 CPU、编码、存储吞吐和显存，不能仅因显存空闲就增加进程。
+
+服务器需要支持 RTX 5090 的 NVIDIA 驱动和 EGL/OpenGL 图形运行库，不需要显示器、X11、ROS 或 VR 设备。当前实现使用原生 MuJoCo EGL，不使用 CUDA/Warp/Madrona，不要求 Torch 的 Blackwell CUDA 构建。容器必须暴露 GPU 和图形驱动能力，例如 `--gpus all`、`NVIDIA_DRIVER_CAPABILITIES=graphics,utility,compute`；只提供 compute 库不能保证 EGL 可用。
+
+```bash
+# 使用同一份 pixi.lock，保证与轨迹内嵌 MJB 的 MuJoCo 精确版本一致
+pixi install -e render --locked
+
+# 不读取数据，只在每个 worker 中创建 EGL 上下文并报告真实 GPU
+pixi run -e render spd-render --check-gpus
+
+# 最终相机已写入模型并确认标定后，正式批量渲染
+pixi run -e render spd-render \
+  --input /data/TianjiSim-trajectories \
+  --output /data/TianjiSim-rendered
+```
+
+**EGL 设备序号不保证等于 nvidia-smi 或 CUDA 序号。** `CUDA_VISIBLE_DEVICES` 不能替代 EGL 绑定。每个 spawn worker 在导入 MuJoCo／OpenGL 前设置 `MUJOCO_GL=egl`、`MUJOCO_EGL_DEVICE_ID`，然后校验实际 GL vendor／renderer；默认必须匹配 `RTX 5090`，不允许静默转 CPU。先运行预检，再按服务器枚举结果用 `--gpus 0,1,...` 调整。
+
+本机或少量 GPU 可覆盖设备型号和并发，例如：
+
+```bash
+pixi run -e render spd-render --check-gpus --gpus 0 --expected-gpu-name "RTX 5060 Ti"
+
+# 仅诊断临时视角；不是对相机位置的确认，不应混入正式训练图像
+pixi run -e render spd-render \
+  --gpus 0 --expected-gpu-name "RTX 5060 Ti" \
+  --allow-provisional-cameras \
+  --input /path/to/trajectories --output /path/to/diagnostic-renders
+```
+
+相机位置未定时可以完成 GPU／吞吐诊断，但默认正式命令会拒绝当前 provisional 数据。不要通过改 revision 名称冒充实测标定；正式 URDF 相机接入后必须重新检查视角及投影。既有轨迹中的相机不会随仓库 URDF 改动而自动改变；对旧轨迹注入新标定需要另行提供明确的转换流程，不能静默换模型。
+
+将完整日期目录（包括 `dataset_config.json`）复制到服务器。内嵌模型包含网格／纹理，不需要原始场景 XML、原 ABC 工作区或采集主机路径。输入和输出目录必须分开；建议用本地 NVMe 暂存，完成后再归档到共享存储。输出需要支持 POSIX 独占创建、硬链接和 fsync 的文件系统。
+
+默认输出 224×168、JPEG quality 90 RGB 和无损 int32 实例掩码。物体的多个外观网格统一映射到原始实例 ID；0 表示天空／无几何，-1 表示机器人，-2 表示非任务环境，正数为任务物体（含固定支架）。每帧保留源行号、物理 tick、仿真时间、单调时间及实际相机世界位置／旋转矩阵。相机姿态只来自源模型和记录状态。
+
+输出路径镜像输入目录，文件名为 `episode_<ID>.render.h5`，与原轨迹分离。每段先写 partial，逐帧验证 JPEG、掩码、关联时钟、姿态、哈希和恢复误差后再发布；已有完整输出只在源文件／模型／元数据／设置均匹配且内容校验通过时跳过。配置变化或输出损坏直接失败，不覆盖、不自动重试。残留 partial／lock 必须先确认没有运行进程，再人工检查处理。
+
+所有选择的 GPU 都须预检成功才开始作业。worker 异常退出或初始化超时会中止本批次，报告未确认完成的 episode 并清理自有进程；重跑时已完成且验证通过的文件可以跳过。跨 GPU／驱动的 JPEG 字节级一致性不作保证，原始状态和稳定实例 ID 不变，输出记录实际 GL 与 MuJoCo 版本。
 
 ## 能力与验证边界
 
-正式运行入口包括订阅仿真、配置化采集及独立采集触发、模型编译、场景查看／检查和数据检查。不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
+正式运行入口包括订阅仿真、配置化采集及独立采集触发、模型编译、场景查看／检查、轨迹恢复和 EGL 离线渲染。不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
 
 真实头显到上游再到 SPD 的端到端采集、硬件安全、跨主机网络、录制负载下的实时性能及论文数据等价性必须分别验收，不能以进程启动或模块存在替代。上游发布契约已定稿；本次 SPD 验证范围见下文，不宣称已完成真实头显联调。架构与职责见 [docs/architecture.md](docs/architecture.md)。
+
+### 服务器渲染适配验证（2026-09-22）
+
+- 本机实际 NVIDIA RTX 5060 Ti、驱动 580.173.02、MuJoCo 3.12.0 的 EGL 预检通过；使用同一卡上的两个 spawn worker，实际渲染六个 episode、18 个源帧，产生 54 组 RGB／实例掩码，原轨迹哈希未变。此结果不是 8×5090 性能测试。
+- 输出 JPEG 尺寸／RGB 模式、稳定实例映射、源时钟和相机世界变换通过流式校验；重跑六段全部校验后跳过。改设置、损坏有效范围内的掩码像素、残留 partial、错误 GPU 型号和不存在的 EGL 设备均明确失败。
+- provisional 相机默认拒绝且不创建输出；仅显式诊断模式用于上述 GPU 检查。当前视角没有被确认为最终采集／训练相机。
+- 独立重复渲染的实例掩码完全相同；本次解码 RGB 最大通道差为 2/255，不将不同原生 GL 上下文的 JPEG 字节一致性作为保证。禁止 mj_step 后实际离线渲染仍通过。
+- 注入 worker 硬退出和启动超时后，父进程报告全部未完成任务并回收子进程。未验证服务器八卡吞吐、长时间运行、最终 URDF 相机转换或真实标定；没有新增永久测试目录。
 
 ### 精细场景验证（2026-09-22）
 
@@ -255,7 +306,7 @@ pixi run replay_episode '/data/TianjiSim-trajectories/YYYYMMDD/episode_<UUID>.h5
 - 六类代表场景分别组合真实 Tianji／Wuji 模型并渲染截图；重复合并不修改源场景。各记录 3 帧 schema-v2 轨迹，移除临时场景 XML 后内嵌模型恢复通过，物体位姿误差小于 1e-12。
 - 实际球体落入杯腔／箱体并停在内底上；12 mm 探针可置于杯柄孔内，无接触穿透。字母 R 的实际渲染方向与原图一致，已修正贴图 V 方向；陶瓷盘沿与内凹面在渲染检查中可见。
 - 环境包 wheel 包含 104 个运行资产文件；从临时解包安装位置加载瓶子／字母／马克杯场景通过，全部六种瓶子资产和导出哈希一致。`pixi run spd-envs-check --seed-count 3` 和实际 `spd-scene` 无图形截图入口通过。
-- 这些是有限种子、短时物理与视觉检查，不代替真实头显操作者的抓取／挂杯／堆叠验收或实物参数标定。没有新增永久测试目录或离线渲染实现。
+- 这些是有限种子、短时物理与视觉检查，不代替真实头显操作者的抓取／挂杯／堆叠验收或实物参数标定。该阶段没有新增永久测试目录或离线渲染实现；后续独立渲染适配见上节。
 
 ### schema-v2 完整场景轨迹验证（2026-09-22）
 

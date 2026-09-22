@@ -19,7 +19,7 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
                      ↓
        replay_episode：独立逐帧恢复（不推进物理、不渲染）
                      ↓
-       offline_rendering：预留，后续生成训练 RGB／实例分割
+       offline_rendering：按 episode 分配到 EGL GPU，生成 RGB／稳定实例掩码
 ```
 
 正式入口为前台 `pixi run spd-sim`，以及模型、场景、数据检查命令。不存在独立停止命令、旧 PICO、HDF5 命令发布或 Zenoh 遥操作启动器和转发 shim。`replay_episode` 从文件内嵌模型恢复状态并验证，不把历史观测用作合成发布目标。
@@ -32,13 +32,13 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
 | `src/simulation/` | 机器人 MuJoCo 物理执行、ROS Viewer、窗口与场景查看 |
 | `src/cameras/` | 世界／腕部仿真相机与 RGB 获取 |
 | `src/data_collector/` | 配置、采集状态机、ROS 控制、完整物理轨迹与模型快照、独立恢复验证 |
-| `src/offline_rendering/` | 仅预留；不包含渲染器或训练图像输出 |
+| `src/offline_rendering/` | spawn 多 GPU 调度、原生 EGL、逐帧恢复渲染与输出校验 |
 | `src/description/` | manifest、模型编译与资源定位 |
 | `src/environments/spd_envs/` | 独立环境包，任务注册、随机化、场景生成与重置检查 |
 | `src/tianji_wuji2/tianji_wuji2/assets/` | 原始 URDF、网格和碰撞资产 |
 | `src/tianji_wuji2/tianji_wuji2/generated/` | 编译后的可加载模型与 manifest |
 | `src/interfaces/tianji_spd_interfaces/` | ROS 2 `JointCommand.msg` 与接口构建元数据 |
-| `config/` | `collect_sim.yaml` 采集配置与 `sim_cameras.yaml` 相机配置 |
+| `config/` | 采集、临时预览相机和 `render_server.yaml` 八卡渲染配置 |
 | `bash/` | 前台订阅／采集启动入口与独立触发终端 |
 | `data/` | 采集产物和已有样本，不随代码清理删除 |
 
@@ -78,7 +78,7 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 种子同时选择瓶子型号／尺寸、材质和纹理变体；`geometry_revision=detailed-scenes-v1`、对象资产 ID、原始／导出哈希、外观选择、物理参数与字母分配进入场景 manifest。碰撞调试色与真实外观材质分开记录。桌距变化同步平移物体、桌面外观、灯光和相关元数据，不重新采样。
 
-模型合并先解析原模型资源，再深拷贝场景资产和实体；重复资产名明确拒绝，不修改或消耗原 SceneBuildResult。重复合并输出一致。新模型的网格、纹理和相机继续由 schema-v2 的 MJB 快照完整携带，状态恢复与场景精细化解耦；不因此实现离线渲染。
+模型合并先解析原模型资源，再深拷贝场景资产和实体；重复资产名明确拒绝，不修改或消耗原 SceneBuildResult。重复合并输出一致。新模型的网格、纹理和相机继续由 schema-v2 的 MJB 快照完整携带，状态恢复与场景精细化解耦；离线渲染由独立模块消费这些快照。
 
 带桌场景在创建窗口前解析 `simulation.scene.resolve_table_distance`；`--table-distance` 显式指定或交互询问，非交互必须显式提供。距离沿 +X 从底座原点到近侧桌沿，默认 0.10 m。桌子、物体和固定支架整体平移，不重新采样随机参数；实际距离、几何和 seed 保存到 scene/task manifest。
 
@@ -104,10 +104,22 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 `CollectionRosControl` 仍在同一节点提供 `/spd/collection/{start,save,discard}`；服务响应只表示接受，最终状态带 collector／operation ID。可靠 transient-local `/spd/collection/status` 包含状态、完整轨迹帧数、路径、错误和 elapsed，不再含 camera_frames。独立触发客户端同步采用该字段集合，无运动授权能力。升级后两端均须重启。
 
-本次不实现检查点／回退、接触裁剪、30 Hz 样本构建或离线渲染。旧 `align_30hz`、`filter_contacts` 实现依赖已废弃的动作／图像契约，已移除；不为新轨迹保留无效入口。
+采集侧不实现检查点／回退、接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染只输出当前完整轨迹的所有源帧，不代替这些处理。
 
-## 7. 研究与验证边界
+## 7. 八 GPU 离线渲染
+
+`pixi run -e render spd-render` 使用独立无 ROS 的 render 环境。默认部署配置选择 8 个 EGL 设备，每卡一个 spawn worker；父进程不导入 MuJoCo／GL、不加载图像。worker 在任何 native import 前设置 `MUJOCO_GL=egl`、`MUJOCO_EGL_DEVICE_ID`、`PYOPENGL_PLATFORM=egl` 和数值库线程数，再用实际 GL vendor／renderer 检查 NVIDIA 硬件与目标型号。EGL 索引不等于 CUDA_VISIBLE_DEVICES 映射，服务器必须先运行 `--check-gpus`。
+
+所有 worker 初始化成功才派发 episode，空闲进程从共享队列取下一段。每段独立加载内嵌模型，单个 Renderer 顺序产生三视角 RGB 和实例掩码，缓冲区有界，不把像素送到父进程。每卡显存独立；workers_per_gpu 可调但不承诺线性加速。当前是原生 EGL 而不是 Warp／Madrona，不需要 CUDA 训练框架。
+
+相机位置由用户后续 URDF 定义，当前只固定逻辑名 top／left_wrist／right_wrist。渲染器不决定外参，只读模型中已有相机；缺失即报错。默认拒绝 provisional 或无 calibration_revision 的快照，显式诊断开关允许预览但输出标记 diagnostic_only。现有临时 YAML 的坐标不代表正式相机位置。URDF link/joint／相机扩展转换和历史轨迹换相机须在实际格式确定后单独接入，不隐式修改已记录模型。
+
+渲染对原始轨迹只读，不调用 mj_step；逐帧赋值并 mj_forward，复用机器人／物体位姿一致性检查。隐藏 group0／3 碰撞代理；MuJoCo 分割的 GEOM ID 通过物体子树映射成源 instance_id，同一物体的多个网格共用一个 ID。保留 0 天空、-1 机器人、-2 非任务环境。相机世界位置、旋转矩阵及源 frame/tick/time 同行写出。
+
+结果独立为 .render.h5；独占锁、partial、完整内容校验和同目录原子无覆盖发布防止混写。源文件／模型／元数据／设置哈希决定复用，已完成输出仍须逐流校验；不匹配、损坏或残留 partial/lock 明确失败，不自动重试／覆盖。进程硬退出或启动超时清理其余自有进程，报告未确认任务；重跑可跳过校验通过的已完成段。输出格式详见 [schema-v2.md](schema-v2.md)。
+
+## 8. 研究与验证边界
 
 论文参考为 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、附录 A.1。论文物理 480 Hz、控制／流传输／记录 60 Hz、训练网格 30 Hz 是不同阶段的契约，不等同于当前实现各流频率或机器性能保证。
 
-上游发布契约已定稿；这里不宣称真实 PICO → 上游 → SPD 已完成端到端验收。多视角离线批量渲染、训练增强、完整任务示范质量与论文等价性均须单独验证。实机控制、真实传感器融合、策略训练与部署不属于 SPD。启动窗口、模块存在或接口匹配，都不能替代物理行为和采集数据的实际验收。
+上游发布契约已定稿；这里不宣称真实 PICO → 上游 → SPD 已完成端到端验收。GPU 渲染链路与八卡部署接口不代表已经在 8×5090 实测吞吐；相机最终标定、训练增强、完整示范质量及论文等价性仍须分别验证。实机控制、真实传感器融合、策略训练与部署不属于 SPD。

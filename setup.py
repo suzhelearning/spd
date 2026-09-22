@@ -24,6 +24,7 @@ setup(
             "spd-viewer = simulation.ros_viewer:main",
             "spd-scene = simulation.scene:main",
             "spd-collect-trigger = data_collector.trigger:main",
+            "spd-render = offline_rendering.cli:main",
             "validate_episode = data_collector.episode:validate_main",
             "replay_episode = data_collector.replay:main",
         ],

@@ -1,3 +1,6 @@
+# Temporary operator-preview views, not approved training camera placements.
+# Final URDF camera frames/conversion will be integrated once their format is supplied.
+# Keep this revision provisional until the actual calibration is confirmed.
 version: 1
 calibration_revision: provisional-v1
 width: 1280

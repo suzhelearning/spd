@@ -24,11 +24,13 @@ coacd = "==1.0.14"
 [environments]
 default = { features = ["sim"], solve-group = "default" }
 ros-jazzy = { features = ["sim", "ros-jazzy"], solve-group = "default" }
+render = { features = ["sim"], solve-group = "default" }
 
 [tasks]
 spd-envs-check = "validate_scenes"
 spd-model = "python -m description.model_compiler.cli --urdf src/tianji_wuji2/tianji_wuji2/assets/tianji_wuji2.urdf --output src/tianji_wuji2/tianji_wuji2/generated --cache src/tianji_wuji2/tianji_wuji2/collision_cache --raw-collisions"
 spd-scene = "python -m simulation.scene"
+spd-render = "python -m offline_rendering"
 ros-build-interfaces = "pixi run -e ros-jazzy bash -lc 'colcon build --base-paths src/interfaces/tianji_spd_interfaces --build-base .ros/build --install-base .ros/install --merge-install'"
 
 [feature.ros-jazzy.tasks]
