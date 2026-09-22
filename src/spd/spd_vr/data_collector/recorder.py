@@ -1,4 +1,4 @@
-"""Schema-v1 episode recorder for simulated robot state, applied targets and RGB."""
+"""Schema-v1 episode recorder for actual simulated robot state and RGB only."""
 
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ _HAND_BASE_NAMES = (
 JOINT_NAMES = _ARM_NAMES + tuple(
     f"{side}_{name}" for side in ("l", "r") for name in _HAND_BASE_NAMES
 )
-_STRING = h5py.string_dtype(encoding="utf-8")
 
 
 class RecorderError(RuntimeError):
@@ -191,8 +190,8 @@ class EpisodeRecorder:
             "jpeg_quality": JPEG_QUALITY,
         }
 
-    def _ensure_dataset_config(self) -> None:
-        path = self.output_root / "dataset_config.json"
+    def _ensure_dataset_config(self, directory: Path) -> None:
+        path = directory / "dataset_config.json"
         expected = self._dataset_config()
         if path.exists():
             actual = json.loads(path.read_text(encoding="utf-8"))
@@ -203,7 +202,7 @@ class EpisodeRecorder:
             temporary.write_text(json.dumps(expected, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             os.replace(temporary, path)
         if self._collection_config:
-            collection_path = self.output_root / "collection_config.json"
+            collection_path = directory / "collection_config.json"
             if collection_path.exists():
                 actual = json.loads(collection_path.read_text(encoding="utf-8"))
                 if actual != self._collection_config:
@@ -229,27 +228,21 @@ class EpisodeRecorder:
         arms.create_dataset("qpos", shape=(0, 14), maxshape=(None, 14), dtype=np.float32, chunks=(256, 14))
         hands.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64, chunks=(256,))
         hands.create_dataset("qpos", shape=(0, 40), maxshape=(None, 40), dtype=np.float32, chunks=(256, 40))
-        commands = handle["observations"].create_group("commands")
-        commands.create_dataset("timestamp_ns", shape=(0,), maxshape=(None,), dtype=np.int64, chunks=(256,))
-        commands.create_dataset("stamp_utc_ns", shape=(0,), maxshape=(None,), dtype=np.int64, chunks=(256,))
-        commands.create_dataset("sequence", shape=(0,), maxshape=(None,), dtype=np.uint64, chunks=(256,))
-        commands.create_dataset("ready_mask", shape=(0,), maxshape=(None,), dtype=np.uint8, chunks=(256,))
-        commands.create_dataset("hold_mask", shape=(0,), maxshape=(None,), dtype=np.uint8, chunks=(256,))
-        commands.create_dataset("applied_sim_time_ns", shape=(0,), maxshape=(None,), dtype=np.int64, chunks=(256,))
-        commands.create_dataset("position_rad", shape=(0, 54), maxshape=(None, 54), dtype=np.float32, chunks=(256, 54))
-        commands.create_dataset("session_id", shape=(0,), maxshape=(None,), dtype=_STRING, chunks=(256,))
-        commands.create_dataset("status", shape=(0,), maxshape=(None,), dtype=_STRING, chunks=(256,))
-        commands.create_dataset("reject_reason", shape=(0,), maxshape=(None,), dtype=_STRING, chunks=(256,))
         return handle
 
-    def start_episode(self, episode_id: str | int, task_manifest: Mapping[str, Any] | str) -> None:
+    def start_episode(
+        self, episode_id: str | int, task_manifest: Mapping[str, Any] | str,
+        *, output_dir: str | Path | None = None,
+    ) -> None:
         with self._lock:
             if self._state != "idle":
                 raise RuntimeError("recorder is busy with another episode")
-            self._ensure_dataset_config()
+            directory = self.output_root if output_dir is None else Path(output_dir)
+            directory.mkdir(parents=True, exist_ok=True)
+            self._ensure_dataset_config(directory)
             stem = _episode_stem(episode_id)
-            partial = self.output_root / f"{stem}.partial.h5"
-            final = self.output_root / f"{stem}.h5"
+            partial = directory / f"{stem}.partial.h5"
+            final = directory / f"{stem}.h5"
             if partial.exists() or final.exists():
                 raise FileExistsError(final if final.exists() else partial)
             if isinstance(task_manifest, Mapping):
@@ -320,62 +313,7 @@ class EpisodeRecorder:
             )
             self.append_image(name, timestamp, getattr(frame, "rgb"))
 
-    def append_robot(
-        self,
-        timestamp_ns: int,
-        qpos: Any,
-        qvel: Any | None = None,
-        qpos_target: Any | None = None,
-        *,
-        arm_valid_mask: int = 0,
-        hand_valid_mask: int = 0,
-    ) -> None:
-        """Compatibility ingress that records only the real 54-DoF qpos."""
-        del qvel, qpos_target
-        vector = _validate_qpos(qpos, 54, "robot.qpos")
-        self.append_arm_qpos(timestamp_ns, np.concatenate((vector[:7], vector[27:34])))
-        if int(hand_valid_mask) == 3:
-            self.append_hand_qpos(timestamp_ns, np.concatenate((vector[7:27], vector[34:54])))
-        del arm_valid_mask
 
-    def submit(self, sim_time_ns: int, qpos: Any, **kwargs: Any) -> None:
-        self.append_robot(sim_time_ns, qpos, **kwargs)
-
-    def append_command(
-        self,
-        timestamp_ns: int,
-        position_rad: Any,
-        *,
-        sequence: int,
-        stamp_utc_ns: int,
-        ready_mask: int,
-        session_id: str,
-        applied_sim_time_ns: int,
-        hold_mask: int = 0,
-        status: str = "accepted",
-        reject_reason: str = "",
-    ) -> None:
-        """Record one complete target snapshot separately from actual qpos."""
-        if not session_id:
-            raise ValueError("command session_id must be non-empty")
-        if int(sequence) <= 0 or int(stamp_utc_ns) <= 0:
-            raise ValueError("command sequence and stamp must be positive")
-        values = _validate_qpos(position_rad, 54, "commands.position_rad")
-        self._put(
-            "command",
-            {
-                "timestamp_ns": _normalise_timestamp(timestamp_ns, self._origin_ns),
-                "stamp_utc_ns": int(stamp_utc_ns),
-                "sequence": int(sequence),
-                "ready_mask": int(ready_mask),
-                "hold_mask": int(hold_mask),
-                "applied_sim_time_ns": int(applied_sim_time_ns),
-                "position_rad": values,
-                "session_id": str(session_id),
-                "status": str(status),
-                "reject_reason": str(reject_reason),
-            },
-        )
 
     def _writer(self) -> None:
         assert self._partial_path is not None
@@ -401,15 +339,6 @@ class EpisodeRecorder:
                         chunks=(64,),
                     )
                     image_datasets[name] = (timestamps, jpeg)
-                command_group = handle["observations/commands"]
-                command_datasets = {
-                    name: command_group[name]
-                    for name in (
-                        "timestamp_ns", "stamp_utc_ns", "sequence", "ready_mask",
-                        "hold_mask", "applied_sim_time_ns", "position_rad",
-                        "session_id", "status", "reject_reason",
-                    )
-                }
                 last_timestamp: dict[str, int] = {}
                 while True:
                     try:
@@ -428,30 +357,6 @@ class EpisodeRecorder:
                         break
                     if event.kind == "discard":
                         break
-                    if event.kind == "command":
-                        payload = event.payload
-                        timestamp = int(payload["timestamp_ns"])
-                        previous = last_timestamp.get("commands")
-                        if previous is not None and timestamp < previous:
-                            raise ValueError("commands timestamps must be non-decreasing")
-                        index = command_datasets["timestamp_ns"].shape[0]
-                        if previous is not None and timestamp == previous:
-                            index -= 1
-                        else:
-                            for dataset in command_datasets.values():
-                                dataset.resize((index + 1,) + dataset.shape[1:])
-                            last_timestamp["commands"] = timestamp
-                        command_datasets["timestamp_ns"][index] = timestamp
-                        command_datasets["stamp_utc_ns"][index] = payload["stamp_utc_ns"]
-                        command_datasets["sequence"][index] = payload["sequence"]
-                        command_datasets["ready_mask"][index] = payload["ready_mask"]
-                        command_datasets["hold_mask"][index] = payload["hold_mask"]
-                        command_datasets["applied_sim_time_ns"][index] = payload["applied_sim_time_ns"]
-                        command_datasets["position_rad"][index] = payload["position_rad"]
-                        command_datasets["session_id"][index] = payload["session_id"]
-                        command_datasets["status"][index] = payload["status"]
-                        command_datasets["reject_reason"][index] = payload["reject_reason"]
-                        continue
                     if event.kind == "arms" or event.kind == "hands":
                         timestamp, qpos = event.payload
                         ts, values = datasets[event.kind]
@@ -515,12 +420,22 @@ class EpisodeRecorder:
         if self._error is not None:
             raise RecorderError(str(self._error)) from self._error
 
+    def _put_end(self, event: _Event) -> None:
+        # Never hold the state lock while waiting for queue capacity: a failed
+        # writer needs that lock before it can signal completion.
+        while not self._done.is_set():
+            try:
+                self._queue.put(event, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
     def finish_episode(self, success: bool = True) -> Path:
         with self._lock:
             if self._state != "recording" or self._queue is None:
                 raise RuntimeError("no episode is recording")
             self._state = "finishing"
-            self._queue.put(_Event("finish", bool(success)))
+        self._put_end(_Event("finish", bool(success)))
         self._wait_writer()
         with self._lock:
             result = self._published_path
@@ -540,12 +455,12 @@ class EpisodeRecorder:
             if self._state not in {"recording", "failed"} or self._queue is None:
                 return
             self._state = "ending"
-            if not self._abort_event.is_set():
-                self._queue.put(_Event(kind, None))
+        if not self._abort_event.is_set():
+            self._put_end(_Event(kind, None))
         try:
             self._wait_writer()
         except RecorderError:
-            if not self._abort_event.is_set():
+            if kind != "abort":
                 raise
         partial = self._partial_path
         if kind == "discard" and partial is not None:
@@ -650,6 +565,8 @@ def validate_episode_path(path: str | Path) -> dict[str, Any]:
         success = bool(handle.attrs["success"])
         if "actions" in handle or "action_type" in handle.attrs:
             raise ValueError("schema-v1 episodes must not contain actions")
+        if set(handle["observations"]) != {"arms", "hands"}:
+            raise ValueError("state-only observations must contain arms and hands, without command targets")
         for stream, width in (("arms", 14), ("hands", 40)):
             timestamp = handle[f"observations/{stream}/timestamp_ns"][:]
             qpos = handle[f"observations/{stream}/qpos"][:]
@@ -660,29 +577,6 @@ def validate_episode_path(path: str | Path) -> dict[str, Any]:
                 raise ValueError(f"observations/{stream}/qpos must be float32[N,{width}]")
             if qpos.shape[0] == 0 or not np.all(np.isfinite(qpos)):
                 raise ValueError(f"observations/{stream}/qpos is empty or non-finite")
-        commands = handle["observations/commands"]
-        command_timestamp = commands["timestamp_ns"][:]
-        command_stamp = commands["stamp_utc_ns"][:]
-        command_sequence = commands["sequence"][:]
-        command_mask = commands["ready_mask"][:]
-        command_hold = commands["hold_mask"][:]
-        command_sim = commands["applied_sim_time_ns"][:]
-        command_position = commands["position_rad"][:]
-        if command_position.dtype != np.dtype("float32") or command_position.shape != (command_timestamp.shape[0], 54):
-            raise ValueError("observations/commands/position_rad must be float32[N,54]")
-        _check_monotonic(command_timestamp, "observations/commands/timestamp_ns")
-        if command_timestamp.shape[0] == 0 or not np.all(np.isfinite(command_position)):
-            raise ValueError("observations/commands is empty or non-finite")
-        if command_stamp.dtype != np.dtype("int64") or np.any(command_stamp <= 0):
-            raise ValueError("observations/commands/stamp_utc_ns is invalid")
-        if command_sequence.dtype != np.dtype("uint64") or command_sequence.shape != command_timestamp.shape:
-            raise ValueError("observations/commands/sequence is invalid")
-        if command_sequence.size > 1 and np.any(np.diff(command_sequence.astype(np.int64)) <= 0):
-            raise ValueError("observations/commands/sequence is not strictly increasing")
-        if command_mask.dtype != np.dtype("uint8") or command_hold.dtype != np.dtype("uint8"):
-            raise ValueError("observations/commands masks have invalid dtype")
-        if command_sim.dtype != np.dtype("int64") or np.any(command_sim < 0):
-            raise ValueError("observations/commands/applied_sim_time_ns is invalid")
         for name in cameras:
             timestamp = handle[f"images/{name}/timestamp_ns"][:]
             jpeg = handle[f"images/{name}/jpeg"]

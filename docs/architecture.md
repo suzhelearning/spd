@@ -15,7 +15,7 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
                      ↙                    ↘
             cameras：真实多视角       Viewer：状态与目标曲线
                      ↓
-       data_collector：实际状态 + RGB + 实际应用命令扩展
+       data_collector：MuJoCo 实际状态 + RGB + 时间戳
                      ↓
             .partial.h5 → 校验 → .h5
 ```
@@ -29,15 +29,15 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
 | `src/spd/spd_vr/interfaces/` | JointCommand wire 契约、校验、邮箱、订阅执行器与授权／保持门 |
 | `src/spd/spd_vr/simulation/` | 机器人 MuJoCo 物理执行、ROS Viewer、窗口与场景查看 |
 | `src/spd/spd_vr/cameras/` | 世界／腕部仿真相机与 RGB 获取 |
-| `src/spd/spd_vr/data_collector/` | episode 生命周期、HDF5 写入／校验、只读检查与数据处理 |
+| `src/spd/spd_vr/data_collector/` | 配置、共享采集会话、ROS 服务／状态及触发客户端、HDF5 写入／校验 |
 | `src/spd/spd_vr/description/` | manifest、模型编译与资源定位 |
 | `src/spd/test/` | 与保留运行时对应的测试 |
 | `src/environments/spd_envs/` | 独立环境包，任务注册、随机化、场景生成与重置检查 |
 | `src/description/tianji_wuji2/assets/` | 原始 URDF、网格和碰撞资产 |
 | `src/description/tianji_wuji2/generated/` | 编译后的可加载模型与 manifest |
 | `src/interfaces/tianji_spd_interfaces/` | ROS 2 `JointCommand.msg` 与接口构建元数据 |
-| `config/` | 相机等运行配置 |
-| `bash/` | 项目专属订阅会话的启动／停止 |
+| `config/` | `collect_sim.yaml` 采集配置与 `sim_cameras.yaml` 相机配置 |
+| `bash/` | 前台订阅／采集启动入口与独立触发终端 |
 | `data/` | 采集产物和已有样本，不随代码清理删除 |
 
 Python 包名保留 `spd_vr`、`spd_envs`。依赖方向为 `spd-vr → spd-envs`；环境包只负责场景，不依赖 ROS 或遥操作算法，也不硬编码机器人路径。资源定位通过 `description/model_builder.py` 的 `workspace_root()`、`description_root()` 和 `config_root()`，不以调用者当前目录猜测资源位置。
@@ -76,15 +76,23 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 ## 6. 相机与录制
 
-`config/sim_cameras.yaml` 定义世界 `top` 和左右腕相机；每路使用真实仿真视角，不复制 overview。配置仍为 provisional，不能宣称完成标定。实际关节状态目标采样 120 Hz、RGB 目标 30 Hz；名义调度不是负载下频率保证。
+`config/sim_cameras.yaml` 定义世界 `top` 和左右腕相机；每路使用真实仿真视角，不复制 overview。配置仍为 provisional，不能宣称完成标定。`collect_sim.yaml` 默认实际关节状态目标采样 120 Hz、RGB 目标 30 Hz；二者独立配置为 480 的正整数约数，名义调度不是负载下频率保证。
 
-运动与录制独立：已启用时 `r` 请求准备新 episode，完成后进入录制；`s` 由操作员确认成功并请求保存；`d` 丢弃当前段。Viewer 无需回车，终端输入需回车。准备／保存／丢弃期间不能重复开始。清除授权、采集错误或退出不自动发布成功文件。
+运动与录制独立：已启用且至少一组新鲜 ready／非 hold 命令时，`r` 请求准备新 episode；`s` 由操作员确认成功并请求保存；`d` 丢弃当前段。Viewer 无需回车，SPD 终端输入需回车。独立 `trigger.py` 终端无需回车，`q` 只退出客户端。采样从当前 MuJoCo 物理状态开始，不等待新的 AppliedCommand，也不补写旧缓存。准备／保存／丢弃期间明确拒绝新操作。清除授权、采集错误或退出不自动发布成功文件。
 
 录制使用同一主机单调时间并按 episode 起点归零。状态源为 MuJoCo 实际 qpos，图像时间在完整帧可用且 JPEG 编码之前记录。JPEG/HDF5 写入由后台线程执行，保存／丢弃协调不在控制回调同步等待；相机创建和同步渲染仍可能阻塞物理循环并触发 100 ms hold，不为渲染放宽门限。
 
-写入中为 `episode_XXXXXX.partial.h5`，成功保存前校验字段、维数、有限值、时间戳与 JPEG，通过后原子发布 `.h5`；中断／失败保留 partial。目录默认 `data/episodes`，可改 `--output` 或 `SPD_EPISODE_OUTPUT`，已有配置不兼容时拒绝追加。
+写入中为 `episode_<UUID>.partial.h5`，关闭后校验字段、维数、有限值、时间戳与 JPEG，通过后原子发布 `.h5`；中断／失败保留 partial。`max_frames` 为状态样本上限，0 不限，达到上限自动保存 `success=false`；仅显式保存标记成功，不自动开始下一段。输出按 `--output`、`SPD_EPISODE_OUTPUT`、配置 `data_dir` 的优先级确定，配置相对路径基于配置所在目录；数据集 schema 配置不兼容时拒绝追加，有效采集参数按 episode 记入 task manifest。
 
-当前文件在原始状态／RGB schema-v1 上保留 `observations/commands` 扩展，包含实际应用目标、session/sequence、UTC、ready/hold、物理应用时间和状态字段，并保存 task manifest。版本和 wire/schema 字段不因本次整理改变。扩展不是原始“只存观测”契约；详见 [schema-v1.md](schema-v1.md)，不得以当前扩展校验器通过来宣称符合原始排除命令的约定。
+上述输出路径是根目录；`CollectionSession` 在每次接受 start 时按本机本地日期固定 `YYYYMMDD/`，将目录传给后台 recorder。创建目录、校验每日 `dataset_config.json` 和写入都在后台执行。跨午夜不拆分或移动当前段，下一段重新选日期；状态中的 partial／最终路径都指向该段固定的日期目录。数据集配置按日隔离，不在根目录新建共享配置，不迁移旧数据。
+
+当前文件遵循 state-only schema-v1：双臂／双手实际 qpos、RGB、各流时间戳和 task manifest。ROS JointCommand、执行器目标、命令序号／session／ready／hold 只用于执行与实时显示，不写入采集文件；`CollectionSession.tick` 只接收物理步信息，从 plant 读取实际 qpos。已删除旧 `observations/commands` 扩展，当前校验器拒绝带该扩展的旧文件，不自动迁移已有数据。详见 [schema-v1.md](schema-v1.md)。
+
+`CollectionSession` 是本地按键和 ROS 请求共同使用的唯一录制状态机。物理线程管理状态、采样和相机；单个协调 worker 处理磁盘生命周期，沿用单个后台 HDF5 写入者。`ros_viewer` 不再维护另一套录制状态。`spd-collect` 是同一前台仿真进程的采集入口，与 `spd-sim` 二选一，不能同时启动两套写入者。
+
+`CollectionRosControl` 在同一节点提供 `/spd/collection/start`、`save`、`discard` Trigger 服务；回调只接受／拒绝操作，不等待写盘或改变运动授权。响应 JSON 返回 collector／operation ID，`success` 只表示接受。`/spd/collection/status` 为可靠 transient-local String JSON，状态变化立即发布，并以 250 ms 名义间隔更新；包含状态、计数、路径和错误。物理循环阻塞也会延迟心跳，不伪造健康。
+
+独立触发客户端只消费状态和调用服务，无 MuJoCo、输入设备或写盘所有权；它检查单一同属节点的服务和状态发布者、心跳及 operation ID，等候完成，不自动重试未知结果。该工作流借鉴 protype 的配置／触发组织，不引入其硬件数据处理器、缺失补零或同步帧 schema。
 
 ## 7. 研究与验证边界
 

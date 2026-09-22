@@ -22,6 +22,7 @@ setup(
             "spd-model = spd_vr.description.model_compiler.cli:main",
             "spd-viewer = spd_vr.simulation.ros_viewer:main",
             "spd-scene = spd_vr.simulation.scene:main",
+            "spd-collect-trigger = spd_vr.data_collector.trigger:main",
             "validate_episode = spd_vr.data_collector.episode:validate_main",
             "replay_episode = spd_vr.data_collector.replay:main",
             "align_30hz = spd_vr.data_collector.align_30hz:main",

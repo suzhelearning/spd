@@ -2,26 +2,30 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-output="${SPD_EPISODE_OUTPUT:-$repo_root/data/episodes}"
+output="${SPD_EPISODE_OUTPUT:-}"
 headless=0
 max_enable_delta="0.15"
 scene=""
 task=""
 seed="0"
+collection_config="$repo_root/config/collect_sim.yaml"
+max_frames=""
 
 table_distance=""
 usage() {
-  echo "Usage: start_spd_sim.sh [--headless] [--output PATH] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD]"
+  echo "Usage: start_spd_sim.sh [--headless] [--collection-config PATH] [--output PATH] [--max-frames N] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES] [--max-enable-delta-rad RAD]"
   echo "Runs only the MuJoCo subscriber in this terminal; Ctrl+C exits."
   echo "Table scenes ask for the robot-base-to-near-edge distance unless --table-distance is given."
 }
 while (($#)); do
   case "$1" in
     --headless) headless=1; shift ;;
-    --output|--max-enable-delta-rad|--scene|--task|--seed|--table-distance)
+    --output|--collection-config|--max-frames|--max-enable-delta-rad|--scene|--task|--seed|--table-distance)
       [[ $# -ge 2 && -n "$2" ]] || { echo "Missing value for $1" >&2; exit 2; }
       case "$1" in
         --output) output="$2" ;;
+        --collection-config) collection_config="$2" ;;
+        --max-frames) max_frames="$2" ;;
         --max-enable-delta-rad) max_enable_delta="$2" ;;
         --scene) scene="$2" ;;
         --task) task="$2" ;;
@@ -37,8 +41,9 @@ command -v pixi >/dev/null || { echo "pixi is required" >&2; exit 1; }
 [[ -f "$repo_root/.ros/install/setup.sh" ]] || {
   echo "Missing ROS interfaces; run pixi run ros-build-interfaces" >&2; exit 1;
 }
-mkdir -p "$output"
-viewer_args=(--output "$output" --max-enable-delta-rad "$max_enable_delta" --seed "$seed")
+viewer_args=(--collection-config "$collection_config" --max-enable-delta-rad "$max_enable_delta" --seed "$seed")
+if [[ -n "$output" ]]; then viewer_args+=(--output "$output"); fi
+if [[ -n "$max_frames" ]]; then viewer_args+=(--max-frames "$max_frames"); fi
 if ((headless)); then viewer_args+=(--headless); fi
 if [[ -n "$scene" ]]; then viewer_args+=(--scene "$scene"); fi
 if [[ -n "$task" ]]; then viewer_args+=(--task "$task"); fi

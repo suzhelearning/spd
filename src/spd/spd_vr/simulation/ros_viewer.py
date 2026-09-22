@@ -9,18 +9,19 @@ except ImportError:  # The non-ROS environment can still import simulation modul
     rclpy = None
 
 import argparse
-from concurrent.futures import Future, ThreadPoolExecutor
+import os
 from pathlib import Path
 import queue
 import signal
 import sys
 import time
-from typing import Any
 
 import numpy as np
 
-from spd_vr.cameras.camera import CAMERA_NAMES, MujocoCameraProvider
-from spd_vr.data_collector.recorder import EpisodeRecorder
+from spd_vr.cameras.camera import MujocoCameraProvider
+from spd_vr.data_collector.config import load_collection_config
+from spd_vr.data_collector.ros_control import CollectionRosControl
+from spd_vr.data_collector.session import CollectionSession
 from spd_vr.interfaces.ros_executor import ControlTerminal, RosJointCommandExecutor
 from spd_vr.interfaces.ros_joint_command import JOINT_NAMES, TOPIC
 from spd_vr.simulation.viewer import PlantController
@@ -33,18 +34,16 @@ class RosViewerApp:
     def __init__(self, args: argparse.Namespace) -> None:
         import rclpy
 
+        collection_config = load_collection_config(
+            args.collection_config, output=args.output, max_frames=args.max_frames,
+        )
+        args.output = collection_config.data_dir
         scene_result = build_selected_scene(args.scene, args.task, args.seed, args.table_distance)
         self.args = args
         self.stop = False
-        self.episode_counter = 0
         self.selected_joint = 0
         self.notice = "Waiting for an external publisher; e enables a fresh aligned candidate"
         self._actions: queue.SimpleQueue[tuple[str, str]] = queue.SimpleQueue()
-        self._record_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spd-record-control")
-        self._record_job: Future | None = None
-        self._record_operation = ""
-        self._accept_recording = False
-        self.recorder = EpisodeRecorder(args.output, camera_names=CAMERA_NAMES)
         args.scene = scene_result.scene if scene_result is not None else "hardware_free"
         args.task = scene_result.task if scene_result is not None else "external_joint_command"
         if scene_result is not None:
@@ -54,7 +53,6 @@ class RosViewerApp:
             camera_config_path=config_root() / "sim_cameras.yaml",
             scene_result=scene_result, scene_output_dir=args.output / "scenes",
         )
-        self.camera: MujocoCameraProvider | None = None
         self.window = ViewerWindow(
             self.plant.model,
             self.plant.data,
@@ -68,6 +66,19 @@ class RosViewerApp:
         self.executor = RosJointCommandExecutor(
             self.node, self.plant, max_enable_delta_rad=args.max_enable_delta_rad,
         )
+        self.collection = CollectionSession(
+            collection_config, self.plant, self.executor,
+            {
+                **(self.plant.scene_manifest or {}),
+                "task": args.task, "scene": args.scene, "seed": args.seed,
+                "artifact_hash": self.plant.artifact_hash,
+                "collection_config_path": str(args.collection_config.expanduser().resolve()),
+            },
+            lambda: MujocoCameraProvider(
+                self.plant.model, self.plant.data, config_root() / "sim_cameras.yaml",
+            ),
+        )
+        self.collection_ros = CollectionRosControl(self.node, self.collection)
         self.control_terminal = ControlTerminal(self.executor, self.recording_control)
         self._started_ns = time.monotonic_ns()
         self._last_received = 0
@@ -81,27 +92,6 @@ class RosViewerApp:
     def recording_control(self, command: str) -> None:
         # Viewer/stdin callbacks run off-thread; keep all model access here.
         self._actions.put(("record", command))
-
-    def _record_background(self, operation: str, function: Any, *args: Any, **kwargs: Any) -> None:
-        self._accept_recording = False
-        self._record_operation = operation
-        self._record_job = self._record_worker.submit(function, *args, **kwargs)
-
-    def _poll_recording(self) -> None:
-        if self._record_job is not None and self._record_job.done():
-            try:
-                result = self._record_job.result()
-                self._accept_recording = self._record_operation == "preparing"
-                self.notice = f"Recording {self._record_operation} complete" + (f": {result}" if result else "")
-            except Exception as exc:
-                self.notice = f"Recording error: {exc}"
-                self._accept_recording = False
-            self._record_job = None
-        if self._record_job is None and self.recorder.error is not None:
-            self.notice = f"Recording error: {self.recorder.error}; preserving partial file"
-            self._record_background("interrupted", self.recorder.abort_episode, "recording_error")
-        if self._accept_recording and not self.executor.mailbox.enabled:
-            self._record_background("interrupted", self.recorder.abort_episode, "control_disabled")
 
     def _process_actions(self) -> None:
         while True:
@@ -120,65 +110,9 @@ class RosViewerApp:
                 else:
                     self.selected_joint = (self.selected_joint + (1 if command == "f9" else -1)) % len(JOINT_NAMES)
                 continue
-            if self._record_job is not None:
-                self.notice = f"Recording busy: {self._record_operation}"
-                continue
-            try:
-                if command == "start" and not self.recorder.is_busy:
-                    if not self.executor.mailbox.enabled:
-                        self.notice = "Enable aligned external control before recording"
-                        continue
-                    # Missing calibrated views are reported, never replaced by duplicated images.
-                    if self.camera is None:
-                        self.camera = MujocoCameraProvider(
-                            self.plant.model, self.plant.data,
-                            config_root() / "sim_cameras.yaml",
-                        )
-                    while True:
-                        self.episode_counter += 1
-                        stem = f"episode_{self.episode_counter:06d}"
-                        if not any((self.args.output / f"{stem}{suffix}").exists() for suffix in (".h5", ".partial.h5")):
-                            break
-                    self._record_background(
-                        "preparing", self.recorder.start_episode, self.episode_counter,
-                        {
-                            **(self.plant.scene_manifest or {}),
-                            "task": self.args.task, "scene": self.args.scene,
-                            "seed": self.args.seed, "artifact_hash": self.plant.artifact_hash,
-                        },
-                    )
-                elif command == "success" and self._accept_recording:
-                    self._record_background("saved", self.recorder.finish_episode, success=True)
-                elif command == "discard" and self._accept_recording:
-                    self._record_background("discarded", self.recorder.discard_episode)
-            except Exception as exc:
-                self.notice = f"Recording unavailable: {exc}"
-
-    def _record_tick(self, step: Any, applied: Any, now: int) -> None:
-        if not self._accept_recording:
-            return
-        try:
-            if applied is not None:
-                self.recorder.append_command(
-                    now, applied.position_rad,
-                    sequence=applied.snapshot.sequence,
-                    stamp_utc_ns=applied.snapshot.stamp_ns,
-                    ready_mask=applied.snapshot.ready_mask,
-                    session_id=applied.snapshot.session_id,
-                    applied_sim_time_ns=applied.applied_sim_time_ns,
-                    hold_mask=applied.hold_mask,
-                )
-            if step.tick % max(1, self.plant.physics_hz // 120) == 0:
-                qpos = self.plant.joint_command_positions()
-                stamp = time.monotonic_ns()
-                self.recorder.append_arm_qpos(stamp, qpos[:14])
-                self.recorder.append_hand_qpos(stamp, qpos[14:])
-            if step.tick % max(1, self.plant.physics_hz // 30) == 0:
-                frames = self.camera.capture(step.sim_time_ns)
-                self.recorder.append_cameras(frames, available_timestamp_ns=time.monotonic_ns())
-        except Exception as exc:
-            self.notice = f"Recording interrupted: {exc}"
-            self._record_background("interrupted", self.recorder.abort_episode, "recording_error")
+            operation = "save" if command == "success" else command
+            _, response = self.collection.request(operation)
+            self.notice = response["message"]
 
     def _update_display(self, now: int) -> None:
         mailbox = self.executor.mailbox
@@ -211,7 +145,8 @@ class RosViewerApp:
         ]
         values["Max error LA/RA/LH/RH"] = " / ".join(f"{error:.3f}" for error in errors)
         values["Rejected"] = (mailbox.last_reject_reason or "none")[:90]
-        values["Recording"] = self._record_operation if self._record_job else "ACTIVE" if self._accept_recording else "IDLE"
+        values["Recording"] = f"{self.collection.state} / states={self.collection.state_frames}"
+        values["Collection"] = self.collection.message[:90]
         values["Keys"] = "e enable/hold, c clear, F8/F9 joint, r/s/d record/save/discard, q quit"
         values["Notice"] = self.notice[:90]
         self.window.update_hud(values)
@@ -252,13 +187,14 @@ class RosViewerApp:
             while not self.stop and rclpy.ok() and self.window.is_running():
                 rclpy.spin_once(self.node, timeout_sec=0.0)
                 self._process_actions()
-                self._poll_recording()
+                self.collection.poll()
                 now = time.monotonic_ns()
                 applied = self.executor.apply_pending(now_ns=now)
                 if applied is not None:
                     self._last_applied = applied
                 step = self.plant.physics_tick()
-                self._record_tick(step, applied, now)
+                self.collection.tick(step)
+                self.collection_ros.heartbeat()
                 if now >= display_deadline:
                     self._update_display(now)
                     display_deadline = now + 50_000_000
@@ -270,13 +206,9 @@ class RosViewerApp:
                     deadline = time.monotonic_ns()
         finally:
             self.control_terminal.close()
-            self._record_worker.shutdown(wait=True)
-            self.recorder.close()
+            self.collection.close()
             self.window.close()
             self.plant.close()
-            if self.camera is not None:
-                for renderer in self.camera._renderers.values():
-                    renderer.close()
             self.node.destroy_node()
             if rclpy.ok():
                 rclpy.shutdown()
@@ -287,7 +219,10 @@ class RosViewerApp:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--collection-config", type=Path, default=config_root() / "collect_sim.yaml")
+    parser.add_argument("--output", type=Path, default=os.environ.get("SPD_EPISODE_OUTPUT") or None,
+                        help="Override collection config data_dir")
+    parser.add_argument("--max-frames", type=int, help="Override state sample limit (0: unlimited)")
     parser.add_argument("--scene", help="Scene name (default: hardware_free)")
     parser.add_argument("--task", help="Task name or qualified SCENE/TASK ID")
     parser.add_argument("--seed", type=int, default=0)

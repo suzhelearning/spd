@@ -16,7 +16,7 @@ src/
       interfaces/                    JointCommand 校验、邮箱、会话与授权
       simulation/                    MuJoCo 物理执行、ROS Viewer、场景查看
       cameras/                       仿真多视角相机
-      data_collector/                episode、HDF5、校验与数据检查
+      data_collector/                采集配置、共享会话、ROS 触发与状态、HDF5
       description/                   manifest、资源定位、机器人模型编译
     test/
   environments/spd_envs/             独立环境包：任务、随机重置、场景生成
@@ -24,8 +24,8 @@ src/
     assets/                          原始 URDF、网格与碰撞资产
     generated/                       编译后的模型与 manifest
   interfaces/tianji_spd_interfaces/   ROS 2 JointCommand 消息包
-config/                              相机等运行配置
-bash/                                SPD 订阅仿真的前台启动入口
+config/                              collect_sim.yaml 采集配置与相机配置
+bash/                                仿真／采集前台入口与独立采集触发器
 data/                                采集输出和已有数据；不随代码清理删除
 docs/                                架构、数据契约与论文
 ```
@@ -59,7 +59,7 @@ colcon build --base-paths src/interfaces/tianji_spd_interfaces \
   --build-base .ros/build --install-base .ros/install --merge-install
 ```
 
-发布侧须使用相同消息定义并加载对应 ROS 接口 overlay。SPD 启动器不会自动重建接口。默认录制目录为 `data/episodes`，可通过 `SPD_EPISODE_OUTPUT` 或 `--output PATH` 指定。
+发布侧须使用相同消息定义并加载对应 ROS 接口 overlay。SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
 
 SPD 直接在当前终端前台运行，不使用 tmux，不后台启动，也不提供 `--attach` 或独立停止命令。`Ctrl+C` 退出当前 SPD；Viewer 中 `q` / `Esc` 也可退出。需要成功保存时先按 `s` 并等保存完成，再退出；中断不是成功确认，未完成段保留为 partial。一次只启动一个采集进程，避免多个实例同时写入同一个输出目录。
 
@@ -85,7 +85,7 @@ bash bash/run_pico_hand_sim.sh --height-m 1.75 --headless
     → SPD 校验与最新目标邮箱
     → 本地显式授权 / 分组 hold / 名称映射
     → MuJoCo position actuators 与物理积分
-    → 实际 qpos、多视角 RGB、实际应用命令 → HDF5
+    → MuJoCo 实际 qpos、多视角 RGB、时间戳 → HDF5
 ```
 
 消息定义：`src/interfaces/tianji_spd_interfaces/msg/JointCommand.msg`；类型 `tianji_spd_interfaces/msg/JointCommand`；话题 `/spd/tianji_wuji2/v1/joint_command`。版本为 `schema_version=1`，机器人配置为 `tianji_wuji2_v1`，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATILE`。
@@ -108,7 +108,7 @@ export ROS_STATIC_PEERS=''
 | `e` | 显式启用／禁用命令应用；启用须有新鲜候选并通过目标差门限 |
 | `c` | 清除候选与授权，保持已有目标；不回 HOME、不重置物理场景 |
 | `F8` / `F9` | Viewer 切换所选关节的实际应用目标与实际 qpos 曲线 |
-| `r` | 已启用控制后准备新 episode；准备完成后才记录 |
+| `r` | 已启用且至少一组命令新鲜、ready、未 hold 时准备新 episode |
 | `s` | 停止接收本段数据，后台校验并保存为成功 episode |
 | `d` | 丢弃当前未完成段，不删除以前保存的数据 |
 
@@ -152,26 +152,83 @@ pixi run spd-envs-check
 
 正式资源在 `src/description/tianji_wuji2/{assets,generated}`。不要在采集会话中替换模型；更改资产后重新编译、验证再使用，不混合不同机器人配置的数据。
 
+## 配置化采集与独立触发终端
+
+借鉴 `protype-yam-update` 的配置、触发服务和采集状态流程，复用 SPD 的同一个 MuJoCo 物理所有者和后台 HDF5 写入器。**独立的是触发客户端，不是第二套仿真或写入器**；不复制 CAN、真机、PICO、IK、缓存补帧或缺失数据补零。
+
+终端一启动采集会话（与 `spd-sim` 二选一，不要同时启动）：
+
+```bash
+pixi run spd-collect --task cups/pyramid --table-distance 0.25
+# 同等 shell 入口：
+# bash bash/run_data_collector.sh --task cups/pyramid --table-distance 0.25
+```
+
+在这个终端输入 `e` 并回车，显式启用新鲜且满足目标差门限的关节候选。启动采集进程不会自动运动或录制。已有 `spd-sim` 也提供同样的采集服务；升级代码后需重启旧进程。
+
+终端二启动触发器：
+
+```bash
+pixi run spd-collect-trigger
+# 或 bash bash/collect_trigger.sh
+```
+
+触发终端直接按键，无需回车：`r` 开始、`s` 保存并确认成功、`d` 丢弃、`q`／`Ctrl+C` 仅退出触发器。退出触发器**不会结束正在进行的录制**，也不会保存、丢弃或停止 SPD。它没有运动使能按键；SPD 自身终端的 `e/c/r/s/d` 仍需回车。
+
+非交互调用：
+
+```bash
+pixi run spd-collect-trigger --command status
+pixi run spd-collect-trigger --command start
+pixi run spd-collect-trigger --command save
+pixi run spd-collect-trigger --command discard
+```
+
+这些是按需执行的独立操作，不是一组连续运行的脚本。客户端等待匹配的 collector／operation 完成，显示状态、帧数和路径；`save completed` 才表示关闭、校验及文件发布完成。拒绝、服务缺失、多实例冲突、状态失鲜或超时会明确报错，不自动重试；超时不能解释为操作未发生。默认 `--timeout 30`，失败后先检查 SPD 终端和当前状态。
+
+采集配置 `config/collect_sim.yaml`：
+
+```yaml
+version: 1
+data_dir: /data/TianjiSim
+state_rate_hz: 120
+camera_rate_hz: 30
+writer_queue_size: 256
+max_frames: 0
+```
+
+- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如 `/data/TianjiSim/20260922/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
+- 两种采样率独立，必须是 480 的正整数约数；这是物理 tick 调度频率，不保证实际墙钟频率。图像尺寸和编码仍由原数据契约确定。
+- `writer_queue_size` 限制后台写入队列；溢出报错并保留 partial，不静默丢帧。
+- `max_frames: 0` 表示不限；正数限制实际状态样本数量（双臂／双手各一条算一个状态样本），不按接收的命令数或 RGB 数量计数。可用 `--max-frames N` 覆盖。
+- 到达上限自动结束、校验并保存为 **`success=false`**，不会自动开启下一段。只有显式 `s`／`save` 标记成功。
+- 每段记录实际生效的配置与配置文件路径；采样直接读取当前物理状态，不等待新的 ROS cmd，也不补写录制前缓存。
+
+服务为 `/spd/collection/{start,save,discard}`（`std_srvs/srv/Trigger`）；状态为 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local）。服务成功响应表示操作已接受，最终结果由携带 `collector_id`、`operation_id` 的状态确认。采集服务不授予运动权限，不放宽 100 ms 失鲜保持或启用目标差门限。
+
 ## 相机、HDF5 与数据检查
 
 `config/sim_cameras.yaml` 配置世界固定 `top` 和左右腕部相机，生成各自真实仿真视角，不复制同一画面充当多视角。采集只渲染契约需要的 RGB，不额外生成未保存的分割图。配置仍为 `provisional-v1`，不宣称已经完成相机标定；腕部画面可能受手指遮挡，需要独立完成视角验收。
 
-录制保存双臂实际 qpos（14 维）、双手实际 qpos（40 维）和启用相机的 RGB/JPEG；状态目标采样 120 Hz、图像目标 30 Hz。使用同一主机单调时钟，以 episode 起点归零；真实频率必须由时间戳统计。仿真与图像均由物理状态产生，不把人体输入或命令角度当作机器人实测状态。
+录制保存双臂实际 qpos（14 维）、双手实际 qpos（40 维）和三路 RGB/JPEG；默认状态目标采样 120 Hz、图像目标 30 Hz，可通过采集配置调整调度。使用同一主机单调时钟，以 episode 起点归零；真实频率必须由时间戳统计。仿真与图像均由物理状态产生，不把人体输入或命令角度当作机器人实测状态。
 
-**当前采集器保留已有的命令扩展** `observations/commands`，记录实际应用的 54 维目标、session/sequence、源 UTC 时间、ready/hold 和物理应用时间。它不是原始“只存状态与 RGB”契约的一部分；扩展和原始契约的区别见 [docs/schema-v1.md](docs/schema-v1.md)。本次目录迁移不改字段、版本或文件格式，也不把未来实测 qpos 伪称原始动作。
+**采集文件只保存仿真实际 state 和 RGB，不保存 cmd。** `observations/arms/qpos`、`observations/hands/qpos` 来自物理积分后的 MuJoCo `data.qpos`，按名称映射为 14＋40 维；不是 `tianji_teleop` 的 `position_rad`，也不是执行器目标。已移除旧的 `observations/commands` 扩展及命令写入 API；ROS cmd 仅在执行链路中使用。当前校验器拒绝含命令组的旧扩展文件；已有数据不自动修改，旧文件需单独识别处理，建议使用新的输出目录采集 state-only 数据。详见 [docs/schema-v1.md](docs/schema-v1.md)。
 
-录制期间文件名为 `episode_XXXXXX.partial.h5`。按 `s` 确认成功后，后台写入者完成字段、维度、有限值、时间戳和 JPEG 校验，通过后发布为 `.h5`；中断或失败保留 partial，不自动成功。相机创建和同步渲染仍可能阻塞主循环并触发 100 ms hold；JPEG/HDF5 在后台处理不代表渲染无阻塞，也不保证录制时的实时频率。
+新段文件名为 `episode_<UUID>.partial.h5`，避免覆盖已有编号文件。按 `s` 确认成功，或达到配置帧数上限后，后台写入者完成字段、维度、有限值、时间戳和 JPEG 校验，通过后发布为 `.h5`；上限结束为 `success=false`，中断或失败保留 partial。相机创建和同步渲染仍可能阻塞主循环并触发 100 ms hold；JPEG/HDF5 在后台处理不代表渲染无阻塞，也不保证录制时的实时频率。
+
+每天的目录独立保存 `dataset_config.json` 和当天的 HDF5；根目录不新增共享数据集配置。同日契约不匹配会拒绝追加，不覆盖原配置；其他日期不受影响。已有根目录或历史日期下的数据不会自动迁移。
 
 ```bash
-pixi run validate_episode data/episodes/episode_000001.h5
-pixi run replay_episode data/episodes/episode_000001.h5
+# 将路径替换为采集状态输出的实际文件路径
+pixi run validate_episode '/data/TianjiSim/YYYYMMDD/episode_<UUID>.h5'
+pixi run replay_episode '/data/TianjiSim/YYYYMMDD/episode_<UUID>.h5'
 ```
 
 `replay_episode` 是**只读校验与统计检查**，不会启动命令发布器、恢复场景或用记录 qpos 驱动物理回放。训练侧负责时间对齐、state/action 配对和图像预处理；不能从原始观测文件恢复未记录的控制命令。
 
 ## 能力与验证边界
 
-正式运行入口仅包括订阅仿真、模型编译、场景查看／检查和数据检查。不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
+正式运行入口包括订阅仿真、配置化采集及独立采集触发、模型编译、场景查看／检查和数据检查。不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
 
 真实头显到上游再到 SPD 的端到端采集、硬件安全、跨主机网络、录制负载下的实时性能及论文数据等价性必须分别验收，不能以进程启动或模块存在替代。上游发布契约已定稿；本次 SPD 验证范围见下文，不宣称已完成真实头显联调。架构与职责见 [docs/architecture.md](docs/architecture.md)。
 
@@ -183,3 +240,16 @@ pixi run replay_episode data/episodes/episode_000001.h5
 - 独立 ROS domain 127 的真实 Fast DDS 测试发布进程驱动 MuJoCo：未授权保持、显式启用、关节物理响应、失鲜后锁存保持及新会话撤权通过。测试发布器不是产品入口，未复制上游遥操作算法。
 - 实际无图形控制终端 `e/r/s/d` 完成保存和丢弃，中断保留未标记成功的 partial 文件。保存的示范包含双臂／双手各 2,202 帧、每路 RGB 551 帧，`validate_episode` 和 `replay_episode` 均通过。去除 tmux 后，前台 `spd-sim --headless` 启动、终端输入及 SIGINT 退出已重新验证，无残留订阅进程。
 - 三路 1280×720 RGB 已实际渲染并检查；本次未验证桌面 Viewer 交互、真实头显到上游发布端的完整链路、相机标定或录制实时性能。帧数不是采集频率保证。
+
+### protype 采集流程适配验证（2026-09-22）
+
+- 完整保留测试共 56 项通过；首次采样状态提示修正后，相关采集／录制 8 项回归再次通过。
+- 独立 ROS domain 128 的真实 Fast DDS、MuJoCo 和三路相机验证：未授权开始被拒绝；帧数上限 12 自动保存双臂／双手各 12 帧、各路 RGB 3 帧，`success=false`；显式保存段为状态各 57 帧、各路 RGB 15 帧，`success=true`，均通过文件校验。
+- 实际独立终端 `r` 启动、`q` 退出后录制继续；另一客户端 `discard` 只删除当前段，已保存段保留。中断仿真后保留非成功 partial，未发布正式文件。
+- 采集服务验收使用测试发布源，不覆盖真实头显、桌面 Viewer 操作、相机标定或录制实时性能。未停止用户现有发布端或采集进程。
+
+### state-only 契约校正（2026-09-22）
+
+- 移除文件中的命令目标、命令序号／会话等扩展，采样接口不再接收 AppliedCommand。此前验证记录属于校正前的输出，不能作为当前 state-only 文件契约的证明。
+- 57 项测试通过；新增真实 MuJoCo 回归，验证没有新 cmd 时仍可采集实际 qpos，并与保留目标明确区分。
+- 再次执行真实 DDS → MuJoCo → 采集服务：新文件仅有 `observations/{arms,hands}` 和 `images`，无 commands/actions；状态各 12 帧、每路 RGB 3 帧，校验通过。录制状态与本次测试源发送目标的最大差约 0.0633 rad，未将 cmd 当 state 写入。

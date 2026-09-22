@@ -2,13 +2,13 @@
 
 ## 1. 范围
 
-本文保留原始 schema-v1 的观测契约，并在第 10 节明确记录 **SPD 已有的仿真命令扩展**。本次源码目录迁移不更改 `schema_version`、字段、维度或文件格式。
+本文定义 SPD 的 **state-only schema-v1**：采集的是仿真环境中机器人的实际关节状态，而不是遥操作发布的 cmd。旧 `observations/commands` 扩展已移除。
 
-原始契约面向 Tianji 双臂、Wuji Hand 2 双手和 RealSense RGB：一个 episode 对应一个 HDF5 文件，**只保存实际关节位置、RGB、各自时间戳和必要元数据**，不保存参考动作、插值后的下发命令、深度、IMU、速度、电流或训练副本。
+一个 episode 对应一个 HDF5 文件，**只保存 MuJoCo 实际关节位置、仿真 RGB、各自时间戳和必要元数据**，不保存参考动作、执行器目标、插值后的下发命令、深度、IMU、速度、电流或训练副本。
 
-SPD 当前只采集 MuJoCo 实际 qpos 和仿真 RGB，不接入 RealSense 或硬件反馈；同时保留 `observations/commands`。因此当前输出是 schema-v1 的既有扩展，不能称为严格符合原始“排除命令”的观测文件。
+ROS JointCommand 仅驱动 MuJoCo 执行器；完成物理步后，采集器按机器人关节名称读取 `data.qpos`。命令位置与实际位置可以因动力学、重力或接触而不同，采集器不以 `ctrl` 或源端目标代替 state，也不接入 RealSense 或硬件反馈。
 
-训练端自行构造 state/action 配对；采集器不把未来实测位置声明为实际下发动作。文件仍没有 `actions` 组或 `action_type` 属性。当前实现位于 `src/spd/spd_vr/data_collector/`，相机配置为 `config/sim_cameras.yaml`，启动器默认输出到 `data/episodes/`。
+训练端自行构造 state/action 配对；采集器不把未来实测位置声明为实际下发动作。文件仍没有 `actions` 组或 `action_type` 属性。当前实现位于 `src/spd/spd_vr/data_collector/`，相机配置为 `config/sim_cameras.yaml`，启动器默认输出到 `/data/TianjiSim/`。
 
 ## 2. 频率与维度
 
@@ -19,20 +19,26 @@ SPD 当前只采集 MuJoCo 实际 qpos 和仿真 RGB，不接入 RealSense 或�
 | RGB | 每路 30 fps | 1280 × 720，源格式 RGB8，存储为 JPEG |
 | 建议训练时间网格 | 30 Hz | 训练端自行按时间戳对齐 |
 
-所有关节角使用 rad。120 Hz 是实际状态读取和记录目标，不修改仿真物理步长，也不承诺运行时达到该频率。
+所有关节角使用 rad。120 Hz 是默认实际状态读取和记录目标，可通过采集配置调整；不修改仿真物理步长，也不承诺运行时达到该频率。
 每条样本使用实际时间戳，不假设间隔严格等于 1/120 秒；实际频率必须由时间戳统计。
 
 ## 3. 文件结构
 
 ```text
-dataset/
-├── dataset_config.json
-├── episode_000001.h5
-└── episode_000002.h5
+/data/TianjiSim/
+├── 20260922/
+│   ├── dataset_config.json
+│   ├── episode_<UUID>.h5
+│   └── episode_<UUID>.partial.h5
+└── 20260923/
+    ├── dataset_config.json
+    └── episode_<UUID>.h5
 ```
 
+日期使用本机本地时间，在每次接受开始录制时确定；后台准备或录制期间跨日不会移动该段，下一段才使用新的日期目录。配置和命令行指定的是根目录，日期子目录自动追加。已有文件不移动。
+
 ```text
-episode_000001.h5
+episode_<UUID>.h5
 │
 ├── @schema_version = 1
 ├── @task                         # 任务标识，UTF-8
@@ -88,12 +94,12 @@ SPD 按模型名称映射读取 MuJoCo 状态，分别形成双臂 14 维和双�
 - 录制开始前的缓存不补写为零时刻，也不重打时间戳冒充新样本。
 - 各流时间戳单调非递减；同一时间戳有多个样本时，按存储顺序取最后一条。
 
-原始观测契约不保存设备源时间戳、曝光时间或多机时钟映射；第 10 节已有命令扩展另存命令的 UTC 与仿真应用时间，不改变观测时间戳的语义。
+观测契约不保存设备源时间戳、命令 UTC、曝光时间或多机时钟映射。采样不等待新的 ROS cmd；每次读取的是当时已推进的仿真状态。
 观测时间支持按在线可用性对齐，不用于精确分析传感器、传输和执行延迟。多主机各自单调时钟不可直接混用。
 
 ## 6. 数据集级配置
 
-`dataset_config.json` 保存一份共享配置，不在每个 episode 重复完整内容。
+每个日期目录的 `dataset_config.json` 保存该日共享配置，不在采集根目录新建共享配置，也不在每个 episode 重复完整内容；单日目录可独立校验和读取。
 
 | 字段 | 要求 |
 |---|---|
@@ -108,8 +114,8 @@ SPD 按模型名称映射读取 MuJoCo 状态，分别形成双臂 14 维和双�
 | `decoded_color_order` | `RGB` |
 | `jpeg_quality` | 采集采用的固定编码质量，当前为 `90` |
 
-同一数据集保持上述契约一致。配置不匹配时拒绝追加，不覆盖旧配置。
-`collection_config.json` 保存运行采集配置；原始硬件配置中的序列号／禁用槽位不代表 SPD 接入硬件。数据集配置只列实际启用相机。
+同一日期目录保持上述契约一致。配置不匹配时拒绝追加，不覆盖旧配置；新日期单独创建并校验自己的配置。
+SPD 的运行采集配置由 `config/collect_sim.yaml` 及显式覆盖确定，实际配置逐段保存于 task_manifest；不将不同段的帧数上限当作数据集 schema。数据集配置只列实际启用相机。
 相机内外参不是本版训练字段，不纳入此 schema；SPD 的运行视角定义在 `config/sim_cameras.yaml`，当前仍标为 provisional。
 
 ## 7. 操作员录制生命周期
@@ -118,7 +124,7 @@ SPD 运动授权与录制相互独立。启动订阅器或显式启用控制不�
 
 | 按键 | 作用 |
 |---|---|
-| `r` | 已启用控制时准备新 episode；准备完成后开始接收录制数据 |
+| `r` | 已启用且至少一组新鲜 ready、未 hold 时准备新 episode，随后按配置读取实际仿真 state／RGB |
 | `s` | 停止当前段接收数据，后台保存；表示操作者确认成功，`success=true` |
 | `d` | 停止并丢弃当前录制段，只删除该段未完成文件，不删除以前已保存的 episode |
 
@@ -129,11 +135,15 @@ Viewer 按键不需要回车，控制终端输入需要回车。录制按键不�
 授权撤销、退出或已知采集失效时，当前未保存段不自动标记成功；保留 `.partial.h5`。分组 hold 与全部授权撤销是不同状态，不能仅凭 ready/hold 的变化推断录制已经停止。
 采集失败只报告并结束数据段，不修改机器人控制授权；控制侧的会话、新鲜度与保持门独立生效。
 
+独立触发器使用同样的 `r/s/d` 语义，无需回车；`q` 或 Ctrl+C 只关闭客户端，不结束录制。`/spd/collection/{start,save,discard}` 服务只管理采集，不授予运动权限；响应是接受确认，最终结果看携带相同 collector／operation ID 的 `/spd/collection/status`。
+
+`config/collect_sim.yaml` 配置独立的状态／RGB 调度、输出路径、有界写入队列及 `max_frames`。`max_frames=0` 不限，正数按实际状态样本计数；达到上限结束并发布校验通过的 `.h5`，但 `success=false`，不能视作完成任务。只有操作者显式保存标记成功。每段采用 UUID 文件名，实际生效的采集配置与来源保存在已有 task_manifest JSON 中，不增加或重命名核心数据集字段。
+
 ## 8. 写入与最小校验
 
 - 使用单个后台 HDF5 写入者；JPEG 编码、写盘和保存校验不在控制回调同步等待。仿真相机创建与同步渲染仍可能阻塞主循环，不保证录制时的实时频率。
 - 数据集首维可追加；队列有界，溢出必须明确报告并结束当前数据段，不静默丢帧。
-- 正在录制的文件以 `.partial.h5` 结尾，收到 `s` 后关闭并校验，通过后发布为 `.h5`。
+- 正在录制的文件以 `.partial.h5` 结尾，收到显式保存或达到帧数上限后关闭并校验，通过后发布为 `.h5`；前者 success=true，后者 success=false。
 - 验证字段长度、关节维数、有限数值、时间戳顺序、配置匹配及 JPEG 可解码性。
 - 校验失败的文件保持 `.partial.h5`，不会覆盖已有完整 episode。
 - 未按 `s` 的退出不是成功确认；按 `d` 是显式丢弃，不保留该段训练文件。
@@ -141,33 +151,16 @@ Viewer 按键不需要回车，控制终端输入需要回车。录制按键不�
 ## 9. 训练端职责与排除项
 
 训练端自行选择时间偏移、时间网格、窗口长度、state/action 配对以及图像预处理。
-对于原始观测文件，不得把未记录的控制命令当作已知标签；对于带第 10 节扩展的文件，只能按扩展的实际语义解释目标，不能将目标与实际 qpos 混为一谈。不要跨 episode 或已知断流区间构造样本。
+不得把未记录的控制命令当作已知标签，也不得将未来实际 qpos 伪称原始下发动作。不要跨 episode 或已知断流区间构造样本。
 
-不在采集文件中重复保存 30 Hz 副本、动作块、缩放图像、归一化数据，也不保存深度、IMU、速度、电流或力矩。原始观测契约排除参考动作、插值命令和设备源时间戳；已有仿真命令扩展是明确列出的差异。
+不在采集文件中重复保存 30 Hz 副本、动作块、缩放图像、归一化数据，也不保存深度、IMU、速度、电流或力矩。排除参考动作、执行器目标、命令序号／session／ready／hold 和设备源时间戳。
 
 核心观测保持为：**实际关节状态 + RGB + 各自时间戳**。
 
-## 10. 已有 SPD 仿真命令扩展
+## 10. 元数据与旧文件边界
 
-以下字段在整理前已由采集器写入；此节是对现状的说明，不是增加新 schema。当前校验器要求该命令组；仅包含原始观测契约的历史文件不一定通过当前校验器。`schema_version` 仍为 `1`，消费者必须检查字段和数据集配置，不能只凭版本号认定两种文件等价。
+episode 保留 `task_manifest` JSON 属性，以及可用的 `scene`、`seed` 属性，用于描述实际采样场景、模型和有效采集配置；不改变核心 qpos 与图像字段。ROS 接口定义位于 `src/interfaces/tianji_spd_interfaces/msg/JointCommand.msg`，仅供执行使用，机器人模型与 manifest 位于 `src/description/tianji_wuji2/generated/`。
 
-`observations/commands/` 各字段的第一维 `Nc` 一致：
+当前校验器要求 `observations` 恰好包含 `arms`、`hands`，并拒绝 `actions`。此前含 `observations/commands` 的扩展文件不是本契约，不会因为同为 `schema_version=1` 就被静默接受；已有文件不自动删除、覆盖或转换，使用前应显式识别并处理。
 
-| 字段 | 类型与形状 | 含义 |
-|---|---|---|
-| `timestamp_ns` | int64 `[Nc]` | 采集主机单调时间，相对 episode 起点 |
-| `position_rad` | float32 `[Nc,54]` | 本次实际应用到执行器的目标；不是实际 qpos |
-| `stamp_utc_ns` | int64 `[Nc]` | 对应输入 JointCommand 的 UTC 纳秒时间 |
-| `sequence` | uint64 `[Nc]` | 对应输入命令序号 |
-| `session_id` | UTF-8 `[Nc]` | 对应输入命令会话 |
-| `ready_mask` | uint8 `[Nc]` | 对应输入命令的分组 ready 位 |
-| `hold_mask` | uint8 `[Nc]` | 应用时的分组保持位 |
-| `applied_sim_time_ns` | int64 `[Nc]` | 物理应用时的仿真时间；不是 episode 单调时间 |
-| `status` | UTF-8 `[Nc]` | 命令记录状态 |
-| `reject_reason` | UTF-8 `[Nc]` | 命令记录拒绝原因字段；不代表拒绝消息均被写入 |
-
-mask 位定义为双臂 `1`、右手 `2`、左手 `4`。未 ready／hold 组保留已有目标，不能把输入占位值解释成该组实际执行动作。命令记录只在有实际应用结果时追加，不保证与每条状态或图像一一对应，也不是完整的接收／拒绝日志。
-
-episode 还保留 `task_manifest` JSON 属性，以及可用的 `scene`、`seed` 属性，用于描述实际采样场景和模型；不改变核心 qpos 与图像字段。当前 ROS 接口定义位于 `src/interfaces/tianji_spd_interfaces/msg/JointCommand.msg`，机器人模型与 manifest 位于 `src/description/tianji_wuji2/generated/`。
-
-`pixi run validate_episode PATH` 校验文件，`pixi run replay_episode PATH` 只读输出统计。它们不启动发布器、不驱动物理模型，也不凭观测恢复未记录的原始控制命令。
+`pixi run validate_episode PATH` 校验 state-only 文件，`pixi run replay_episode PATH` 只读输出统计。它们不启动发布器、不驱动物理模型，也不凭观测恢复未记录的原始控制命令。
