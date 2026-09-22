@@ -1,0 +1,3012 @@
+{
+  "format_version": 1,
+  "geometry_revision": "abc-bottles-canonical-v1",
+  "source_collection": "ABC/assets/put_bottles/assets/task_water_bottles/bottle",
+  "rights_notice": "Source assets copied from the local ABC collection. Provenance is recorded; redistribution rights have not been established.",
+  "canonical_convention": {
+    "radius": 1.0,
+    "height": 1.0,
+    "bottom_z": 0.0,
+    "xy_center": "midpoint of combined visual and collision bounds",
+    "radius_definition": "maximum XY distance across visual and collision vertices"
+  },
+  "variants": {
+    "bottle_0": {
+      "source_model": "bottled_drink_5",
+      "source_model_file": "bottle_0/model.xml",
+      "source_model_sha256": "0f83ca0e427b930cfafaab61b8e1e877409c42d18e0109c19ba7cec9e8c7aaf5",
+      "source_bounds_m": [
+        [
+          -0.025667358749999997,
+          -0.025672472099999996,
+          -0.0833990454
+        ],
+        [
+          0.025667358749999997,
+          0.025672384649999998,
+          0.08331863595
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          0.0,
+          -4.372499999918955e-08,
+          -0.0833990454
+        ],
+        "multiply_scale": [
+          38.76485083215428,
+          38.76485083215428,
+          5.998164033367539
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_0/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "txt_label_back"
+          },
+          "source_sha256": "e1a012ec36c726dbb31c28ae9c56d4907d2754f77cd18265f17def987bd9520f",
+          "sha256": "b62cd7182ee142a8265b7130cba456655482654625f2baf9d953517db7ab9f14",
+          "vertex_count": 2970,
+          "triangle_count": 1440,
+          "bounds": [
+            [
+              -0.9299183732808143,
+              -0.9299166782877117,
+              0.4400989166587879
+            ],
+            [
+              0.9299183732808143,
+              0.9299200682739169,
+              0.6163569074852661
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_1_vis",
+          "file": "bottle_0/visual/model_normalized_1.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_1.obj",
+            "name": "model_normalized_1_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_1_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "txt_label"
+          },
+          "source_sha256": "67838641f9477c4b3f39b3af845b640943932fff4ad4217c3d75c214835763c2",
+          "sha256": "bf96403c3dc204021230fcf9fd216524923910145d35963afd6ac333bf5923f3",
+          "vertex_count": 2948,
+          "triangle_count": 1440,
+          "bounds": [
+            [
+              -0.9408955323855078,
+              -0.9408938373924053,
+              0.4400989166587879
+            ],
+            [
+              0.9408955323855078,
+              0.9408972273786105,
+              0.6163569074852661
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_2_vis",
+          "file": "bottle_0/visual/model_normalized_2.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_2.obj",
+            "name": "model_normalized_2_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_2_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "txt_bottle"
+          },
+          "source_sha256": "c42e9b1c3742a57b5ea36af968f091228a47704fc025bb4f9820a1cd537d8b26",
+          "sha256": "4f3368d07efc0dae23128326f4417bb56fd2abea833370ae220c084f46a2f503",
+          "vertex_count": 12445,
+          "triangle_count": 24000,
+          "bounds": [
+            [
+              -0.962638775982114,
+              -0.9626370809890114,
+              0.005392621782644571
+            ],
+            [
+              0.962638775982114,
+              0.9626404709752165,
+              0.9950896872882885
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_0/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "3ecd91183b3182a04378a4eb7c5b2a7a816370e8a4e0123647bccea7ac94f59f",
+          "sha256": "aa3930620ea39a37bca01a4d1c9de1adae1e8fde59119021e5b397bc8f8806e4",
+          "vertex_count": 153,
+          "triangle_count": 302,
+          "bounds": [
+            [
+              -0.30178635817989635,
+              0.30491509158034874,
+              0.06590411563446331
+            ],
+            [
+              0.9454508423393428,
+              0.9947324469884636,
+              0.2418280738043626
+            ]
+          ],
+          "volume": 0.06562724254047163
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_0/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "b4c822d9bd6e5633f4e7e13e88397bca5c96c183d47122d54fc53b44b83b0142",
+          "sha256": "fe43c1438923e61e77b180d9090a5f5c6eead3e8a06799e9b14aef2710af99cf",
+          "vertex_count": 415,
+          "triangle_count": 826,
+          "bounds": [
+            [
+              -0.9883513736150741,
+              -0.0149287636849729,
+              0.0658868949055235
+            ],
+            [
+              -0.03117418521967257,
+              0.9817697153975388,
+              0.5933739444967395
+            ]
+          ],
+          "volume": 0.23217419110795945
+        },
+        {
+          "name": "bottled_collision_mesh_2",
+          "file": "bottle_0/collision/collision_mesh_collision_2.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_2.obj",
+            "name": "bottled_collision_mesh_2",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_2",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "b0fb592db948b2529e58d464e5a787ef8fc1fb434b7bd9399cf9178bf3e6a65a",
+          "sha256": "37cfd8aa4186e443b04d8c902fbc95fe394f9b91345a4e9596fcad99961b7357",
+          "vertex_count": 139,
+          "triangle_count": 274,
+          "bounds": [
+            [
+              -0.994693973843134,
+              -0.9729526171256422,
+              0.0658868949055235
+            ],
+            [
+              -0.22289677391894056,
+              0.3016249500631227,
+              0.45670573650885293
+            ]
+          ],
+          "volume": 0.1927423353577221
+        },
+        {
+          "name": "bottled_collision_mesh_3",
+          "file": "bottle_0/collision/collision_mesh_collision_3.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_3.obj",
+            "name": "bottled_collision_mesh_3",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_3",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "76485c048e9fcdc50c9bdadadd3ff285605b593c71e8be0afabf252c25e8baad",
+          "sha256": "03a20bda69f17bdb0b0bc8338aced887de71497f1fefc8292afed0e3933405c2",
+          "vertex_count": 142,
+          "triangle_count": 280,
+          "bounds": [
+            [
+              -0.36087496905385513,
+              -0.9883105338756012,
+              0.17255176335860195
+            ],
+            [
+              0.9417744342807274,
+              -0.3278778987048025,
+              0.45856787133154314
+            ]
+          ],
+          "volume": 0.11001095192817685
+        },
+        {
+          "name": "bottled_collision_mesh_4",
+          "file": "bottle_0/collision/collision_mesh_collision_4.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_4.obj",
+            "name": "bottled_collision_mesh_4",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_4",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "41ecedf6ad71a5329f4c6f47f6b7090c0936e35f73cff92b9ab5abed1e44a874",
+          "sha256": "c6a1d0e59f43a78b100d82a269a044a78e5ea2b9b9b1825d235f4afc681924d8",
+          "vertex_count": 1480,
+          "triangle_count": 2956,
+          "bounds": [
+            [
+              -0.9949913331991399,
+              -0.9951878564560398,
+              0.0
+            ],
+            [
+              0.9949913331991399,
+              0.9951878564560398,
+              0.06588388622644431
+            ]
+          ],
+          "volume": 0.18216075812990482
+        },
+        {
+          "name": "bottled_collision_mesh_5",
+          "file": "bottle_0/collision/collision_mesh_collision_5.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_5.obj",
+            "name": "bottled_collision_mesh_5",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_5",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "60ec9cd22c13c5bad89d67ffa0e079e50bdc10458264311117083e93fa90ab3e",
+          "sha256": "79aefff066b05872a7de32d186bbe955fa7584d96f0a94aaec58ceb8dba0d946",
+          "vertex_count": 157,
+          "triangle_count": 310,
+          "bounds": [
+            [
+              -0.8920791553715578,
+              -0.3278164312190805,
+              0.5934151653795179
+            ],
+            [
+              -0.12063911927699142,
+              0.8728190127083094,
+              0.9999999406181762
+            ]
+          ],
+          "volume": 0.12137465599302305
+        },
+        {
+          "name": "bottled_collision_mesh_6",
+          "file": "bottle_0/collision/collision_mesh_collision_6.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_6.obj",
+            "name": "bottled_collision_mesh_6",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_6",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "fda6a041a1a6c919f5ace6faac18b3bc8af6273f1d0ad0bf528f8002731085c0",
+          "sha256": "f4885327dc78d65b37b92df144a4aa87d60d6958d1aa032ec442f24ac08b2bcb",
+          "vertex_count": 390,
+          "triangle_count": 776,
+          "bounds": [
+            [
+              0.3279067775495511,
+              -0.3300858670785003,
+              0.06590411563446331
+            ],
+            [
+              0.9947307519953611,
+              0.9417761292738299,
+              0.7658776283718991
+            ]
+          ],
+          "volume": 0.2827398943366221
+        },
+        {
+          "name": "bottled_collision_mesh_7",
+          "file": "bottle_0/collision/collision_mesh_collision_7.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_7.obj",
+            "name": "bottled_collision_mesh_7",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_7",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "55095c41f1554476547424f482c7b9e994d862e284855a9d5cc073f27d349363",
+          "sha256": "ca9b1591d8e49f3ea4a456f420ee845a33ce5e716ab540a9ea3dca9739dfd7af",
+          "vertex_count": 362,
+          "triangle_count": 720,
+          "bounds": [
+            [
+              -0.9742382214224886,
+              -0.85227863855654,
+              0.4357393901579715
+            ],
+            [
+              -0.3283062842257422,
+              -0.014959465446831967,
+              0.7637837856722328
+            ]
+          ],
+          "volume": 0.06124464804449533
+        },
+        {
+          "name": "bottled_collision_mesh_8",
+          "file": "bottle_0/collision/collision_mesh_collision_8.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_8.obj",
+            "name": "bottled_collision_mesh_8",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_8",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "198d8f4ef6df564cb482b332c0d0f0336a5ef2316f00d87d065cd81c8c4fd868",
+          "sha256": "075217a65ad04abf2331de03bf249206e7e82a77be1e92616cc72e2e74175a3b",
+          "vertex_count": 120,
+          "triangle_count": 236,
+          "bounds": [
+            [
+              -0.47105969068380743,
+              -0.9474032505265659,
+              0.45670571671491167
+            ],
+            [
+              -0.2227008583010774,
+              -0.32787706719875215,
+              0.9916727185817475
+            ]
+          ],
+          "volume": 0.03026762305090523
+        },
+        {
+          "name": "bottled_collision_mesh_9",
+          "file": "bottle_0/collision/collision_mesh_collision_9.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_9.obj",
+            "name": "bottled_collision_mesh_9",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_9",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "c175ddf00f78be03510516cfcbe8f955702afbdd0f73fe3ace00c62733bb0d75",
+          "sha256": "6d7c4d707e420bebed358df33bc8e7a9e81ff391716b5fec5c385da4106575ae",
+          "vertex_count": 78,
+          "triangle_count": 152,
+          "bounds": [
+            [
+              -0.17461748585151252,
+              0.5672285783100669,
+              0.24185205416425978
+            ],
+            [
+              0.3277689394312047,
+              0.9883530686081766,
+              0.4372396620426008
+            ]
+          ],
+          "volume": 0.02416426755556524
+        },
+        {
+          "name": "bottled_collision_mesh_10",
+          "file": "bottle_0/collision/collision_mesh_collision_10.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_10.obj",
+            "name": "bottled_collision_mesh_10",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_10",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "610c6dd5fc61cd1d15035993021dc4e542bfb6b9ec894f4889d010d54d4a86b7",
+          "sha256": "63bb89abde99207e0c2b5f01c451ee4f05196f76b18925ed1c27dcc0d65eabfb",
+          "vertex_count": 256,
+          "triangle_count": 508,
+          "bounds": [
+            [
+              -0.4654069206675185,
+              -0.031808976127110734,
+              0.43725878298990634
+            ],
+            [
+              0.3278181262121831,
+              0.9742399164155912,
+              0.9999999406181762
+            ]
+          ],
+          "volume": 0.15484237786963903
+        },
+        {
+          "name": "bottled_collision_mesh_11",
+          "file": "bottle_0/collision/collision_mesh_collision_11.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_11.obj",
+            "name": "bottled_collision_mesh_11",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_11",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "fd23c609d406966b51836dc0505ea77bde574e155c52ead9357b4cbad0befeb5",
+          "sha256": "4e91c6dd273ac2e4ce1e5bb16a243ad2debaa304559fc1bda5bd5c75b22e5c14",
+          "vertex_count": 166,
+          "triangle_count": 328,
+          "bounds": [
+            [
+              -0.22517017542260054,
+              -0.9947021929606317,
+              0.06590411563446331
+            ],
+            [
+              0.9363427809118277,
+              -0.11127325899286589,
+              0.2418280738043626
+            ]
+          ],
+          "volume": 0.07477684286238877
+        },
+        {
+          "name": "bottled_collision_mesh_12",
+          "file": "bottle_0/collision/collision_mesh_collision_12.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_12.obj",
+            "name": "bottled_collision_mesh_12",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_12",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "cdabc107e9f40cf5704e3ac23b196a19066ce0a9a5c976080fb5ecefd22a5e78",
+          "sha256": "62bf588b2506a1460b5660bda9fc01836a84fcdc779c3bf504a8de9e195dfbc6",
+          "vertex_count": 145,
+          "triangle_count": 286,
+          "bounds": [
+            [
+              0.14211525754542373,
+              -0.3278164312190805,
+              0.6399942284825929
+            ],
+            [
+              0.5665664756269749,
+              0.36122621639812397,
+              0.9999999406181762
+            ]
+          ],
+          "volume": 0.04555132616082383
+        },
+        {
+          "name": "bottled_collision_mesh_13",
+          "file": "bottle_0/collision/collision_mesh_collision_13.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_13.obj",
+            "name": "bottled_collision_mesh_13",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_13",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "f22caca503235df6fdbae27cf21ee072596a6c8f40c204e339971daffc40dcbd",
+          "sha256": "24247f5401b7c12e35894f957fd78057d61e01fe53542f04ffd299c00f506431",
+          "vertex_count": 76,
+          "triangle_count": 148,
+          "bounds": [
+            [
+              0.3278414723435968,
+              0.05332406725590165,
+              0.6026508105584327
+            ],
+            [
+              0.5665664756269749,
+              0.812779414760766,
+              0.8283265235082398
+            ]
+          ],
+          "volume": 0.017390953706714667
+        },
+        {
+          "name": "bottled_collision_mesh_14",
+          "file": "bottle_0/collision/collision_mesh_collision_14.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_14.obj",
+            "name": "bottled_collision_mesh_14",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_14",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "d48a1d5718289f278ddf368eb1a77c9632f482827e02077155ea586f1dcbe310",
+          "sha256": "51bac815b63675f0539f931feb37645083d60830ef0af88879d2d61edbe9e978",
+          "vertex_count": 431,
+          "triangle_count": 858,
+          "bounds": [
+            [
+              -0.22267655273960565,
+              -0.9741373213613788,
+              0.45859636471005905
+            ],
+            [
+              0.9155055591000832,
+              -0.16612054939000243,
+              1.0
+            ]
+          ],
+          "volume": 0.17241980033763693
+        },
+        {
+          "name": "bottled_collision_mesh_15",
+          "file": "bottle_0/collision/collision_mesh_collision_15.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_15.obj",
+            "name": "bottled_collision_mesh_15",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_15",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "bf6314bb9e5cd4100ecb94a80d67acb5f717d50534f345235c8c67a16aaa6aa8",
+          "sha256": "430b3080dc006e98829e7da923a3e340296db953197365b0043e3288e8ff016d",
+          "vertex_count": 55,
+          "triangle_count": 106,
+          "bounds": [
+            [
+              -0.6438683950277939,
+              -0.3278164312190805,
+              0.7345523405697244
+            ],
+            [
+              0.14318342301010376,
+              -0.09359915015865572,
+              0.8733635890984038
+            ]
+          ],
+          "volume": 0.013808633614258969
+        }
+      ],
+      "materials": [
+        {
+          "name": "txt_bottle",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        },
+        {
+          "name": "txt_label",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        },
+        {
+          "name": "txt_label_back",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_0/visual/image0.png",
+          "source_sha256": "1dcc7f2ee456de2a8d3378ef6c868e83117a2746ab415f1f21d7ba4c72d9849b",
+          "sha256": "1dcc7f2ee456de2a8d3378ef6c868e83117a2746ab415f1f21d7ba4c72d9849b"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_0/model.xml",
+          "sha256": "0f83ca0e427b930cfafaab61b8e1e877409c42d18e0109c19ba7cec9e8c7aaf5",
+          "bytes": 6285
+        },
+        {
+          "path": "bottle_0/visual/model_normalized_0.obj",
+          "sha256": "e1a012ec36c726dbb31c28ae9c56d4907d2754f77cd18265f17def987bd9520f",
+          "bytes": 357218
+        },
+        {
+          "path": "bottle_0/visual/model_normalized_1.obj",
+          "sha256": "67838641f9477c4b3f39b3af845b640943932fff4ad4217c3d75c214835763c2",
+          "bytes": 353649
+        },
+        {
+          "path": "bottle_0/visual/model_normalized_2.obj",
+          "sha256": "c42e9b1c3742a57b5ea36af968f091228a47704fc025bb4f9820a1cd537d8b26",
+          "bytes": 2384773
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_0.obj",
+          "sha256": "3ecd91183b3182a04378a4eb7c5b2a7a816370e8a4e0123647bccea7ac94f59f",
+          "bytes": 9083
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_1.obj",
+          "sha256": "b4c822d9bd6e5633f4e7e13e88397bca5c96c183d47122d54fc53b44b83b0142",
+          "bytes": 25931
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_2.obj",
+          "sha256": "b0fb592db948b2529e58d464e5a787ef8fc1fb434b7bd9399cf9178bf3e6a65a",
+          "bytes": 8429
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_3.obj",
+          "sha256": "76485c048e9fcdc50c9bdadadd3ff285605b593c71e8be0afabf252c25e8baad",
+          "bytes": 8550
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_4.obj",
+          "sha256": "41ecedf6ad71a5329f4c6f47f6b7090c0936e35f73cff92b9ab5abed1e44a874",
+          "bytes": 98285
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_5.obj",
+          "sha256": "60ec9cd22c13c5bad89d67ffa0e079e50bdc10458264311117083e93fa90ab3e",
+          "bytes": 9361
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_6.obj",
+          "sha256": "fda6a041a1a6c919f5ace6faac18b3bc8af6273f1d0ad0bf528f8002731085c0",
+          "bytes": 24000
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_7.obj",
+          "sha256": "55095c41f1554476547424f482c7b9e994d862e284855a9d5cc073f27d349363",
+          "bytes": 22927
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_8.obj",
+          "sha256": "198d8f4ef6df564cb482b332c0d0f0336a5ef2316f00d87d065cd81c8c4fd868",
+          "bytes": 7154
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_9.obj",
+          "sha256": "c175ddf00f78be03510516cfcbe8f955702afbdd0f73fe3ace00c62733bb0d75",
+          "bytes": 4465
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_10.obj",
+          "sha256": "610c6dd5fc61cd1d15035993021dc4e542bfb6b9ec894f4889d010d54d4a86b7",
+          "bytes": 15592
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_11.obj",
+          "sha256": "fd23c609d406966b51836dc0505ea77bde574e155c52ead9357b4cbad0befeb5",
+          "bytes": 10066
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_12.obj",
+          "sha256": "cdabc107e9f40cf5704e3ac23b196a19066ce0a9a5c976080fb5ecefd22a5e78",
+          "bytes": 8529
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_13.obj",
+          "sha256": "f22caca503235df6fdbae27cf21ee072596a6c8f40c204e339971daffc40dcbd",
+          "bytes": 4232
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_14.obj",
+          "sha256": "d48a1d5718289f278ddf368eb1a77c9632f482827e02077155ea586f1dcbe310",
+          "bytes": 27119
+        },
+        {
+          "path": "bottle_0/collision/collision_mesh_collision_15.obj",
+          "sha256": "bf6314bb9e5cd4100ecb94a80d67acb5f717d50534f345235c8c67a16aaa6aa8",
+          "bytes": 3140
+        },
+        {
+          "path": "bottle_0/visual/image0.png",
+          "sha256": "1dcc7f2ee456de2a8d3378ef6c868e83117a2746ab415f1f21d7ba4c72d9849b",
+          "bytes": 28050
+        }
+      ],
+      "source_sha256": "61af1869adc366467dfb69b38c8b88abf204f6151b859a21c158462576754ff9",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    },
+    "bottle_1": {
+      "source_model": "bottled_drink_2",
+      "source_model_file": "bottle_1/model.xml",
+      "source_model_sha256": "4054fb6d83870ab2436259e0289286e425f37b64720f7893b2d1e840b9e2ac03",
+      "source_bounds_m": [
+        [
+          -0.02401374855,
+          -0.02401374855,
+          -0.08249999999999999
+        ],
+        [
+          0.02401374855,
+          0.02401374855,
+          0.08249999999999999
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          0.0,
+          0.0,
+          -0.08249999999999999
+        ],
+        "multiply_scale": [
+          41.48345405873659,
+          41.48345405873659,
+          6.060606060606061
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_1/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "03_-_Default"
+          },
+          "source_sha256": "9ae032bb43390bd219d299479455f7c7ac0dde39044e2cae755b445876fdc97c",
+          "sha256": "87ae1f5e933432719568bb1f8ced71b6731df95dee9a73f93a4e33994f2f83bb",
+          "vertex_count": 98,
+          "triangle_count": 144,
+          "bounds": [
+            [
+              -0.9587434318185344,
+              -0.9587434318185344,
+              0.40353025
+            ],
+            [
+              0.9587434318185344,
+              0.9587434318185344,
+              0.64986739
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_1_vis",
+          "file": "bottle_1/visual/model_normalized_1.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_1.obj",
+            "name": "model_normalized_1_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_1_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "02_-_Default"
+          },
+          "source_sha256": "1a1deadb760451159a9e5ba23c777b96c41e70e9aed487ea7636b5d73121bfa8",
+          "sha256": "95e5d07955bb08d694310b993cafb3b5c70359c2457770874bc74dbebaad0671",
+          "vertex_count": 1916,
+          "triangle_count": 2736,
+          "bounds": [
+            [
+              -0.9961732347519774,
+              -0.9961732347519774,
+              0.0
+            ],
+            [
+              0.9961732347519774,
+              0.9961732347519774,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_1/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "71f63d09c722867a44e3d98c86186a98a70a67c6fa1331cf40f2bfff5cb2f6b3",
+          "sha256": "82056fdb741442bd97ca211e6e854eb2917b387c0f98fc3916c8af8d792e6186",
+          "vertex_count": 48,
+          "triangle_count": 92,
+          "bounds": [
+            [
+              -0.904292123496502,
+              -0.9960615281068879,
+              0.022878710000000038
+            ],
+            [
+              0.3302917030144465,
+              -0.42533482418202245,
+              0.23889989000000003
+            ]
+          ],
+          "volume": 0.05924322082588258
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_1/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "db076c7386b055ba0c0f3eeb1524fa72084a30feb93b812ef3dd37c37cc1a0da",
+          "sha256": "a4c7cea110c3ed51d6bb839f02c2f0dd1cbe8a89e6d1f36a9d2a7e61a0d2a529",
+          "vertex_count": 59,
+          "triangle_count": 114,
+          "bounds": [
+            [
+              0.20224091096774352,
+              -0.9639463467775895,
+              0.03051442000000002
+            ],
+            [
+              0.9421245357966209,
+              -0.30987224849462425,
+              0.86225039
+            ]
+          ],
+          "volume": 0.13902720483507688
+        },
+        {
+          "name": "bottled_collision_mesh_2",
+          "file": "bottle_1/collision/collision_mesh_collision_2.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_2.obj",
+            "name": "bottled_collision_mesh_2",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_2",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "ddf20656b318bd49b2704e9046469383442cf3478fa6a8df61eaa15748626417",
+          "sha256": "33d94e0a711052dd21695d36ba93c42e408e7b9088612be2555a2caeadf64a14",
+          "vertex_count": 85,
+          "triangle_count": 166,
+          "bounds": [
+            [
+              -0.9892554311372426,
+              -0.9245264269899964,
+              0.15908337
+            ],
+            [
+              -0.1359217983204538,
+              -0.02956714727899394,
+              1.0
+            ]
+          ],
+          "volume": 0.17486840388771996
+        },
+        {
+          "name": "bottled_collision_mesh_3",
+          "file": "bottle_1/collision/collision_mesh_collision_3.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_3.obj",
+            "name": "bottled_collision_mesh_3",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_3",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "80c95375fd39d924e8c39b35218fadc25559be858882b2d8a3a8de24ed271b1f",
+          "sha256": "7a64ac17d839853c58c3de39925e0d1c1418d46f03393a527d758446ceb466b2",
+          "vertex_count": 89,
+          "triangle_count": 174,
+          "bounds": [
+            [
+              -0.9877653931734249,
+              -0.06983479182114086,
+              0.15908337
+            ],
+            [
+              -0.1359217983204538,
+              0.9259966835687463,
+              1.0
+            ]
+          ],
+          "volume": 0.22778365765276556
+        },
+        {
+          "name": "bottled_collision_mesh_4",
+          "file": "bottle_1/collision/collision_mesh_collision_4.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_4.obj",
+            "name": "bottled_collision_mesh_4",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_4",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "39df5e89da9343d4f540e2a511c4b3a9d92911a3e5849c52336ee4d95d1717fd",
+          "sha256": "422cbfbc80078de28175ecfa9e3c51ba3688794171d7293191a22138c511c40c",
+          "vertex_count": 43,
+          "triangle_count": 82,
+          "bounds": [
+            [
+              -0.328118693908042,
+              -0.8294465494079516,
+              0.6485389
+            ],
+            [
+              0.2880447563546223,
+              -0.32816564902969103,
+              1.0
+            ]
+          ],
+          "volume": 0.03426846698763961
+        },
+        {
+          "name": "bottled_collision_mesh_5",
+          "file": "bottle_1/collision/collision_mesh_collision_5.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_5.obj",
+            "name": "bottled_collision_mesh_5",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_5",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "634cdcc822a8586db0dc27cc6ff50d4bb51c1a446cca9b78643f7778a4f0a12e",
+          "sha256": "07d7f38928c75e678b8b320b5cd88c280f00da8a0ccd2eb96c7844023485fa5d",
+          "vertex_count": 114,
+          "triangle_count": 224,
+          "bounds": [
+            [
+              -0.953433738448732,
+              -0.9323478086818295,
+              2.2399999999648292e-06
+            ],
+            [
+              0.9324582832683334,
+              0.953433670001033,
+              0.030429989999999994
+            ]
+          ],
+          "volume": 0.07118320745763508
+        },
+        {
+          "name": "bottled_collision_mesh_6",
+          "file": "bottle_1/collision/collision_mesh_collision_6.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_6.obj",
+            "name": "bottled_collision_mesh_6",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_6",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "59062e0cb887f613e66ae913b8f5535baff89d8176ca39f87a73c1c2637ca6da",
+          "sha256": "ac03ef6a4e360ed0e190d0254605d9a91b142c8939382d304a6e2fb2ad00c41a",
+          "vertex_count": 27,
+          "triangle_count": 50,
+          "bounds": [
+            [
+              -0.328118693908042,
+              -0.9892554311372426,
+              0.23892101999999998
+            ],
+            [
+              0.2027222351884962,
+              -0.708806658200998,
+              0.6485045300000001
+            ]
+          ],
+          "volume": 0.03605621406616182
+        },
+        {
+          "name": "bottled_collision_mesh_7",
+          "file": "bottle_1/collision/collision_mesh_collision_7.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_7.obj",
+            "name": "bottled_collision_mesh_7",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_7",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "b3fb6cfa1f7e803d76793e878f5da8cfc07ea370e4dd1b656cf2e72309e1566e",
+          "sha256": "4c5b4e31f242aa42153fe1d79ff9a9514bd7b5a38e194df307af005493622643",
+          "vertex_count": 54,
+          "triangle_count": 104,
+          "bounds": [
+            [
+              0.17884227034037556,
+              -0.0892124039114868,
+              0.7456785300000001
+            ],
+            [
+              0.6523727622717269,
+              0.6197460028386308,
+              0.9999751200000001
+            ]
+          ],
+          "volume": 0.027174498790937984
+        },
+        {
+          "name": "bottled_collision_mesh_8",
+          "file": "bottle_1/collision/collision_mesh_collision_8.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_8.obj",
+            "name": "bottled_collision_mesh_8",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_8",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "53fcfcb5636ce42b2b2fa0423414e5a9ab8ac23251e5ac10a21081605a9ad973",
+          "sha256": "e09537f4272614fb23343d735d184b46ff0189e164bc181303ecc6c151fc0ea7",
+          "vertex_count": 48,
+          "triangle_count": 92,
+          "bounds": [
+            [
+              -0.8559724285162283,
+              0.4945657019531489,
+              0.030432970000000042
+            ],
+            [
+              0.37828606608043713,
+              0.9961506470112423,
+              0.38410529
+            ]
+          ],
+          "volume": 0.08766268926258845
+        },
+        {
+          "name": "bottled_collision_mesh_9",
+          "file": "bottle_1/collision/collision_mesh_collision_9.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_9.obj",
+            "name": "bottled_collision_mesh_9",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_9",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "599d1b3a26c45720be2999b66ddc03e980236de63b1d7247d8c7d712d5a9ab7f",
+          "sha256": "6e9a33f2dff1041bbbd0ac9df2713ad60e1eaffc07d6f19b53a188b9ef79baae",
+          "vertex_count": 60,
+          "triangle_count": 116,
+          "bounds": [
+            [
+              0.2537732671575235,
+              0.05218767446189133,
+              0.02285760999999996
+            ],
+            [
+              0.9892533777062668,
+              0.9443604483385875,
+              0.39374864000000004
+            ]
+          ],
+          "volume": 0.08287166668313194
+        },
+        {
+          "name": "bottled_collision_mesh_10",
+          "file": "bottle_1/collision/collision_mesh_collision_10.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_10.obj",
+            "name": "bottled_collision_mesh_10",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_10",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "b4892295d65f9e165f06e6d42a3f4e3b0fe46d8ecbd454e7c3db97247195de2c",
+          "sha256": "a24db93f67aca6e88a61c706d6ac10178aa5482672c9617632a0dbcb71145072",
+          "vertex_count": 36,
+          "triangle_count": 68,
+          "bounds": [
+            [
+              0.2537732671575235,
+              0.395770620154094,
+              0.39381939
+            ],
+            [
+              0.883299214152808,
+              0.9213333418224604,
+              0.7456785
+            ]
+          ],
+          "volume": 0.02882774963423818
+        },
+        {
+          "name": "bottled_collision_mesh_11",
+          "file": "bottle_1/collision/collision_mesh_collision_11.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_11.obj",
+            "name": "bottled_collision_mesh_11",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_11",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "f8a36376c5b871cb4e75330644e7b700391460aa5807ea16fe9537155aa7a070",
+          "sha256": "22df5f1655c17f59fc9018762fc128a81078367b48875d1345f0a99069173e12",
+          "vertex_count": 42,
+          "triangle_count": 80,
+          "bounds": [
+            [
+              0.44699715202386225,
+              -0.32811800943105,
+              0.38416275000000005
+            ],
+            [
+              0.9852426163241242,
+              0.39571914748429793,
+              0.7456431099999999
+            ]
+          ],
+          "volume": 0.04736048769032558
+        },
+        {
+          "name": "bottled_collision_mesh_12",
+          "file": "bottle_1/collision/collision_mesh_collision_12.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_12.obj",
+            "name": "bottled_collision_mesh_12",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_12",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "07e7d8b1a413ce16c8186310b0cb97878d28321226e271d184b8906e803d714b",
+          "sha256": "d0c16c9da31dde022e4c8c4e338a2439490699359aaa6b5c1a404a3294b76c5f",
+          "vertex_count": 35,
+          "triangle_count": 66,
+          "bounds": [
+            [
+              0.6258769317033978,
+              -0.46262348795972125,
+              0.022892889999999992
+            ],
+            [
+              0.9961732347519774,
+              0.3586752526789273,
+              0.38410532000000003
+            ]
+          ],
+          "volume": 0.04654847626936712
+        },
+        {
+          "name": "bottled_collision_mesh_13",
+          "file": "bottle_1/collision/collision_mesh_collision_13.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_13.obj",
+            "name": "bottled_collision_mesh_13",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_13",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "c3688241f300dcf47040e2a7965a42f6eb2b9abb384139847ced3f5f938f1c1c",
+          "sha256": "0c4e89fd6428cd8b62fa4f8a97b898c3890454b871b8a8dacba3e1703df51e54",
+          "vertex_count": 56,
+          "triangle_count": 108,
+          "bounds": [
+            [
+              -0.328118693908042,
+              0.25565366234986125,
+              0.38418764
+            ],
+            [
+              0.2537732671575235,
+              0.9881706035526708,
+              0.9999751200000001
+            ]
+          ],
+          "volume": 0.05906479048180282
+        },
+        {
+          "name": "bottled_collision_mesh_14",
+          "file": "bottle_1/collision/collision_mesh_collision_14.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_14.obj",
+            "name": "bottled_collision_mesh_14",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_14",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "9da8785e4ccc5fad76bac60c319ac3b9cf392193efa1a5c61bc017d54be28700",
+          "sha256": "1409d36715e572168268aabd7bfe7971dcffae76b625ac87e7de17c38157af33",
+          "vertex_count": 42,
+          "triangle_count": 80,
+          "bounds": [
+            [
+              -0.13590297520317465,
+              -0.32811800943105,
+              0.7456785300000001
+            ],
+            [
+              0.6395737269988957,
+              -0.0892124039114868,
+              0.9999751200000001
+            ]
+          ],
+          "volume": 0.01667067163528194
+        },
+        {
+          "name": "bottled_collision_mesh_15",
+          "file": "bottle_1/collision/collision_mesh_collision_15.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_15.obj",
+            "name": "bottled_collision_mesh_15",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_15",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "9c2c9b26316bead345d6008b24afb42922d73f949d603050aadf08b83b2e8223",
+          "sha256": "efc394de70032edf0f7e4006342c1007d3c42814ae1380a09bff229cecaccfe0",
+          "vertex_count": 39,
+          "triangle_count": 74,
+          "bounds": [
+            [
+              -0.9961414750195501,
+              -0.4252861578678935,
+              0.030432970000000042
+            ],
+            [
+              -0.6718284731868565,
+              0.4945657019531489,
+              0.15908339999999999
+            ]
+          ],
+          "volume": 0.022216306190644144
+        }
+      ],
+      "materials": [
+        {
+          "name": "02_-_Default",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.611841143"
+        },
+        {
+          "name": "03_-_Default",
+          "texture": "image1",
+          "specular": "0.5",
+          "shininess": "0.276786677"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_1/visual/image0.png",
+          "source_sha256": "271d8636f5504931ccc50d7fe82d72694e8823f498c64ec8811632578e8c1bb6",
+          "sha256": "271d8636f5504931ccc50d7fe82d72694e8823f498c64ec8811632578e8c1bb6"
+        },
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image1",
+            "file": "visual/image1.png"
+          },
+          "file": "bottle_1/visual/image1.png",
+          "source_sha256": "a83550cc029e9b04fd678ecfd81e60f1bcf8ca076fac9acff8f37a40913544c8",
+          "sha256": "a83550cc029e9b04fd678ecfd81e60f1bcf8ca076fac9acff8f37a40913544c8"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_1/model.xml",
+          "sha256": "4054fb6d83870ab2436259e0289286e425f37b64720f7893b2d1e840b9e2ac03",
+          "bytes": 5903
+        },
+        {
+          "path": "bottle_1/visual/model_normalized_0.obj",
+          "sha256": "9ae032bb43390bd219d299479455f7c7ac0dde39044e2cae755b445876fdc97c",
+          "bytes": 13749
+        },
+        {
+          "path": "bottle_1/visual/model_normalized_1.obj",
+          "sha256": "1a1deadb760451159a9e5ba23c777b96c41e70e9aed487ea7636b5d73121bfa8",
+          "bytes": 303375
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_0.obj",
+          "sha256": "71f63d09c722867a44e3d98c86186a98a70a67c6fa1331cf40f2bfff5cb2f6b3",
+          "bytes": 2795
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_1.obj",
+          "sha256": "db076c7386b055ba0c0f3eeb1524fa72084a30feb93b812ef3dd37c37cc1a0da",
+          "bytes": 3392
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_2.obj",
+          "sha256": "ddf20656b318bd49b2704e9046469383442cf3478fa6a8df61eaa15748626417",
+          "bytes": 4972
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_3.obj",
+          "sha256": "80c95375fd39d924e8c39b35218fadc25559be858882b2d8a3a8de24ed271b1f",
+          "bytes": 5151
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_4.obj",
+          "sha256": "39df5e89da9343d4f540e2a511c4b3a9d92911a3e5849c52336ee4d95d1717fd",
+          "bytes": 2448
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_5.obj",
+          "sha256": "634cdcc822a8586db0dc27cc6ff50d4bb51c1a446cca9b78643f7778a4f0a12e",
+          "bytes": 6740
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_6.obj",
+          "sha256": "59062e0cb887f613e66ae913b8f5535baff89d8176ca39f87a73c1c2637ca6da",
+          "bytes": 1537
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_7.obj",
+          "sha256": "b3fb6cfa1f7e803d76793e878f5da8cfc07ea370e4dd1b656cf2e72309e1566e",
+          "bytes": 3011
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_8.obj",
+          "sha256": "53fcfcb5636ce42b2b2fa0423414e5a9ab8ac23251e5ac10a21081605a9ad973",
+          "bytes": 2753
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_9.obj",
+          "sha256": "599d1b3a26c45720be2999b66ddc03e980236de63b1d7247d8c7d712d5a9ab7f",
+          "bytes": 3413
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_10.obj",
+          "sha256": "b4892295d65f9e165f06e6d42a3f4e3b0fe46d8ecbd454e7c3db97247195de2c",
+          "bytes": 1995
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_11.obj",
+          "sha256": "f8a36376c5b871cb4e75330644e7b700391460aa5807ea16fe9537155aa7a070",
+          "bytes": 2348
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_12.obj",
+          "sha256": "07e7d8b1a413ce16c8186310b0cb97878d28321226e271d184b8906e803d714b",
+          "bytes": 1989
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_13.obj",
+          "sha256": "c3688241f300dcf47040e2a7965a42f6eb2b9abb384139847ced3f5f938f1c1c",
+          "bytes": 3160
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_14.obj",
+          "sha256": "9da8785e4ccc5fad76bac60c319ac3b9cf392193efa1a5c61bc017d54be28700",
+          "bytes": 2366
+        },
+        {
+          "path": "bottle_1/collision/collision_mesh_collision_15.obj",
+          "sha256": "9c2c9b26316bead345d6008b24afb42922d73f949d603050aadf08b83b2e8223",
+          "bytes": 2258
+        },
+        {
+          "path": "bottle_1/visual/image0.png",
+          "sha256": "271d8636f5504931ccc50d7fe82d72694e8823f498c64ec8811632578e8c1bb6",
+          "bytes": 361
+        },
+        {
+          "path": "bottle_1/visual/image1.png",
+          "sha256": "a83550cc029e9b04fd678ecfd81e60f1bcf8ca076fac9acff8f37a40913544c8",
+          "bytes": 104322
+        }
+      ],
+      "source_sha256": "054cbed1787a288738f70d7dd4c11a568874ba6748ce48d3d029356e2e947883",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    },
+    "bottle_2": {
+      "source_model": "bottled_drink_11",
+      "source_model_file": "bottle_2/model.xml",
+      "source_model_sha256": "54f9a419506e654ca1959ec3304005abe1226ac1adc1e96c3687b975b979c344",
+      "source_bounds_m": [
+        [
+          -0.020588468649999997,
+          -0.020565720849999997,
+          -0.07818644539999998
+        ],
+        [
+          0.020589900849999995,
+          0.020566416799999997,
+          0.07834420594999998
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          7.160999999991646e-07,
+          3.4797500000037507e-07,
+          -0.07818644539999998
+        ],
+        "multiply_scale": [
+          48.2942091277026,
+          48.2942091277026,
+          6.388525131502944
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_2/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "aiStandardSurface7"
+          },
+          "source_sha256": "8a6417420ff90ea264f19e0431b989d25f7e88764c6c847b344c2250a19be9b6",
+          "sha256": "0aaa3887bb2a92d2869965d5420f74b17de7285c301592056236f88d086f5d2b",
+          "vertex_count": 3785,
+          "triangle_count": 7262,
+          "bounds": [
+            [
+              -0.941639229093087,
+              -0.9399011844964081,
+              0.00996956881314346
+            ],
+            [
+              0.9415756014725611,
+              0.9398721403590383,
+              0.8723635912347465
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_1_vis",
+          "file": "bottle_2/visual/model_normalized_1.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_1.obj",
+            "name": "model_normalized_1_vis",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_1_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "aiStandardSurface6"
+          },
+          "source_sha256": "cf5f9f119d0c7f85ac8969e05539a73c1e3b97a257696b46447a17b932ac5ed6",
+          "sha256": "fd260a980ec7058d3a088a39e35baf856efe0647251c44eddd16d5bb9c1b41c7",
+          "vertex_count": 1025,
+          "triangle_count": 1920,
+          "bounds": [
+            [
+              -0.9552824880542903,
+              -0.9535191421214496,
+              0.04401508356720959
+            ],
+            [
+              0.9552133210879776,
+              0.953485531766607,
+              0.7899781811647077
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_2_vis",
+          "file": "bottle_2/visual/model_normalized_2.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_2.obj",
+            "name": "model_normalized_2_vis",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_2_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "aiStandardSurface1.001"
+          },
+          "source_sha256": "dab438db7ae282f870c9c754ba369cc648906554b961f61cc31c34825ab96b16",
+          "sha256": "02d99fd2f4b1c6ce887091764c1cd9cb793962679e9b8d0a6edb18716f6b209c",
+          "vertex_count": 5659,
+          "triangle_count": 10784,
+          "bounds": [
+            [
+              -0.9543277743223073,
+              -0.9525663746460945,
+              0.004385373689304586
+            ],
+            [
+              0.954259206204188,
+              0.9525330637153485,
+              0.9868724072104872
+            ]
+          ]
+        },
+        {
+          "name": "model_normalized_3_vis",
+          "file": "bottle_2/visual/model_normalized_3.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_3.obj",
+            "name": "model_normalized_3_vis",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_3_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "aiStandardSurface3.001"
+          },
+          "source_sha256": "87b6f81dc5b0cefc81a3a1ae2c6c6f98f48ae613a3ac0e575d24bef78977d1c3",
+          "sha256": "a220ae874ec23093bd1289ce5c82d38c51089af6a54dcc6f896713365b24ecd5",
+          "vertex_count": 3699,
+          "triangle_count": 2400,
+          "bounds": [
+            [
+              -0.4394927427207517,
+              -0.4419618312492595,
+              0.933343345791936
+            ],
+            [
+              0.4696166033824619,
+              0.46714923654250967,
+              0.9946067690722609
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_2/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "3baf8c5b9700b7bbb638eda536fbee642b7337cfc9c76f18561191684fd6cbb1",
+          "sha256": "d49bdc52b52e311849fd3fde8b18eed613609226a5e43dab0c071e87f1c0900a",
+          "vertex_count": 360,
+          "triangle_count": 716,
+          "bounds": [
+            [
+              -0.47929803240961144,
+              -0.48244823590184127,
+              0.9105340910599872
+            ],
+            [
+              0.5096945187112686,
+              0.5068766011102314,
+              1.0
+            ]
+          ],
+          "volume": 0.06344084488471231
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_2/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "89607c792ca6a164bb44a71246a818a419fad2d82b9fd6cb1559647d136c8b40",
+          "sha256": "f0c0fc410af6782cb2c4a9451d4730e0433fa7dce4d4bc202bc373c6768e48e6",
+          "vertex_count": 669,
+          "triangle_count": 1334,
+          "bounds": [
+            [
+              0.32978734681869143,
+              -0.9323244074442021,
+              0.0001967767956905329
+            ],
+            [
+              0.9880603690521657,
+              -0.10424056928715213,
+              0.9105253276006381
+            ]
+          ],
+          "volume": 0.31787201792164316
+        },
+        {
+          "name": "bottled_collision_mesh_2",
+          "file": "bottle_2/collision/collision_mesh_collision_2.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_2.obj",
+            "name": "bottled_collision_mesh_2",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_2",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "25164332e7734234e938b557480f69644e7f596760d738bcb6181befb25f4e86",
+          "sha256": "ff1c66c83826a8f59aac9122a8a51261a467ba16d19c8445c786383f1daab157",
+          "vertex_count": 659,
+          "triangle_count": 1314,
+          "bounds": [
+            [
+              0.32978734681869143,
+              -0.1041595002129999,
+              0.0
+            ],
+            [
+              0.994338394085405,
+              0.939588960019687,
+              0.9105253276006381
+            ]
+          ],
+          "volume": 0.43672067548542065
+        },
+        {
+          "name": "bottled_collision_mesh_3",
+          "file": "bottle_2/collision/collision_mesh_collision_3.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_3.obj",
+            "name": "bottled_collision_mesh_3",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_3",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "828eaf2a42b2a86b7edbe14668c990305f2c5f721cc6b464e25ecf2092850f57",
+          "sha256": "8e9c61e5974c7f12514dda7a511a263813a3523e64d4101489b0bdbcc7086e0d",
+          "vertex_count": 887,
+          "triangle_count": 1770,
+          "bounds": [
+            [
+              -0.9641769556995725,
+              0.23484097634577153,
+              0.0001349176651208843
+            ],
+            [
+              0.32978734681869143,
+              0.9932220287692748,
+              0.9105253870139219
+            ]
+          ],
+          "volume": 0.6655427277853203
+        },
+        {
+          "name": "bottled_collision_mesh_4",
+          "file": "bottle_2/collision/collision_mesh_collision_4.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_4.obj",
+            "name": "bottled_collision_mesh_4",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_4",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "2e5cf1bdf000c11232732d540b089524e91cade8ecb684072c0aeec73160fe29",
+          "sha256": "fee58d7182f519787eaa1d08c0626d12878fb9440a8cb72627f38efb2c2db0c3",
+          "vertex_count": 661,
+          "triangle_count": 1318,
+          "bounds": [
+            [
+              -0.994338394085405,
+              -0.8686068099774281,
+              0.0008864461931468465
+            ],
+            [
+              -0.4888962215379085,
+              0.23484097634577153,
+              0.8953577302034271
+            ]
+          ],
+          "volume": 0.3500869178965493
+        },
+        {
+          "name": "bottled_collision_mesh_5",
+          "file": "bottle_2/collision/collision_mesh_collision_5.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_5.obj",
+            "name": "bottled_collision_mesh_5",
+            "scale": "0.15499999999999997 0.15499999999999997 0.15499999999999997",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_5",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "d1d649baa1a211b970bfe9f8e897725c62c18adc563f2d2c1983106aafec56d7",
+          "sha256": "469b6934b1089d3a13fb17fa1ce761c79d3dea6b15aa5b91c3fb839af206c93f",
+          "vertex_count": 531,
+          "triangle_count": 1058,
+          "bounds": [
+            [
+              -0.4888468165619708,
+              -0.9932220287692748,
+              0.0008332019887170168
+            ],
+            [
+              0.32978734681869143,
+              0.23484097634577153,
+              0.9104363165994072
+            ]
+          ],
+          "volume": 0.8495999436006896
+        }
+      ],
+      "materials": [
+        {
+          "name": "aiStandardSurface1.001",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        },
+        {
+          "name": "aiStandardSurface3.001",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        },
+        {
+          "name": "aiStandardSurface6",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        },
+        {
+          "name": "aiStandardSurface7",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_2/visual/image0.png",
+          "source_sha256": "c126d0b3ff3b71b7ee9b6006a1fd031d6ccbda4a452ed1a78fd6936b05e2706d",
+          "sha256": "c126d0b3ff3b71b7ee9b6006a1fd031d6ccbda4a452ed1a78fd6936b05e2706d"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_2/model.xml",
+          "sha256": "54f9a419506e654ca1959ec3304005abe1226ac1adc1e96c3687b975b979c344",
+          "bytes": 4173
+        },
+        {
+          "path": "bottle_2/visual/model_normalized_0.obj",
+          "sha256": "8a6417420ff90ea264f19e0431b989d25f7e88764c6c847b344c2250a19be9b6",
+          "bytes": 699382
+        },
+        {
+          "path": "bottle_2/visual/model_normalized_1.obj",
+          "sha256": "cf5f9f119d0c7f85ac8969e05539a73c1e3b97a257696b46447a17b932ac5ed6",
+          "bytes": 173055
+        },
+        {
+          "path": "bottle_2/visual/model_normalized_2.obj",
+          "sha256": "dab438db7ae282f870c9c754ba369cc648906554b961f61cc31c34825ab96b16",
+          "bytes": 1049025
+        },
+        {
+          "path": "bottle_2/visual/model_normalized_3.obj",
+          "sha256": "87b6f81dc5b0cefc81a3a1ae2c6c6f98f48ae613a3ac0e575d24bef78977d1c3",
+          "bytes": 466686
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_0.obj",
+          "sha256": "3baf8c5b9700b7bbb638eda536fbee642b7337cfc9c76f18561191684fd6cbb1",
+          "bytes": 22331
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_1.obj",
+          "sha256": "89607c792ca6a164bb44a71246a818a419fad2d82b9fd6cb1559647d136c8b40",
+          "bytes": 42359
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_2.obj",
+          "sha256": "25164332e7734234e938b557480f69644e7f596760d738bcb6181befb25f4e86",
+          "bytes": 41062
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_3.obj",
+          "sha256": "828eaf2a42b2a86b7edbe14668c990305f2c5f721cc6b464e25ecf2092850f57",
+          "bytes": 56128
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_4.obj",
+          "sha256": "2e5cf1bdf000c11232732d540b089524e91cade8ecb684072c0aeec73160fe29",
+          "bytes": 42319
+        },
+        {
+          "path": "bottle_2/collision/collision_mesh_collision_5.obj",
+          "sha256": "d1d649baa1a211b970bfe9f8e897725c62c18adc563f2d2c1983106aafec56d7",
+          "bytes": 33819
+        },
+        {
+          "path": "bottle_2/visual/image0.png",
+          "sha256": "c126d0b3ff3b71b7ee9b6006a1fd031d6ccbda4a452ed1a78fd6936b05e2706d",
+          "bytes": 764968
+        }
+      ],
+      "source_sha256": "61e21da09136244c77936120b0a923097919bdb4ec32b1f9df90f20ca908c7c8",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    },
+    "bottle_3": {
+      "source_model": "bottled_drink_16",
+      "source_model_file": "bottle_3/model.xml",
+      "source_model_sha256": "f8a208436df3061b1c6e3c353d7a3afada922125df58045a013461c81ee7ff66",
+      "source_bounds_m": [
+        [
+          -0.026358731199999996,
+          -0.025956563199999994,
+          -0.07999999999999999
+        ],
+        [
+          0.0263587328,
+          0.025956563199999994,
+          0.07999999999999999
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          8.000000020075282e-10,
+          0.0,
+          -0.07999999999999999
+        ],
+        "multiply_scale": [
+          36.13445968281236,
+          36.13445968281236,
+          6.250000000000001
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_3/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "texture.001"
+          },
+          "source_sha256": "a544519f634a5d63637fc5ba49fdc70069333782d2578f8f87ce0730302f772e",
+          "sha256": "609784a4b72caabd666198671e096db86a9b367c604748ae83e6b615bd4fc563",
+          "vertex_count": 84243,
+          "triangle_count": 143548,
+          "bounds": [
+            [
+              -0.952458538744056,
+              -0.9379263864547709,
+              0.0
+            ],
+            [
+              0.9524584809289204,
+              0.9379263864547709,
+              1.0
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_3/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "e44ba51e987ff07afdd37091e79092bcb1fcbf303a5801da4fd68251f2eb2b53",
+          "sha256": "69f56ac15c6b0318b7c3bbe34968277de2dfcc303fc67d75683b03fdc3d18f1c",
+          "vertex_count": 2008,
+          "triangle_count": 4012,
+          "bounds": [
+            [
+              -0.42909251713607355,
+              -0.4673720628834963,
+              0.87673354
+            ],
+            [
+              0.49271292819851065,
+              0.4541463881185031,
+              1.0
+            ]
+          ],
+          "volume": 0.0712024459037336
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_3/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "fcb45591b59198187f924dc027e283379c69713d01351c75c9d3f824d4b9e3e1",
+          "sha256": "e42c8652dd484c7fa4659274f741c909fefb45379b69831fe919c9c0b5ebdde1",
+          "vertex_count": 6297,
+          "triangle_count": 12590,
+          "bounds": [
+            [
+              -0.9203238457648859,
+              -0.9379263864547709,
+              0.24977129999999997
+            ],
+            [
+              0.952458538744056,
+              0.9273556405267286,
+              0.87673354
+            ]
+          ],
+          "volume": 1.4716415074189488
+        },
+        {
+          "name": "bottled_collision_mesh_2",
+          "file": "bottle_3/collision/collision_mesh_collision_2.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_2.obj",
+            "name": "bottled_collision_mesh_2",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_2",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "db4234aa7b5199a8d10f4ca31c1b3e3f726fb3f5f4656f1bf8259ee2102bbe94",
+          "sha256": "ee4e48fbbb40114212463f5c3c37d7d7743ef9dc28842812a03df70202ef78be",
+          "vertex_count": 1164,
+          "triangle_count": 2324,
+          "bounds": [
+            [
+              0.21793672601250724,
+              -0.899726712317031,
+              0.0
+            ],
+            [
+              0.9248832629800952,
+              -0.03950542897283805,
+              0.24977129999999997
+            ]
+          ],
+          "volume": 0.09647304993147034
+        },
+        {
+          "name": "bottled_collision_mesh_3",
+          "file": "bottle_3/collision/collision_mesh_collision_3.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_3.obj",
+            "name": "bottled_collision_mesh_3",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_3",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "9ea85589c425d25d4ce899b4068a0016bf4c972d61d817ba112d463bff185ea3",
+          "sha256": "a9f33f70a1bcb974d0b0a9c9da5a6e0900f400f755ac94dba1523147496db8bc",
+          "vertex_count": 1111,
+          "triangle_count": 2218,
+          "bounds": [
+            [
+              -0.840242540585566,
+              0.4031042957489497,
+              0.0020084400000000215
+            ],
+            [
+              0.21793672601250724,
+              0.9379263864547709,
+              0.24977129999999997
+            ]
+          ],
+          "volume": 0.09337415594264013
+        },
+        {
+          "name": "bottled_collision_mesh_4",
+          "file": "bottle_3/collision/collision_mesh_collision_4.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_4.obj",
+            "name": "bottled_collision_mesh_4",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_4",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "aef943f819aa7900dbc6bf1835f0e4dd701a78879756961c2139faa04bc18afc",
+          "sha256": "d63b7018a7e0e9c5065daf260f5d635e104b0a1bfdf370c1d6f2db361956f4ae",
+          "vertex_count": 972,
+          "triangle_count": 1940,
+          "bounds": [
+            [
+              0.21800598854482725,
+              -0.039413098201456526,
+              0.0006099299999999531
+            ],
+            [
+              0.926010658122199,
+              0.9036107331194172,
+              0.24977129999999997
+            ]
+          ],
+          "volume": 0.11081238941451732
+        },
+        {
+          "name": "bottled_collision_mesh_5",
+          "file": "bottle_3/collision/collision_mesh_collision_5.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_5.obj",
+            "name": "bottled_collision_mesh_5",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_5",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "74ccd42e5e17dacaedf2597ea3f31345c9683985918feed6e442b1478fa42337",
+          "sha256": "fea4e35fa4d390092e9ccefed78a63d9be69ccac4a1deab951c149a97a42b1b3",
+          "vertex_count": 1090,
+          "triangle_count": 2176,
+          "bounds": [
+            [
+              -0.8311652174224308,
+              -0.928556345260637,
+              0.0005193900000000433
+            ],
+            [
+              0.21793666819737173,
+              -0.42015739029868193,
+              0.24977129999999997
+            ]
+          ],
+          "volume": 0.08784316043802431
+        },
+        {
+          "name": "bottled_collision_mesh_6",
+          "file": "bottle_3/collision/collision_mesh_collision_6.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_6.obj",
+            "name": "bottled_collision_mesh_6",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_6",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "576239b90f09d7ef12f38f30f9dd01ee9fdab0000b8ebb280acee552f540917c",
+          "sha256": "c88a4034041079ad8b4e76e89d73f834641a3ed86fa3bd2fbd312c3b2ade1def",
+          "vertex_count": 1007,
+          "triangle_count": 2010,
+          "bounds": [
+            [
+              -0.952458538744056,
+              -0.42015739029868193,
+              0.0021399299999999744
+            ],
+            [
+              -0.5056272106437414,
+              0.4031042957489497,
+              0.24977129999999997
+            ]
+          ],
+          "volume": 0.07173115343979784
+        },
+        {
+          "name": "bottled_collision_mesh_7",
+          "file": "bottle_3/collision/collision_mesh_collision_7.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_7.obj",
+            "name": "bottled_collision_mesh_7",
+            "scale": "0.15999999999999998 0.15999999999999998 0.15999999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_7",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "070b55b77a8bac1b40928b3c4f5986152cb6b706ed192d473a837de036c9e6dc",
+          "sha256": "105e596e11bf80eddc8abd3c0559e905efef1b4c7ef40d90a25eedc0db09a78d",
+          "vertex_count": 112,
+          "triangle_count": 220,
+          "bounds": [
+            [
+              -0.5056272106437414,
+              -0.42015739029868193,
+              0.008427079999999943
+            ],
+            [
+              0.21793672601250724,
+              0.4031042957489497,
+              0.24974769
+            ]
+          ],
+          "volume": 0.14098244355822823
+        }
+      ],
+      "materials": [
+        {
+          "name": "texture.001",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.359999993"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_3/visual/image0.png",
+          "source_sha256": "07b6fe7ee32f80bbe9d4e95fe6c3c4f7cfea0927332a9dc03ed789dc0c2f747d",
+          "sha256": "07b6fe7ee32f80bbe9d4e95fe6c3c4f7cfea0927332a9dc03ed789dc0c2f747d"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_3/model.xml",
+          "sha256": "f8a208436df3061b1c6e3c353d7a3afada922125df58045a013461c81ee7ff66",
+          "bytes": 3205
+        },
+        {
+          "path": "bottle_3/visual/model_normalized_0.obj",
+          "sha256": "a544519f634a5d63637fc5ba49fdc70069333782d2578f8f87ce0730302f772e",
+          "bytes": 16193160
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_0.obj",
+          "sha256": "e44ba51e987ff07afdd37091e79092bcb1fcbf303a5801da4fd68251f2eb2b53",
+          "bytes": 133710
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_1.obj",
+          "sha256": "fcb45591b59198187f924dc027e283379c69713d01351c75c9d3f824d4b9e3e1",
+          "bytes": 434282
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_2.obj",
+          "sha256": "db4234aa7b5199a8d10f4ca31c1b3e3f726fb3f5f4656f1bf8259ee2102bbe94",
+          "bytes": 75731
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_3.obj",
+          "sha256": "9ea85589c425d25d4ce899b4068a0016bf4c972d61d817ba112d463bff185ea3",
+          "bytes": 71823
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_4.obj",
+          "sha256": "aef943f819aa7900dbc6bf1835f0e4dd701a78879756961c2139faa04bc18afc",
+          "bytes": 61393
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_5.obj",
+          "sha256": "74ccd42e5e17dacaedf2597ea3f31345c9683985918feed6e442b1478fa42337",
+          "bytes": 71413
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_6.obj",
+          "sha256": "576239b90f09d7ef12f38f30f9dd01ee9fdab0000b8ebb280acee552f540917c",
+          "bytes": 65160
+        },
+        {
+          "path": "bottle_3/collision/collision_mesh_collision_7.obj",
+          "sha256": "070b55b77a8bac1b40928b3c4f5986152cb6b706ed192d473a837de036c9e6dc",
+          "bytes": 6590
+        },
+        {
+          "path": "bottle_3/visual/image0.png",
+          "sha256": "07b6fe7ee32f80bbe9d4e95fe6c3c4f7cfea0927332a9dc03ed789dc0c2f747d",
+          "bytes": 1085714
+        }
+      ],
+      "source_sha256": "ebd9f89ee28ea6c596dc4fbc60c16fda19761d4bf6d7bc3f5a9fc5c6a499857f",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    },
+    "bottle_4": {
+      "source_model": "bottled_drink_7",
+      "source_model_file": "bottle_4/model.xml",
+      "source_model_sha256": "43a34b0ad2aa9c03b4a6346d0368830721d0cd5beb9462e2a442ffe2579c6911",
+      "source_bounds_m": [
+        [
+          -0.023687383499999996,
+          -0.023691455699999996,
+          -0.08328150929999999
+        ],
+        [
+          0.02368737855,
+          0.023687206949999998,
+          0.0834075033
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          -2.4749999983503246e-09,
+          -2.1243749999989847e-06,
+          -0.08328150929999999
+        ],
+        "multiply_scale": [
+          41.94707832116355,
+          41.94707832116355,
+          5.99919565424314
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_4/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "Scene_-_Root.008"
+          },
+          "source_sha256": "36b3308d951cd8ba359df8e9e5fead3ec894aaf83fb618aeb2469aeefa821ecb",
+          "sha256": "f2cf9c8003aa6c1e56372ccda70e36474d9c2ef1751fc845937fdbddf980901a",
+          "vertex_count": 6556,
+          "triangle_count": 12326,
+          "bounds": [
+            [
+              -0.9664277487223875,
+              -0.9663244834049765,
+              0.004688427196310579
+            ],
+            [
+              0.9664279563604249,
+              0.9665027060539935,
+              0.9945557101464285
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_4/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "0774a9c2913f0b85f8960501b4e79555a6edd179c2887590c5eb9705b8476765",
+          "sha256": "eb4511a168d258bd53c0af76ebe6d1e06ce3452acb5cfc1734cde3915a124e87",
+          "vertex_count": 314,
+          "triangle_count": 624,
+          "bounds": [
+            [
+              -0.4593169683320076,
+              -0.4583420385323749,
+              0.8610952105429893
+            ],
+            [
+              0.4592328057140639,
+              0.45833989293931865,
+              1.0
+            ]
+          ],
+          "volume": 0.08383794228830911
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_4/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.16499999999999998 0.16499999999999998 0.16499999999999998",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "d87eb54f56ca90dfd076791285392c935d7ddebfd71ade7f37af4f67c3ed0653",
+          "sha256": "eddfca9239e6216b6cab2c1b1127a9250a082b4fc971328bfda9668f20ec2fbf",
+          "vertex_count": 1701,
+          "triangle_count": 3398,
+          "bounds": [
+            [
+              -0.9936164270789182,
+              -0.993698236465768,
+              0.0
+            ],
+            [
+              0.9936164270789182,
+              0.993698236465768,
+              0.86108163946254
+            ]
+          ],
+          "volume": 2.2476361687333273
+        }
+      ],
+      "materials": [
+        {
+          "name": "Scene_-_Root.008",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.25"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_4/visual/image0.png",
+          "source_sha256": "0c0a83eab769d5cdd26927ff952bba22bb2704b4d33256ca8f24c01be47a48af",
+          "sha256": "0c0a83eab769d5cdd26927ff952bba22bb2704b4d33256ca8f24c01be47a48af"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_4/model.xml",
+          "sha256": "43a34b0ad2aa9c03b4a6346d0368830721d0cd5beb9462e2a442ffe2579c6911",
+          "bytes": 1661
+        },
+        {
+          "path": "bottle_4/visual/model_normalized_0.obj",
+          "sha256": "36b3308d951cd8ba359df8e9e5fead3ec894aaf83fb618aeb2469aeefa821ecb",
+          "bytes": 1209476
+        },
+        {
+          "path": "bottle_4/collision/collision_mesh_collision_0.obj",
+          "sha256": "0774a9c2913f0b85f8960501b4e79555a6edd179c2887590c5eb9705b8476765",
+          "bytes": 19294
+        },
+        {
+          "path": "bottle_4/collision/collision_mesh_collision_1.obj",
+          "sha256": "d87eb54f56ca90dfd076791285392c935d7ddebfd71ade7f37af4f67c3ed0653",
+          "bytes": 113419
+        },
+        {
+          "path": "bottle_4/visual/image0.png",
+          "sha256": "0c0a83eab769d5cdd26927ff952bba22bb2704b4d33256ca8f24c01be47a48af",
+          "bytes": 48917
+        }
+      ],
+      "source_sha256": "739d19d85e5a9c4a2a7c6404e38fc2f032b376b97b0fa61384780dd7448ce357",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    },
+    "bottle_7": {
+      "source_model": "bottled_water_27",
+      "source_model_file": "bottle_7/model.xml",
+      "source_model_sha256": "81602986c2e3e8174820a2821399f195a079aac24d80c4eb92e3d22108a3b150",
+      "source_bounds_m": [
+        [
+          -0.0228600032,
+          -0.0228541904,
+          -0.08076780319999999
+        ],
+        [
+          0.0227888864,
+          0.0228094192,
+          0.08087916319999999
+        ]
+      ],
+      "normalization": {
+        "source_upright_axis": "+Z",
+        "rotation_wxyz": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "subtract_center_m": [
+          -3.555839999999991e-05,
+          -2.2385599999999103e-05,
+          -0.08076780319999999
+        ],
+        "multiply_scale": [
+          43.57644114001473,
+          43.57644114001473,
+          6.18632085878724
+        ],
+        "operation": "(source_vertex * source_mesh_scale - subtract_center_m) * multiply_scale"
+      },
+      "meshes": [
+        {
+          "name": "model_normalized_0_vis",
+          "file": "bottle_7/visual/model_normalized_0.obj",
+          "role": "visual",
+          "source_attributes": {
+            "file": "visual/model_normalized_0.obj",
+            "name": "model_normalized_0_vis",
+            "scale": "0.16 0.16 0.16",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "solimp": "0.998 0.998 0.001",
+            "solref": "0.001 1",
+            "density": "100",
+            "friction": "0.95 0.3 0.1",
+            "type": "mesh",
+            "mesh": "model_normalized_0_vis",
+            "conaffinity": "0",
+            "contype": "0",
+            "group": "1",
+            "material": "Material.049"
+          },
+          "source_sha256": "c337ee6599fd770f6c7a7af2b5b43eccdde3011a14b4ee53c07af78f843ce22f",
+          "sha256": "ff069cd47a1dfb50dc3c08ca070a85f06154343ca4244dc5ec186e68758c38fb",
+          "vertex_count": 5428,
+          "triangle_count": 8152,
+          "bounds": [
+            [
+              -0.9590839330626229,
+              -0.9595846786630511,
+              0.004749876951603506
+            ],
+            [
+              0.962182950111889,
+              0.9615356482246189,
+              0.994561214357562
+            ]
+          ]
+        },
+        {
+          "name": "bottled_collision_mesh_0",
+          "file": "bottle_7/collision/collision_mesh_collision_0.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_0.obj",
+            "name": "bottled_collision_mesh_0",
+            "scale": "0.16 0.16 0.16",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_0",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "8ad1f71c3acb74fa0b18001495dfd93f8682d79647366a0403eb2d2f2d5aff2f",
+          "sha256": "9d10c54e6b2a370de082a3e2a64a84580ee9e423f5babf9f66fb79d833afa51f",
+          "vertex_count": 316,
+          "triangle_count": 628,
+          "bounds": [
+            [
+              -0.3965543296623621,
+              -0.39889637163729685,
+              0.9466099921810844
+            ],
+            [
+              0.4010540678356329,
+              0.398681557213053,
+              1.0
+            ]
+          ],
+          "volume": 0.025169131176687898
+        },
+        {
+          "name": "bottled_collision_mesh_1",
+          "file": "bottle_7/collision/collision_mesh_collision_1.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_1.obj",
+            "name": "bottled_collision_mesh_1",
+            "scale": "0.16 0.16 0.16",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_1",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "9736ee45a0e5dd4328a8505aa012c484acf40ab3270474f76b66664d666a9dad",
+          "sha256": "dbe84d3fc87a848ee46bbd7df4b943b12b744f53e1d792df1e2fe4b891b150a3",
+          "vertex_count": 511,
+          "triangle_count": 1018,
+          "bounds": [
+            [
+              -0.9929249789181233,
+              -0.9933926064232853,
+              0.40561052186872343
+            ],
+            [
+              0.9940615919476666,
+              0.9935108554539626,
+              0.9466099921810844
+            ]
+          ],
+          "volume": 1.4295726161979883
+        },
+        {
+          "name": "bottled_collision_mesh_2",
+          "file": "bottle_7/collision/collision_mesh_collision_2.obj",
+          "role": "collision",
+          "source_attributes": {
+            "file": "collision/collision_mesh_collision_2.obj",
+            "name": "bottled_collision_mesh_2",
+            "scale": "0.16 0.16 0.16",
+            "refquat": "1.0 0.0 0.0 0.0"
+          },
+          "source_geom_attributes": {
+            "mesh": "bottled_collision_mesh_2",
+            "type": "mesh",
+            "class": "collision"
+          },
+          "source_sha256": "712b658099a1aaa8b41a4b6b33827a8431ef66129ce4573b61bf01fec7fbb415",
+          "sha256": "b80646f71b57feb5118a1dccbb3657315189b5302e551993a02b4cc0a795fa9b",
+          "vertex_count": 490,
+          "triangle_count": 976,
+          "bounds": [
+            [
+              -0.9946080753807153,
+              -0.9949287979875058,
+              0.0
+            ],
+            [
+              0.9946080753807153,
+              0.9949287979875058,
+              0.40561052186872343
+            ]
+          ],
+          "volume": 1.1909468198483093
+        }
+      ],
+      "materials": [
+        {
+          "name": "Material.049",
+          "texture": "image0",
+          "specular": "0.5",
+          "shininess": "0.25"
+        }
+      ],
+      "textures": [
+        {
+          "attributes": {
+            "type": "2d",
+            "name": "image0",
+            "file": "visual/image0.png"
+          },
+          "file": "bottle_7/visual/image0.png",
+          "source_sha256": "3cae4ac6309a41f95ba749af29eb42f7de21df8496333c13ffe59ed80b8bc9f6",
+          "sha256": "3cae4ac6309a41f95ba749af29eb42f7de21df8496333c13ffe59ed80b8bc9f6"
+        }
+      ],
+      "source_files": [
+        {
+          "path": "bottle_7/model.xml",
+          "sha256": "81602986c2e3e8174820a2821399f195a079aac24d80c4eb92e3d22108a3b150",
+          "bytes": 1773
+        },
+        {
+          "path": "bottle_7/visual/model_normalized_0.obj",
+          "sha256": "c337ee6599fd770f6c7a7af2b5b43eccdde3011a14b4ee53c07af78f843ce22f",
+          "bytes": 900924
+        },
+        {
+          "path": "bottle_7/collision/collision_mesh_collision_0.obj",
+          "sha256": "8ad1f71c3acb74fa0b18001495dfd93f8682d79647366a0403eb2d2f2d5aff2f",
+          "bytes": 19434
+        },
+        {
+          "path": "bottle_7/collision/collision_mesh_collision_1.obj",
+          "sha256": "9736ee45a0e5dd4328a8505aa012c484acf40ab3270474f76b66664d666a9dad",
+          "bytes": 32143
+        },
+        {
+          "path": "bottle_7/collision/collision_mesh_collision_2.obj",
+          "sha256": "712b658099a1aaa8b41a4b6b33827a8431ef66129ce4573b61bf01fec7fbb415",
+          "bytes": 31129
+        },
+        {
+          "path": "bottle_7/visual/image0.png",
+          "sha256": "3cae4ac6309a41f95ba749af29eb42f7de21df8496333c13ffe59ed80b8bc9f6",
+          "bytes": 74171
+        }
+      ],
+      "source_sha256": "08595b15f5796d33dec70c0938a5ad0291716f74325167c8a12132d5326e506d",
+      "modifications": [
+        "Baked source mesh scale into vertices, retained source +Z upright orientation.",
+        "Applied one shared XY centering, bottom-Z translation and radius/height normalization to visual and collision meshes.",
+        "Transformed explicit normals by inverse transpose; retained UV coordinates and face/UV indices unchanged.",
+        "Removed OBJ mtllib/usemtl directives: source MJCF materials and original texture bytes are used explicitly.",
+        "Retained only meshes/materials/textures referenced by source object geoms, excluding region helper and unused alternate collision data.",
+        "Collision meshes retain the original convex decomposition; volume is computed from the signed tetrahedral sum."
+      ]
+    }
+  }
+}

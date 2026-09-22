@@ -14,3 +14,6 @@ validate_scenes = "spd_envs.validate:main"
 
 [tool.setuptools.packages.find]
 include = ["spd_envs*"]
+
+[tool.setuptools.package-data]
+spd_envs = ["assets/**/*.json", "assets/**/*.obj", "assets/**/*.png"]

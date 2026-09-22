@@ -1,20 +1,24 @@
-"""Deterministic, contact-enabled procedural SPD scene assets.
+"""Deterministic fine-grained task assets with separate visual/contact layers.
 
-Figure 4 / Appendix A.4 specify object counts and actions, not CAD dimensions.
-Dimensions below are engineering choices in metres, not paper measurements.
-Vessels use closed, faceted circular walls; their interiors and handle holes are
-real collision-free space, not visual meshes over solid collision proxies.
+Geometry follows task affordances, not unreported paper CAD dimensions.
+ABC-derived bottles use local textured meshes and convex collision pieces;
+other objects retain physically open cavities under detailed visual surfaces.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import math
 from typing import Any, Iterable
 import xml.etree.ElementTree as ET
 
 import numpy as np
+
+from .abc_assets import BOTTLE_VARIANTS, bottle_geometry
+from .visual_details import build_visual_details
+
+GEOMETRY_REVISION = "detailed-scenes-v1"
 
 # The Tianji home forearms pass through a 0.90 m tabletop; 0.75 m provides
 # physical clearance while retaining the verified robot home configuration.
@@ -33,7 +37,7 @@ CUP_BOTTOM_RADIUS = 0.028
 CUP_HEIGHT = 0.090
 CUP_WALL = 0.002
 CUP_NEST_STEP = 0.018
-VESSEL_SIDES = 24
+VESSEL_SIDES = 32
 BOTTLE_RADIUS = 0.035
 BOTTLE_HEIGHT = 0.180
 BIN_INNER_SIZE = (0.350, 0.250, 0.150)
@@ -52,8 +56,8 @@ CLASS_IDS = {
     "domino": 10,
 }
 # Dry-contact engineering defaults, not measured material-pair coefficients.
-# Wood blocks and the ceramic disk use 650 / 2400 kg/m^3 respectively.
-# Vessel masses are nominal empty-object masses; collision shapes stay unchanged.
+# Wood mass uses 650 kg/m^3; nominal plate mass retains the reference disk estimate.
+# Empty-vessel masses are assigned to collision proxies; visuals contribute no mass.
 _MATERIALS = {
     "jenga_block": ("wood", (0.40, 0.60)),
     "letter_block": ("wood", (0.40, 0.60)),
@@ -61,7 +65,10 @@ _MATERIALS = {
     "mug": ("ceramic", (0.25, 0.40)),
     "plate": ("ceramic", (0.25, 0.40)),
     "cup": ("plastic", (0.20, 0.35)),
-    "bottle": ("glass", (0.15, 0.30)),
+    "bottle": ("plastic", (0.30, 0.55)),
+    "rack": ("coated_metal", (0.35, 0.55)),
+    "mug_tree": ("wood", (0.40, 0.60)),
+    "bin": ("plastic", (0.30, 0.55)),
 }
 
 BASE_MASSES = {
@@ -70,60 +77,47 @@ BASE_MASSES = {
     "plate": 2400.0 * math.pi * PLATE_RADIUS ** 2 * PLATE_THICKNESS,
     "cup": 0.030,
     "mug": 0.220,
-    "bottle": 0.250,
+    "bottle": 0.060,
     "rack": 0.500,
     "mug_tree": 0.400,
     "bin": 0.800,
     "domino": 650.0 * 0.060 * 0.012 * 0.070,
 }
 
-# Five-by-seven glyphs for the eight physical blocks in the spelling task.
-_SPELLING_WORD = "ROBOTICS"
-_LETTER_PIXELS = {
-    "R": (30, 17, 17, 30, 20, 18, 17),
-    "O": (14, 17, 17, 17, 17, 17, 14),
-    "B": (30, 17, 17, 30, 17, 17, 30),
-    "T": (31, 4, 4, 4, 4, 4, 4),
-    "I": (31, 4, 4, 4, 4, 4, 31),
-    "C": (14, 17, 16, 16, 16, 17, 14),
-    "S": (15, 16, 16, 14, 1, 1, 30),
+# Cohesive, seeded appearance choices instead of arbitrary RGB hues.
+_PALETTES = {
+    "wood": ((0.76, 0.60, 0.40), (0.66, 0.48, 0.29), (0.84, 0.70, 0.49)),
+    "ceramic": ((0.91, 0.89, 0.82), (0.27, 0.46, 0.53), (0.70, 0.39, 0.28)),
+    "plastic": ((0.25, 0.43, 0.48), (0.74, 0.40, 0.28), (0.78, 0.69, 0.42)),
+    "coated_metal": ((0.24, 0.27, 0.29), (0.56, 0.58, 0.58), (0.83, 0.81, 0.74)),
 }
+_SPELLING_WORD = "ROBOTICS"
 
 
-def _label_spelling_blocks(worldbody: ET.Element, seed: int) -> dict[str, str]:
-    """Paint readable letters on all six faces without changing collision/mass."""
-    letters = np.random.default_rng(seed).permutation(list(_SPELLING_WORD))
-    labels = {}
-    # Outward normal, horizontal and upward axes for each face.
-    faces = (
-        ((0, 0, 1), (1, 0, 0), (0, 1, 0)),
-        ((0, 0, -1), (-1, 0, 0), (0, 1, 0)),
-        ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
-        ((-1, 0, 0), (0, -1, 0), (0, 0, 1)),
-        ((0, 1, 0), (-1, 0, 0), (0, 0, 1)),
-        ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
-    )
-    for body, letter in zip(worldbody.findall("body"), letters, strict=True):
-        labels[body.attrib["name"]] = str(letter)
-        for face, (normal, horizontal, vertical) in enumerate(faces):
-            half_size = [0.00015 if axis else 0.0019 for axis in normal]
-            for row, bits in enumerate(_LETTER_PIXELS[letter]):
-                for column in range(5):
-                    if not bits & (1 << (4 - column)):
-                        continue
-                    position = [
-                        normal[axis] * (LETTER_BLOCK_SIZE[axis] / 2 + 0.0001)
-                        + horizontal[axis] * (column - 2) * 0.004
-                        + vertical[axis] * (3 - row) * 0.004
-                        for axis in range(3)
-                    ]
-                    ET.SubElement(
-                        body, "geom", name=f"{body.attrib['name']}_letter_{face}_{row}_{column}",
-                        type="box", pos=" ".join(map(str, position)),
-                        size=" ".join(map(str, half_size)), rgba="0.025 0.025 0.025 1",
-                        contype="0", conaffinity="0", mass="0", group="2",
-                    )
-    return labels
+def _letters_for(objects: tuple[ObjectSpec, ...], seed: int, task: str) -> dict[str, str]:
+    blocks = [obj for obj in objects if obj.class_name == "letter_block"]
+    if not blocks:
+        return {}
+    rng = np.random.default_rng(seed)
+    if task == "spelling":
+        letters = rng.permutation(list(_SPELLING_WORD))
+    elif task == "vowel_consonant_sort":
+        letters = np.concatenate((
+            rng.choice(list("AEIOU"), 4, replace=False),
+            rng.choice(list("BCDFGHJKLMNPQRSTVWXYZ"), len(blocks) - 4, replace=False),
+        ))
+        rng.shuffle(letters)
+    else:
+        letters = rng.choice(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), len(blocks), replace=False)
+    return {obj.name: str(letter) for obj, letter in zip(blocks, letters, strict=True)}
+
+
+def _geom_attributes(geom: dict[str, Any]) -> dict[str, str]:
+    return {
+        key: " ".join(f"{value:.12g}" for value in item)
+        if isinstance(item, (tuple, list, np.ndarray)) else str(item)
+        for key, item in geom.items() if key != "volume"
+    }
 
 
 class SceneResetError(RuntimeError):
@@ -145,9 +139,15 @@ class ObjectSpec:
     assembled: bool
     color_rgb: tuple[float, float, float]
     geoms: tuple[dict[str, Any], ...]
+    asset_id: str
+    appearance_variant: int
+    visual_geoms: tuple[dict[str, Any], ...] = ()
+    asset_definitions: tuple[dict[str, Any], ...] = ()
+    asset_provenance: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
         values = asdict(self)
+        values["collision_debug_rgb"] = values.pop("color_rgb")
         if self.class_name in _MATERIALS:
             material, friction_range = _MATERIALS[self.class_name]
             values.update(material=material, friction_range=list(friction_range),
@@ -165,6 +165,7 @@ class SceneBuildResult:
     objects: tuple[ObjectSpec, ...]
     sampled_values: dict[str, Any]
     worldbody: ET.Element
+    assets: ET.Element = field(default_factory=lambda: ET.Element("asset"))
     table_near_edge_m: float = 0.10
 
     def with_table_near_edge(self, distance: float) -> SceneBuildResult:
@@ -189,12 +190,16 @@ class SceneBuildResult:
             if child.tag == "body":
                 # Fixtures and painted labels move with their parent bodies.
                 position = positions[child.attrib["name"]]
-            elif child.tag == "geom" and child.attrib.get("name") == "scene_table":
+            elif child.tag in {"geom", "light"} and "pos" in child.attrib:
                 x, y, z = map(float, child.attrib["pos"].split())
                 position = (x + delta, y, z)
             else:
                 continue
             child.set("pos", " ".join(map(str, position)))
+        table_appearance = result.sampled_values.get("appearance", {}).get("table")
+        if table_appearance is not None:
+            table_appearance["center_xyz_m"][0] += delta
+            table_appearance["near_edge_m"] = distance
         return replace(result, objects=objects, table_near_edge_m=distance)
 
     def manifest(self) -> dict[str, Any]:
@@ -206,6 +211,7 @@ class SceneBuildResult:
             "scene": self.scene,
             "task": self.task,
             "seed": self.seed,
+            "geometry_revision": GEOMETRY_REVISION,
             "candidate": self.candidate,
             "table": {
                 "top_z_m": center[2] + size[2] / 2,
@@ -222,7 +228,12 @@ class SceneBuildResult:
         }
 
     def xml_string(self) -> str:
-        return ET.tostring(self.worldbody, encoding="unicode")
+        """Return standalone MJCF including the local visual and collision assets."""
+        root = ET.Element("mujoco", model=f"{self.scene}_{self.task}")
+        ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast")
+        ET.SubElement(root, "size", nuser_geom="2")
+        root.extend((deepcopy(self.assets), deepcopy(self.worldbody)))
+        return ET.tostring(root, encoding="unicode")
 
 
 def _quat_z(yaw: float) -> tuple[float, float, float, float]:
@@ -271,7 +282,33 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
     if class_name in {"jenga_block", "letter_block", "domino"}:
         return (_box_geom(f"{prefix}_geom", size, rgba=rgba),)
     if class_name == "plate":
-        return (_cylinder_geom(f"{prefix}_geom", size[0], size[1], rgba=rgba),)
+        radius, thickness = size
+        base_thickness = 0.003
+        inner_radius = radius * 0.72
+        geoms = [_cylinder_geom(
+            f"{prefix}_well", inner_radius, base_thickness,
+            pos=(0, 0, -thickness / 2 + base_thickness / 2), rgba=rgba,
+        )]
+        rise = thickness - base_thickness
+        slope = math.atan2(rise, radius - inner_radius)
+        middle_radius = (radius + inner_radius) / 2
+        # A shallow sloped ring has an open upper well, not a solid disk hull.
+        for index in range(VESSEL_SIDES):
+            angle = index * math.tau / VESSEL_SIDES
+            half = angle / 2
+            cy, sy = math.cos(-slope / 2), math.sin(-slope / 2)
+            panel = _box_geom(
+                f"{prefix}_rim_{index:02d}",
+                (math.hypot(radius - inner_radius, rise),
+                 2 * radius * math.tan(math.pi / VESSEL_SIDES),
+                 base_thickness * math.cos(slope)),
+                pos=(middle_radius * math.cos(angle), middle_radius * math.sin(angle), 0),
+                rgba=rgba,
+            )
+            panel["quat"] = (math.cos(half) * cy, -math.sin(half) * sy,
+                             math.cos(half) * sy, math.sin(half) * cy)
+            geoms.append(panel)
+        return tuple(geoms)
     if class_name in {"cup", "mug"}:
         radius, height, wall = size[:3]
         bottom_radius = CUP_BOTTOM_RADIUS if class_name == "cup" else radius
@@ -290,8 +327,8 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
             # Closed oval handle in the x-z plane: about 26 x 42 mm clear.
             # Its inner edge joins the mug wall; no bar crosses the opening.
             center_x, center_z = radius + 0.015, height * 0.55
-            for index in range(16):
-                a, b = index * math.tau / 16, (index + 1) * math.tau / 16
+            for index in range(32):
+                a, b = index * math.tau / 32, (index + 1) * math.tau / 32
                 geoms.append(_capsule_geom(
                     f"{prefix}_handle_{index:02d}", 0.004,
                     (center_x + 0.019 * math.cos(a), 0.0, center_z + 0.025 * math.sin(a),
@@ -323,13 +360,6 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
             geoms.append(_capsule_geom(f"{prefix}_branch_{index}", 0.005, (0.0, 0.0, z - 0.035, x, y, z), rgba=rgba))
             geoms.append(_capsule_geom(f"{prefix}_tip_{index}", 0.005, (x, y, z, x, y, z + 0.018), rgba=rgba))
         return tuple(geoms)
-    if class_name == "bottle":
-        radius, height = size[:2]
-        return (
-            _cylinder_geom(f"{prefix}_body", radius, height * 0.76, pos=(0.0, 0.0, height * 0.38), rgba=rgba),
-            _cylinder_geom(f"{prefix}_shoulder", radius * 0.78, height * 0.10, pos=(0.0, 0.0, height * 0.81), rgba=rgba),
-            _cylinder_geom(f"{prefix}_neck", radius * 0.42, height * 0.14, pos=(0.0, 0.0, height * 0.93), rgba=rgba),
-        )
     if class_name == "bin":
         width, depth, height = size[:3]
         wall = 0.008
@@ -344,6 +374,11 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
 
 
 def _geom_volume(geom: dict[str, Any]) -> float:
+    if geom["type"] == "mesh":
+        volume = float(geom["volume"])
+        if not math.isfinite(volume) or volume <= 0:
+            raise SceneResetError("collision mesh must have a finite positive volume")
+        return volume
     size = geom["size"]
     if geom["type"] == "box":
         return 8.0 * math.prod(size)
@@ -427,6 +462,12 @@ class ProceduralSceneBuilder:
         assembly_jitter = rng.uniform(-0.015, 0.015, size=2)
         for instance_id, (class_name, base_position, assembled) in enumerate(self._layout(), start=1):
             size = self._size(class_name)
+            asset_id = f"procedural/{class_name}/{GEOMETRY_REVISION}"
+            asset_definitions, visual_geoms, provenance = (), (), {}
+            if class_name == "bottle":
+                asset_id = str(rng.choice(BOTTLE_VARIANTS))
+                size = (size[0] * float(rng.uniform(0.92, 1.08)),
+                        size[1] * float(rng.uniform(0.90, 1.12)))
             jitter = assembly_jitter if assembled else rng.uniform(-0.015, 0.015, size=2)
             yaw = 0.0 if assembled else float(rng.uniform(-math.radians(15.0), math.radians(15.0)))
             if self.scene == "jenga" and self.task == "playing":
@@ -435,23 +476,44 @@ class ProceduralSceneBuilder:
             if not (WORKSPACE_X[0] <= position[0] <= WORKSPACE_X[1] and WORKSPACE_Y[0] <= position[1] <= WORKSPACE_Y[1]):
                 raise SceneResetError(f"object {instance_id} leaves workspace")
             mass = BASE_MASSES[class_name] * float(rng.uniform(0.8, 1.2))
+            if class_name == "bottle":
+                mass *= (size[0] / BOTTLE_RADIUS) ** 2 * size[1] / BOTTLE_HEIGHT
             friction_range = _MATERIALS.get(class_name, ("", (0.6, 1.2)))[1]
             friction = float(rng.uniform(*friction_range))
-            color = tuple(float(value) for value in (0.15 + 0.75 * rng.random(3)))
+            appearance_variant = int(rng.integers(0, 3))
+            palette = _PALETTES[_MATERIALS[class_name][0]]
+            color = tuple(float(value) for value in palette[appearance_variant])
+            if class_name == "bottle":
+                assets, geoms, visual_geoms, provenance = bottle_geometry(asset_id, size, instance_id)
+                asset_definitions = tuple({"tag": element.tag, "attributes": dict(element.attrib)} for element in assets)
+            else:
+                geoms = _geoms_for(class_name, size, color, instance_id)
             objects.append(ObjectSpec(
                 instance_id=instance_id, class_id=CLASS_IDS[class_name], class_name=class_name,
                 name=f"{self.scene}_{self.task}_object_{instance_id:03d}", position=position,
                 yaw_rad=yaw, size=tuple(float(value) for value in size), mass_kg=mass,
                 friction=friction, contact_group="hand_object", assembled=assembled,
-                color_rgb=color, geoms=_geoms_for(class_name, size, color, instance_id),
+                color_rgb=color, geoms=geoms, asset_id=asset_id,
+                appearance_variant=appearance_variant, visual_geoms=visual_geoms,
+                asset_definitions=asset_definitions, asset_provenance=provenance,
             ))
         return tuple(objects)
 
     @staticmethod
     def _worldbody(objects: Iterable[ObjectSpec]) -> ET.Element:
         worldbody = ET.Element("worldbody")
+        ET.SubElement(worldbody, "light", name="scene_key_light", directional="true",
+                      pos="0.20 -0.40 1.90", dir="0.20 0.25 -1",
+                      ambient="0.03 0.03 0.03", diffuse="0.38 0.37 0.35",
+                      specular="0.10 0.10 0.10")
+        ET.SubElement(worldbody, "light", name="scene_fill_light", directional="true",
+                      pos="0.80 0.40 1.50", dir="-0.20 -0.30 -1",
+                      diffuse="0.12 0.14 0.16", specular="0.03 0.03 0.03", castshadow="false")
+        ET.SubElement(worldbody, "geom", name="scene_visual_floor", type="plane",
+                      pos="0 0 -0.002", size="3 3 .01", group="2", mass="0",
+                      contype="0", conaffinity="0", rgba="0.26 0.29 0.30 1", user="0 0")
         # Near edge x=0.10 clears the base column (x=0.0825 at tabletop height).
-        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.50 0 {TABLE_Z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="2", rgba="0.30 0.26 0.22 1")
+        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.50 0 {TABLE_Z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="3", rgba="0.30 0.26 0.22 1")
         for obj in objects:
             body = ET.SubElement(worldbody, "body", name=obj.name,
                 pos=" ".join(f"{value:.12g}" for value in obj.position),
@@ -463,22 +525,14 @@ class ProceduralSceneBuilder:
             volumes = tuple(_geom_volume(geom) for geom in obj.geoms)
             total_volume = sum(volumes)
             for geom, volume in zip(obj.geoms, volumes):
-                attributes = {
-                    "name": geom["name"], "type": geom["type"],
-                    "contype": "1", "conaffinity": "1", "group": "2",
-                    "user": f"{obj.instance_id} {obj.class_id}",
-                    "mass": f"{obj.mass_kg * volume / total_volume:.12g}",
-                    "friction": f"{obj.friction:.12g} 0.005 0.0001",
-                    "solref": "0.004 1", "solimp": "0.95 0.99 0.001",
-                    "rgba": " ".join(f"{value:.12g}" for value in geom["rgba"]),
-                }
-                if obj.class_name in _MATERIALS:
-                    # Otherwise MuJoCo's equal-priority max rule lets the
-                    # unchanged table/robot friction mask the material value.
-                    attributes["priority"] = "1"
-                for key in ("size", "pos", "fromto", "quat"):
-                    if key in geom:
-                        attributes[key] = " ".join(f"{value:.12g}" for value in geom[key])
+                attributes = _geom_attributes(geom)
+                attributes.update(
+                    contype="1", conaffinity="1", group="3",
+                    user=f"{obj.instance_id} {obj.class_id}",
+                    mass=f"{obj.mass_kg * volume / total_volume:.12g}",
+                    friction=f"{obj.friction:.12g} 0.005 0.0001",
+                    solref="0.004 1", solimp="0.95 0.99 0.001", priority="1",
+                )
                 ET.SubElement(body, "geom", **attributes)
         return worldbody
 
@@ -491,18 +545,38 @@ class ProceduralSceneBuilder:
             try:
                 objects = self._sample_candidate(rng, candidate)
                 worldbody = self._worldbody(objects)
-                labels = (
-                    _label_spelling_blocks(worldbody, self.seed)
-                    if (self.scene, self.task) == ("spelling_blocks", "spelling") else None
-                )
+                labels = _letters_for(objects, self.seed, self.task)
+                assets, visuals, table_visuals, appearance = build_visual_details(objects, self.seed, labels)
+                ET.SubElement(assets, "texture", name="scene_sky", type="skybox", builtin="gradient",
+                              rgb1="0.64 0.71 0.76", rgb2="0.93 0.94 0.92", width="256", height="1536")
+                for obj in objects:
+                    for definition in obj.asset_definitions:
+                        ET.SubElement(assets, definition["tag"], **definition["attributes"])
+                    body = worldbody.find(f"body[@name='{obj.name}']")
+                    for geom in (*visuals.get(obj.name, ()), *obj.visual_geoms):
+                        attributes = _geom_attributes(geom)
+                        attributes.update(contype="0", conaffinity="0", mass="0", group="2",
+                                          user=f"{obj.instance_id} {obj.class_id}")
+                        ET.SubElement(body, "geom", **attributes)
+                for geom in table_visuals:
+                    attributes = _geom_attributes(geom)
+                    attributes.update(contype="0", conaffinity="0", mass="0", group="2", user="0 0")
+                    ET.SubElement(worldbody, "geom", **attributes)
                 # Test the actual contact geometry, including hollow interiors.
                 # Bounding boxes cannot distinguish valid nesting from overlap.
                 root = ET.Element("mujoco")
+                ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast")
                 ET.SubElement(root, "size", nuser_geom="2")
+                root.append(assets)
                 root.append(worldbody)
                 model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
                 contact_gate(model, mujoco.MjData(model), {item.name for item in objects})
                 values = {
+                    "geometry_revision": GEOMETRY_REVISION,
+                    "appearance": appearance,
+                    "object_asset_ids": {str(item.instance_id): item.asset_id for item in objects},
+                    "object_appearance_variants": {str(item.instance_id): item.appearance_variant for item in objects},
+                    "bottle_scale_ranges": {"radius": [0.92, 1.08], "height": [0.90, 1.12]},
                     "mass_multiplier_range": [0.8, 1.2],
                     "friction_range_by_class": {
                         item.class_name: list(_MATERIALS.get(item.class_name, ("", (0.6, 1.2)))[1])
@@ -518,15 +592,16 @@ class ProceduralSceneBuilder:
                     "object_sizes_m": {str(item.instance_id): list(item.size) for item in objects},
                     "object_masses_kg": {str(item.instance_id): item.mass_kg for item in objects},
                     "object_friction": {str(item.instance_id): item.friction for item in objects},
-                    "object_colors": {str(item.instance_id): list(item.color_rgb) for item in objects},
+                    "collision_debug_colors": {str(item.instance_id): list(item.color_rgb) for item in objects},
                 }
-                if labels is not None:
+                if labels:
+                    values["object_letters"] = labels
+                if self.scene == "spelling_blocks" and self.task == "spelling":
                     values["target_word"] = _SPELLING_WORD
                     values["prompt"] = f"Spell {_SPELLING_WORD} with the letter blocks."
-                    values["object_letters"] = labels
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
-                return SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody)
+                return SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody, assets=assets)
             except SceneResetError as exc:
                 last_error = exc
         raise SceneResetError(

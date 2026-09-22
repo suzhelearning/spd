@@ -1,0 +1,134 @@
+{
+  "revision": "spd-original-surface-art-1",
+  "provenance": "Original SPD procedural wood/glaze and hand-authored A-Z stroke artwork; no external image or font assets.",
+  "generator": {
+    "file": "generate_textures.py",
+    "sha256": "126d1160dd847e653723ed67bff272e2d8c9c08c13ebcbada19418bc37e529eb"
+  },
+  "files": [
+    {
+      "file": "wood_0.png",
+      "sha256": "318f8481d20e43c6be50f94e2af3c904688565d66fc9b34727efd7acc50a09a6"
+    },
+    {
+      "file": "wood_1.png",
+      "sha256": "631c2a5bb7360c7730c5a68cab39d7c4e3bbdbdcfc560e684cf4b7c5d4b87015"
+    },
+    {
+      "file": "wood_2.png",
+      "sha256": "8896c4f81c8f025d5051161bbccd3590f766bc37b8270c419a2f9fdf2759c98e"
+    },
+    {
+      "file": "glaze_0.png",
+      "sha256": "8601b716bb13fd055c554cddcd8ed55b45363904fb14daadaacfead9eb185864"
+    },
+    {
+      "file": "glaze_1.png",
+      "sha256": "f7fd14b014a3efb1a0c618788c50afdeda46bad71b8b809375049c10514cd0dc"
+    },
+    {
+      "file": "letter_A.png",
+      "sha256": "7c72e38de3098fb6f90b56a8a34613e3d0815f8256c46975728bfa1b0c645d8d"
+    },
+    {
+      "file": "letter_B.png",
+      "sha256": "fc1ac97f49b6de781ed803f19003e9c8426f0ad0f27e98aec12ee79aa5aba55f"
+    },
+    {
+      "file": "letter_C.png",
+      "sha256": "881f79142529a6666407570d917f4ad2bcbdf4ad102f007a83295afd064c7343"
+    },
+    {
+      "file": "letter_D.png",
+      "sha256": "2c8d58e2e869724c38603b8f5bd2c4729d7f22c41cff753bb646639bf9942012"
+    },
+    {
+      "file": "letter_E.png",
+      "sha256": "95b507298e5a49ed8117a9c9a7bd374e0adea90f33f182af15575c6c3f441b61"
+    },
+    {
+      "file": "letter_F.png",
+      "sha256": "fe508baf683fd36052f83a767ec7f201f50eff8ec0c291a3f93a7be8d4e99bd3"
+    },
+    {
+      "file": "letter_G.png",
+      "sha256": "f5ec1dc534c373ddef3b0c2ae7afc9a8136edb85234ad6373d242ef93777d1f0"
+    },
+    {
+      "file": "letter_H.png",
+      "sha256": "daa33fb91ce2f6517b810059719242d1c7f29f907c2ef7fa65076f309ed40fae"
+    },
+    {
+      "file": "letter_I.png",
+      "sha256": "7dd9cd4a6cfad08f62ff85252ea6eb578edd43ce58b270a4a6799f969ba02e8b"
+    },
+    {
+      "file": "letter_J.png",
+      "sha256": "fa6afdcd9534d9f8ee3a374b03323bd355b53890c41b578f1a8558cd2f4c2cd7"
+    },
+    {
+      "file": "letter_K.png",
+      "sha256": "1952fa499ae886093a6431e1d668d42780da143a15d9aeb244ff523d2732ecf9"
+    },
+    {
+      "file": "letter_L.png",
+      "sha256": "e107026900414d71856fecfa99b5322090ab44fd792a7f1d6ef4fbe3b5dff2c8"
+    },
+    {
+      "file": "letter_M.png",
+      "sha256": "5f85fb0f0a570969e23f5ac462ac1c04a6f6930b1090124b802a802f5b1456b9"
+    },
+    {
+      "file": "letter_N.png",
+      "sha256": "6cffafa03ad9f88812c2b0b5315a894a4e1a22c1a18b2ce7d95df92dd0c72609"
+    },
+    {
+      "file": "letter_O.png",
+      "sha256": "ad7cc0487bff197222b8bae37edb00de07635b1876caec9fec928e7dac49e5b5"
+    },
+    {
+      "file": "letter_P.png",
+      "sha256": "296ef52d5710532c438086c623a96ccf6f9460af63b6cb6a874d6e95500aa3c6"
+    },
+    {
+      "file": "letter_Q.png",
+      "sha256": "667b46689e3299b9bea9fa1243bddcc321c7df5d9d0dff6f66bfbabea493107b"
+    },
+    {
+      "file": "letter_R.png",
+      "sha256": "a9f166cb8ae3864c5e1b61dc5c33d98ffaef5573b1e367a1e1f99bb745c3c42e"
+    },
+    {
+      "file": "letter_S.png",
+      "sha256": "ae4b744d728e94f708629a06c97511697388289f5649c1e1e66f410afd5463c1"
+    },
+    {
+      "file": "letter_T.png",
+      "sha256": "f6a796a5e5db2f920190cf44e423c43e9581deb2e076fc2ffa948bd95a6e97f1"
+    },
+    {
+      "file": "letter_U.png",
+      "sha256": "07053c6954090e066c35527678f49b3dc6cd38fa41768b696766f55fc4086a9e"
+    },
+    {
+      "file": "letter_V.png",
+      "sha256": "9d6f41492b58c225d9b216c8ce45d2e128fa2ed35677bae78f8c5f53b5eb406e"
+    },
+    {
+      "file": "letter_W.png",
+      "sha256": "c18032a02ab2715b9324ef5c2c6ab98a9f0ff41822e79e8790b50e112d50cc9b"
+    },
+    {
+      "file": "letter_X.png",
+      "sha256": "61e0089a53dcd2a1a93d4b66f8b61493ca35346443cc1e82e0e94300af1d7b22"
+    },
+    {
+      "file": "letter_Y.png",
+      "sha256": "7a7ac21d6cc2900e4d0fd337cb311a7ba8b2653f8285cb1c7a6925d94a13a633"
+    },
+    {
+      "file": "letter_Z.png",
+      "sha256": "49cb34b1c41eb377ab10f78c0e7c303254e25b98fed0a8621a00514966205ec6"
+    }
+  ]
+}

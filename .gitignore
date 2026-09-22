@@ -33,16 +33,15 @@ data/**/*.mp4
 data/spd_vr/episodes/
 data/spd_vr/checkpoints/
 
-# User-provided samples: keep contract, not payloads
-data/pico_hand_samples/raw/*
-!data/pico_hand_samples/raw/.gitkeep
+# Legacy input payloads are not part of this workspace
+data/pico_hand_samples/
 
 # Calibration and benchmark outputs
 **/calibration_user/
 **/calibration_local/
 **/benchmark_results/
 **/checkpoints/
-src/description/tianji_wuji2/collision_cache/
+src/tianji_wuji2/tianji_wuji2/collision_cache/
 .ros/
 
 # Future long-duration collection

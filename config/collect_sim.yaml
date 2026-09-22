@@ -1,10 +1,10 @@
-version: 1
+version: 2
 # Relative paths are resolved from this configuration file, not the shell cwd.
 # Root only: each episode is stored under its local start date (YYYYMMDD/).
 data_dir: /data/TianjiSim
-# Independent actual-state and RGB streams; positive integer divisors of 480 Hz.
-state_rate_hz: 120
-camera_rate_hz: 30
+# Whole-scene trajectories: one sample per eight 480 Hz physics ticks.
+# Online collection does not render or store training images.
+state_rate_hz: 60
 # Existing asynchronous writer remains bounded. Overflow preserves a partial file.
 writer_queue_size: 256
 # 0 = unlimited. Positive limit counts state samples, not received commands.

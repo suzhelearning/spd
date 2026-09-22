@@ -60,4 +60,4 @@ set +u
 source "$repo_root/.ros/install/setup.sh"
 set -u
 export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS=""
-exec python -m spd_vr.simulation.ros_viewer "${viewer_args[@]}"
+exec python -m simulation.ros_viewer "${viewer_args[@]}"

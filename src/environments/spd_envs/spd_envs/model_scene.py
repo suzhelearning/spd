@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -43,12 +44,25 @@ def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_m
         if not source.is_file():
             raise SceneResetError(f"base model resource not found: {source}")
         element.set("file", str(source))
+    assets = root.find("asset")
+    if assets is None:
+        assets = ET.SubElement(root, "asset")
+    asset_names = {(child.tag, child.get("name")) for child in assets}
+    for child in result.assets:
+        identity = (child.tag, child.get("name"))
+        if identity in asset_names:
+            raise SceneResetError(f"duplicate scene asset: {identity}")
+        asset_names.add(identity)
+        assets.append(deepcopy(child))
+    # Scene lighting is shared with standalone previews; keep one lighting rig.
+    for light in list(worldbody.findall("light")):
+        worldbody.remove(light)
     for child in result.worldbody:
         if child.tag == "body" and any(existing.attrib.get("name") == child.attrib.get("name") for existing in worldbody.findall("body")):
             raise SceneResetError(f"duplicate scene body: {child.attrib.get('name')}")
         if child.tag == "geom" and any(existing.attrib.get("name") == child.attrib.get("name") for existing in worldbody.findall("geom")):
             raise SceneResetError(f"duplicate scene geom: {child.attrib.get('name')}")
-        worldbody.append(child)
+        worldbody.append(deepcopy(child))
     output_model.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(output_model, encoding="utf-8", xml_declaration=True)
     try:
