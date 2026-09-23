@@ -164,7 +164,7 @@ def _provenance() -> dict[str, Any]:
             "textures": json.loads((_TEXTURES / "manifest.json").read_text())}
 
 
-def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, str]
+def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, str], *, table_top_z: float
                          ) -> tuple[ET.Element, dict[str, tuple[dict, ...]], tuple[dict, ...], dict]:
     """Build render-only meshes/materials and record every appearance selection.
 
@@ -354,17 +354,19 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
         mesh = _rounded_box(asset, table_prefix + "_" + part + "_mesh", dimensions, bevel)
         table.append(_geom(table_prefix + "_" + part, 0, 0, "mesh", mesh=mesh, pos=pos, material=material))
 
-    table_box("top", (.8, 1.10, .05), (.50, 0, .725), table_wood, .0018)
+    table_box("top", (.8, 1.10, .05), (.50, 0, table_top_z - .025), table_wood, .0018)
     for side in (-1, 1):
-        table_box(f"edge_x_{side}", (.001, 1.096, .037), (.50 + side * .3995, 0, .721), table_edge, .0002)
-        table_box(f"edge_y_{side}", (.796, .001, .037), (.50, side * .5495, .721), table_edge, .0002)
-        table_box(f"apron_y_{side}", (.71, .026, .065), (.50, side * .478, .6675), table_edge)
-        table_box(f"apron_x_{side}", (.026, .95, .065), (.50 + side * .325, 0, .6675), table_edge)
+        table_box(f"edge_x_{side}", (.001, 1.096, .037), (.50 + side * .3995, 0, table_top_z - .029), table_edge, .0002)
+        table_box(f"edge_y_{side}", (.796, .001, .037), (.50, side * .5495, table_top_z - .029), table_edge, .0002)
+        table_box(f"apron_y_{side}", (.71, .026, .065), (.50, side * .478, table_top_z - .0825), table_edge)
+        table_box(f"apron_x_{side}", (.026, .95, .065), (.50 + side * .325, 0, table_top_z - .0825), table_edge)
         for end in (-1, 1):
             x, y = .50 + side * .325, end * .478
-            table_box(f"leg_{side}_{end}", (.038, .038, .674), (x, y, .363), table_metal, .003)
+            leg_height = table_top_z - .05 - .026
+            table_box(f"leg_{side}_{end}", (.038, .038, leg_height),
+                      (x, y, .026 + leg_height / 2), table_metal, .003)
             table_box(f"foot_{side}_{end}", (.042, .042, .026), (x, y, .013), table_metal, .003)
     manifest = {**_provenance(), "seed": int(seed), "objects": variants,
-                "table": {"wood_texture": table_wood_index, "center_xyz_m": [.50, 0, .725],
+                "table": {"wood_texture": table_wood_index, "center_xyz_m": [.50, 0, table_top_z - .025],
                           "near_edge_m": .10, "visual_legs_only": True}}
     return asset, result, tuple(table), manifest

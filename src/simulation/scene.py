@@ -12,26 +12,6 @@ import time
 from typing import Any
 
 
-def resolve_table_distance(value: float | None) -> float:
-    """Resolve the near table edge before starting the simulation viewer."""
-    if value is not None:
-        if not math.isfinite(value) or value < 0:
-            raise ValueError("桌沿距离必须是有限的非负数（单位 m）。")
-        return value
-    if not sys.stdin.isatty():
-        raise ValueError("带桌子的场景需要交互输入；非交互启动请指定 --table-distance METRES。")
-    while True:
-        print(
-            "桌子近侧边缘距离机器人底座原点多少 m？沿 +X 测量，"
-            "桌上物体一起平移，进入后固定。[回车 = 0.10 m]\n> ",
-            end="", file=sys.stderr, flush=True,
-        )
-        selected = input().strip()
-        try:
-            distance = float(selected) if selected else 0.10
-            return resolve_table_distance(distance)
-        except ValueError:
-            print("请输入有限的非负数，例如 0.25；Ctrl+C 取消。", file=sys.stderr)
 
 
 class EpisodeTasks:
@@ -56,9 +36,9 @@ class EpisodeTasks:
 
 def build_selected_scene(
     scene: str | None, task: str | None, seed: int,
-    table_near_edge_m: float | None = 0.10,
+    table_near_edge_m: float | None = None,
 ) -> Any:
-    """Accept a task and table edge; None prompts only for procedural scenes."""
+    """Build a seeded scene; an explicit table distance overrides its sampled one."""
     from spd_envs.registry import get_task
 
     if task is not None and "/" in task:
@@ -74,8 +54,8 @@ def build_selected_scene(
         spec = get_task(scene, task)
     except KeyError as exc:
         raise ValueError(str(exc)) from exc
-    distance = resolve_table_distance(table_near_edge_m)
-    return spec.build(seed).with_table_near_edge(distance)
+    result = spec.build(seed)
+    return result if table_near_edge_m is None else result.with_table_near_edge(table_near_edge_m)
 
 
 def frame_scene(camera: Any, options: Any, table_near_edge_m: float = 0.10) -> None:
@@ -95,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scene", help="Scene name when --task is not qualified")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--table-distance", type=float,
-                        help="Base origin to near table edge along +X, metres; prompts when omitted")
+                        help="Override sampled near table edge distance along +X, metres (default: random 0.10–0.30)")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--duration", type=float, help="Simulation seconds; required in headless mode")
     parser.add_argument("--output", type=Path, help="Save SCENE/TASK/seed_N/{scene.xml,scene_manifest.json,final.png,state.json}")
@@ -121,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     if result is None:
         parser.error("spd-scene requires a procedural task")
-    print(f"桌沿 X={result.table_near_edge_m:g} m；桌面与物体已同步定位，进入后固定。", flush=True)
+    print(f"桌高={result.manifest()['table']['top_z_m']:.3f} m；桌沿 X={result.table_near_edge_m:.3f} m；本场景固定。", flush=True)
 
     import mujoco
     import numpy as np

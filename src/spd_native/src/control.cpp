@@ -336,10 +336,7 @@ void run_loop(const py::object &app) {
         const auto now = monotonic_now_ns();
         if (!collection.attr("physics_paused").cast<bool>() &&
             !app.attr("_task_change_pending")().cast<bool>()) {
-            const py::object applied = executor.attr("apply_pending")(py::arg("now_ns") = now);
-            if (!applied.is_none()) {
-                app.attr("_last_applied") = applied;
-            }
+            executor.attr("apply_pending")(py::arg("now_ns") = now);
             // Revalidate at the integration boundary: revocation or held arms
             // must not advance physics or append even a single uncontrolled sample.
             if (!executor.attr("mailbox").attr("enabled").cast<bool>() ||

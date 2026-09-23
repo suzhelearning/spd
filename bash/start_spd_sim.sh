@@ -14,7 +14,7 @@ table_distance=""
 usage() {
   echo "Usage: start_spd_sim.sh [--headless] [--collection-config PATH] [--output PATH] [--max-frames N] [--scene NAME] [--task SCENE/TASK] [--seed N] [--table-distance METRES]"
   echo "Runs only the MuJoCo subscriber in this terminal; Ctrl+C exits."
-  echo "Table scenes ask for the robot-base-to-near-edge distance unless --table-distance is given."
+  echo "Table scenes sample height 0.70–0.80 m and near-edge distance 0.10–0.30 m; --table-distance overrides distance."
   echo "Omit --task for a random task at startup and after each completed episode."
   echo "--scene restricts random selection; --scene hardware_free disables task scenes; --seed reproduces the sequence."
   echo "Upstream: r calibrates, s starts following. SPD: r starts/checkpoints; s pauses/resumes."

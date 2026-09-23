@@ -20,9 +20,10 @@ from .visual_details import build_visual_details
 
 GEOMETRY_REVISION = "detailed-scenes-v1"
 
-# The Tianji home forearms pass through a 0.90 m tabletop; 0.75 m provides
-# physical clearance while retaining the verified robot home configuration.
+# Reference height for task layouts; each build shifts them to its sampled tabletop.
 TABLE_Z = 0.75
+TABLE_HEIGHT_RANGE = (0.70, 0.80)
+TABLE_DISTANCE_RANGE = (0.10, 0.30)
 WORKSPACE_CENTER = (0.45, 0.0, TABLE_Z)
 WORKSPACE_X = (0.10, 0.80)
 WORKSPACE_Y = (-0.55, 0.55)
@@ -219,7 +220,7 @@ class SceneBuildResult:
                 "size_xyz_m": size,
                 "near_edge_x_m": self.table_near_edge_m,
                 "translation_x_m": translation,
-                "workspace_center": [WORKSPACE_CENTER[0] + translation, *WORKSPACE_CENTER[1:]],
+                "workspace_center": [WORKSPACE_CENTER[0] + translation, WORKSPACE_CENTER[1], center[2] + size[2] / 2],
                 "x_range_m": [value + translation for value in WORKSPACE_X],
                 "y_range_m": list(WORKSPACE_Y),
             },
@@ -456,7 +457,7 @@ class ProceduralSceneBuilder:
             "bin": BIN_INNER_SIZE,
         }[class_name]
 
-    def _sample_candidate(self, rng: np.random.Generator, candidate: int) -> tuple[ObjectSpec, ...]:
+    def _sample_candidate(self, rng: np.random.Generator, candidate: int, table_top_z: float) -> tuple[ObjectSpec, ...]:
         objects: list[ObjectSpec] = []
         # Move complete assemblies together so nesting and tower contacts survive
         # randomization. No per-object jitter on mechanically assembled parts.
@@ -473,7 +474,8 @@ class ProceduralSceneBuilder:
             yaw = 0.0 if assembled else float(rng.uniform(-math.radians(15.0), math.radians(15.0)))
             if self.scene == "jenga" and self.task == "playing":
                 yaw = ((instance_id - 1) // 3 % 2) * math.pi * 0.5
-            position = (float(base_position[0] + jitter[0]), float(base_position[1] + jitter[1]), float(base_position[2]))
+            position = (float(base_position[0] + jitter[0]), float(base_position[1] + jitter[1]),
+                        float(base_position[2] + (table_top_z - TABLE_Z)))
             if not (WORKSPACE_X[0] <= position[0] <= WORKSPACE_X[1] and WORKSPACE_Y[0] <= position[1] <= WORKSPACE_Y[1]):
                 raise SceneResetError(f"object {instance_id} leaves workspace")
             mass = BASE_MASSES[class_name] * float(rng.uniform(0.8, 1.2))
@@ -501,7 +503,7 @@ class ProceduralSceneBuilder:
         return tuple(objects)
 
     @staticmethod
-    def _worldbody(objects: Iterable[ObjectSpec]) -> ET.Element:
+    def _worldbody(objects: Iterable[ObjectSpec], table_top_z: float) -> ET.Element:
         worldbody = ET.Element("worldbody")
         ET.SubElement(worldbody, "light", name="scene_key_light", directional="true",
                       pos="0.20 -0.40 1.90", dir="0.20 0.25 -1",
@@ -514,7 +516,7 @@ class ProceduralSceneBuilder:
                       pos="0 0 -0.002", size="3 3 .01", group="2", mass="0",
                       contype="0", conaffinity="0", rgba="0.26 0.29 0.30 1", user="0 0")
         # Near edge x=0.10 clears the base column (x=0.0825 at tabletop height).
-        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.50 0 {TABLE_Z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="3", rgba="0.30 0.26 0.22 1")
+        ET.SubElement(worldbody, "geom", name="scene_table", type="box", pos=f"0.50 0 {table_top_z - 0.025:.12g}", size="0.40 0.55 0.025", contype="1", conaffinity="1", group="3", rgba="0.30 0.26 0.22 1")
         for obj in objects:
             body = ET.SubElement(worldbody, "body", name=obj.name,
                 pos=" ".join(f"{value:.12g}" for value in obj.position),
@@ -541,13 +543,17 @@ class ProceduralSceneBuilder:
         import mujoco
 
         rng = np.random.default_rng(self.seed)
+        table_top_z = float(rng.uniform(*TABLE_HEIGHT_RANGE))
+        table_distance = float(rng.uniform(*TABLE_DISTANCE_RANGE))
         last_error: Exception | None = None
         for candidate in range(MAX_RESET_CANDIDATES):
             try:
-                objects = self._sample_candidate(rng, candidate)
-                worldbody = self._worldbody(objects)
+                objects = self._sample_candidate(rng, candidate, table_top_z)
+                worldbody = self._worldbody(objects, table_top_z)
                 labels = _letters_for(objects, self.seed, self.task)
-                assets, visuals, table_visuals, appearance = build_visual_details(objects, self.seed, labels)
+                assets, visuals, table_visuals, appearance = build_visual_details(
+                    objects, self.seed, labels, table_top_z=table_top_z,
+                )
                 ET.SubElement(assets, "texture", name="scene_sky", type="skybox", builtin="gradient",
                               rgb1="0.64 0.71 0.76", rgb2="0.93 0.94 0.92", width="256", height="1536")
                 for obj in objects:
@@ -576,6 +582,9 @@ class ProceduralSceneBuilder:
                 values = {
                     "geometry_revision": GEOMETRY_REVISION,
                     "appearance": appearance,
+                    "table_top_z_m": table_top_z,
+                    "table_height_range_m": list(TABLE_HEIGHT_RANGE),
+                    "table_distance_range_m": list(TABLE_DISTANCE_RANGE),
                     "object_asset_ids": {str(item.instance_id): item.asset_id for item in objects},
                     "object_appearance_variants": {str(item.instance_id): item.appearance_variant for item in objects},
                     "bottle_scale_ranges": {"radius": [0.92, 1.08], "height": [0.90, 1.12]},
@@ -603,7 +612,8 @@ class ProceduralSceneBuilder:
                     values["prompt"] = f"Spell {_SPELLING_WORD} with the letter blocks."
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
-                return SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody, assets=assets)
+                result = SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody, assets=assets)
+                return result.with_table_near_edge(table_distance)
             except SceneResetError as exc:
                 last_error = exc
         raise SceneResetError(

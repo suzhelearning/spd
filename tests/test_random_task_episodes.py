@@ -25,7 +25,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.app = RosViewerApp(argparse.Namespace(
             collection_config=config_root() / "collect_sim.yaml", output=Path(directory.name),
-            max_frames=0, scene="cups", task=None, seed=7, table_distance=.2,
+            max_frames=0, scene="cups", task=None, seed=7, table_distance=None,
             headless=True,
         ))
         self.sequence = 0
@@ -79,7 +79,13 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.assertIsNone(self.app.collection.snapshot()["checkpoint_frames"])
         self.assertFalse(self.app.collection.request("start")[0])
         self.assertEqual(self.app.collection.task_manifest["seed"], self.app.args.seed)
-        self.assertEqual(self.app.plant.scene_manifest["table"]["near_edge_x_m"], .2)
+        from simulation.scene import build_selected_scene
+
+        expected = build_selected_scene(self.app.args.scene, self.app.args.task, self.app.args.seed)
+        table = self.app.plant.scene_manifest["table"]
+        self.assertEqual(table, expected.manifest()["table"])
+        self.assertNotEqual(table["near_edge_x_m"], old.scene_manifest["table"]["near_edge_x_m"])
+        self.assertEqual(self.app.args.table_distance, table["near_edge_x_m"])
         return old
 
     def test_save_and_discard_rotate_but_pause_and_failed_save_do_not(self):

@@ -5,7 +5,6 @@ private kinematics scratch state, but never advances the simulation.
 """
 
 from __future__ import annotations
-from collections import deque
 import threading
 
 from typing import Any, Callable, Mapping, Sequence
@@ -38,12 +37,8 @@ class ViewerWindow:
         self._closed = False
         self._shutdown_sent = False
         self.hud: dict[str, Any] = {}
-        self._joint_figure: Any | None = None
-        self._joint_history: deque[tuple[float, float, float]] = deque(maxlen=300)
-        self._plot_joint = ""
         self._task_text: tuple[str, str] | None = None
         self._task_header_key: tuple[Any, ...] | None = None
-        self._task_header_height = 0
         self._task_fonts: dict[int, Any] = {}
         self._hand_ghost_target: np.ndarray | None = None
         self._hand_ghost: Any | None = None
@@ -106,6 +101,14 @@ class ViewerWindow:
             and getattr(thread, "_target", None) is mujoco_viewer._launch_internal
         ), None)
         try:
+            import mujoco
+
+            # MuJoCo 3.12's image blit inherits 3D depth/lighting state. The
+            # text pass initializes 2D rendering even with no text; its empty
+            # backing rectangle is covered by our full-width header image.
+            self._window.set_texts((
+                mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT, "", "",
+            ))
             self._sync_task_header()
             self._sync_hand_ghost()
         except Exception:
@@ -119,8 +122,6 @@ class ViewerWindow:
         if isinstance(key, int):
             if key in (27, 256):
                 return "escape"
-            if key in (297, 298):
-                return "f8" if key == 297 else "f9"
             if 0 <= key < 128:
                 return chr(key).lower()
         return str(key).strip().lower().removeprefix("key_")
@@ -136,8 +137,6 @@ class ViewerWindow:
                 self._joint_control("q")
             elif self._shutdown is not None:
                 self._shutdown()
-        elif self._joint_control is not None and name in {"f8", "f9"}:
-            self._joint_control(name)
         elif self._recording_control is not None:
             operation = KEY_COMMANDS.get(name)
             if operation is not None:
@@ -192,7 +191,7 @@ class ViewerWindow:
         if viewport is None or viewport.width <= 0 or viewport.height <= 0:
             return
         bounds = (viewport.left, viewport.bottom, viewport.width, viewport.height)
-        key = (*self._task_text, self._hand_ghost_label, *bounds)
+        key = (*self._task_text, self._hand_ghost_label, tuple(self.hud.items()), *bounds)
         if key == self._task_header_key:
             return
         from PIL import Image, ImageDraw
@@ -202,18 +201,30 @@ class ViewerWindow:
         padding = min(12, max(0, (width - 1) // 4))
         content_width = max(1, width - 2 * padding)
         title, goal = self._task_text
-        # Keep the normal header readable; shrink only for unusually small windows.
-        size = min(24, content_width)
+        gap = min(24, content_width // 12) if self.hud else 0
+        task_width = max(1, int((content_width - gap) * .45)) if self.hud else content_width
+        status_width = max(1, content_width - task_width - gap)
+        status_x = padding + task_width + gap
+        # Keep both columns readable, wrapping independently as the window shrinks.
+        size = min(24, task_width, status_width) if self.hud else min(24, task_width)
         while True:
             title_font = self._task_font(size)
             goal_font = self._task_font(max(1, size - 4))
-            title_lines = self._wrap_task_text("任务：" + title, title_font, content_width)
-            goal_lines = self._wrap_task_text("目标：" + goal, goal_font, content_width)
+            title_lines = self._wrap_task_text("任务：" + title, title_font, task_width)
+            goal_lines = self._wrap_task_text("目标：" + goal, goal_font, task_width)
             if self._hand_ghost_label:
-                goal_lines.extend(self._wrap_task_text("虚影：" + self._hand_ghost_label, goal_font, content_width))
+                goal_lines.extend(self._wrap_task_text("虚影：" + self._hand_ghost_label, goal_font, task_width))
             title_step = sum(title_font.getmetrics()) + 2
             goal_step = sum(goal_font.getmetrics()) + 2
-            height = 2 * padding + len(title_lines) * title_step + len(goal_lines) * goal_step
+            status_lines = [
+                (line, (255, 160, 140) if label == "异常" else (240, 244, 250))
+                for label, value in self.hud.items()
+                for line in self._wrap_task_text(f"{label}：{value}", goal_font, status_width)
+            ]
+            height = 2 * padding + max(
+                len(title_lines) * title_step + len(goal_lines) * goal_step,
+                len(status_lines) * goal_step,
+            )
             if height <= available_height or size == 1:
                 break
             size -= 1
@@ -227,42 +238,23 @@ class ViewerWindow:
             for line in lines:
                 draw.text((padding, y), line, font=font, fill=color, anchor="lt")
                 y += step
+        if self.hud:
+            divider_x = padding + task_width + gap // 2
+            draw.line((divider_x, padding, divider_x, height - padding), fill=(64, 76, 91))
+            y = padding
+            for line, color in status_lines:
+                draw.text((status_x, y), line, font=goal_font, fill=color, anchor="lt")
+                y += goal_step
         # Handle.set_images flips top-down Pillow RGB rows for OpenGL itself.
         self._window.set_images((
             mujoco.MjrRect(viewport.left, viewport.bottom + available_height - height, width, height),
             np.asarray(image),
         ))
         self._task_header_key = key
-        self._task_header_height = height
-        if self.hud:
-            self.update_hud(self.hud)
 
     def update_hud(self, values: Mapping[str, Any]) -> None:
         self.hud = dict(values)
-        if self._window is None:
-            return
-        set_texts = getattr(self._window, "set_texts", None)
-        if set_texts is not None:
-            try:
-                import mujoco
-            except ImportError:  # pragma: no cover - visible mode requires MuJoCo
-                return
-            text = "\n".join(f"{key}: {value}" for key, value in self.hud.items())
-            # Reserve the task strip in both text columns. A conservative row
-            # height also leaves room when the viewer uses smaller UI fonts.
-            spacer = "\n" * ((self._task_header_height + 14) // 15)
-            set_texts(
-                (
-                    mujoco.mjtFontScale.mjFONTSCALE_150,
-                    mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                    spacer + "SPD Simulation",
-                    spacer + text,
-                )
-            )
-            return
-        update = getattr(self._window, "update_hud", None)
-        if update is not None:
-            update(self.hud)
+        self._sync_task_header()
 
     def set_hand_ghost(self, position_rad: Sequence[float] | None, *, label: str = "") -> None:
         """Draw only the Wuji2 hands at a canonical 54-joint target.
@@ -321,39 +313,6 @@ class ViewerWindow:
             else:
                 self._hand_ghost.draw(scene, target)
         self._hand_ghost_dirty = False
-
-    def update_joint_plot(self, name: str, seconds: float, target: float, actual: float) -> None:
-        """Plot an applied target against measured simulation position, in radians."""
-        if self._window is None or not callable(getattr(self._window, "set_figures", None)):
-            return
-        import mujoco
-
-        if self._joint_figure is None:
-            self._joint_figure = mujoco.MjvFigure()
-            self._joint_figure.xlabel = "Host elapsed time (s)"
-            self._joint_figure.flg_legend = 1
-            self._joint_figure.linename[0] = b"Applied target (rad)"
-            self._joint_figure.flg_extend = 0
-            self._joint_figure.linename[1] = b"Actual qpos (rad)"
-            self._joint_figure.linergb[0] = (1.0, 0.65, 0.15)
-            self._joint_figure.linergb[1] = (0.15, 0.8, 1.0)
-        if name != self._plot_joint:
-            self._joint_history.clear()
-            self._plot_joint = name
-        self._joint_history.append((seconds, target, actual))
-        figure = self._joint_figure
-        figure.title = name
-        history = np.asarray(self._joint_history)
-        figure.range[0] = (history[0, 0], max(history[-1, 0], history[0, 0] + 0.1))
-        low, high = float(np.min(history[:, 1:])), float(np.max(history[:, 1:]))
-        margin = max(0.02, (high - low) * 0.1)
-        figure.range[1] = (low - margin, high + margin)
-        count = len(history)
-        for index in range(2):
-            figure.linepnt[index] = count
-            figure.linedata[index, :2 * count:2] = history[:, 0]
-            figure.linedata[index, 1:2 * count:2] = history[:, index + 1]
-        self._window.set_figures((mujoco.MjrRect(0, 0, 560, 220), figure))
 
     def sync(self, now_ns: int | None = None) -> None:
         del now_ns
