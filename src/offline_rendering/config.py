@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 
 CAMERA_NAMES = ("top", "left_wrist", "right_wrist")
+RENDER_SCHEMA_VERSION = 2
+INSTANCE_POLICY = "task_manifest_ids_else_table_minus3_else_group1_robot_else_environment"
 
 
 def _integer(value: Any, name: str, minimum: int, maximum: int | None = None) -> None:

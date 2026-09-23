@@ -15,6 +15,7 @@ numpy = "*"
 mujoco = "3.12.*"
 scipy = ">=1.11.0"
 trimesh = ">=4.8,<5"
+pyglfw = ">=2.10.2,<3"
 
 [feature.sim.pypi-dependencies]
 spd = { path = ".", editable = true }
@@ -31,6 +32,7 @@ spd-envs-check = "validate_scenes"
 spd-model = "python -m description.model_compiler.cli --urdf src/tianji_wuji2/tianji_wuji2/assets/tianji_wuji2.urdf --output src/tianji_wuji2/tianji_wuji2/generated --cache src/tianji_wuji2/tianji_wuji2/collision_cache --raw-collisions"
 spd-scene = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m simulation.scene"
 spd-render = "python -m offline_rendering"
+spd-augment = "python -m training_data"
 ros-build-interfaces = "pixi run -e ros-jazzy bash -lc 'colcon build --base-paths src/interfaces/tianji_spd_interfaces --build-base .ros/build --install-base .ros/install --merge-install'"
 spd-native-build = "pixi run -e ros-jazzy bash bash/build_native.sh"
 spd-test = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m unittest discover -s tests -v"

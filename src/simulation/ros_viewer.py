@@ -11,15 +11,13 @@ import signal
 import sys
 import time
 
-import numpy as np
-
 from data_collector.config import load_collection_config
 from data_collector.ros_control import CollectionRosControl
 from data_collector.session import CollectionSession
 from interfaces.keyboard_control import ControlTerminal
 from interfaces.ros_joint_command import TOPIC
 from simulation.viewer import PlantController
-from simulation.scene import EpisodeTasks, build_selected_scene, frame_scene
+from simulation.scene import EpisodeTasks, build_selected_scene
 from simulation.viewer_window import ViewerWindow
 from description.model_builder import config_root
 
@@ -112,8 +110,8 @@ class RosViewerApp:
         args.task = scene_result.task if scene_result is not None else "external_joint_command"
         if scene_result is not None:
             args.table_distance = scene_result.table_near_edge_m
-        self.task_title, self.task_goal = self._task_text(args.scene, args.task)
         self.plant = self._create_plant(scene_result)
+        self.task_title, self.task_goal = self._task_text(args.scene, args.task, self.plant.scene_manifest)
         self.window = self._create_window(self.plant)
         self.executor = RosJointCommandExecutor(self.plant)
         self.collection = CollectionSession(
@@ -125,16 +123,17 @@ class RosViewerApp:
         self.three_key = ThreeKeyControl(self.collection, self.executor)
 
     @staticmethod
-    def _task_text(scene: str, task: str) -> tuple[str, str]:
+    def _task_text(scene: str, task: str, scene_manifest: dict | None) -> tuple[str, str]:
         if scene == "hardware_free":
             return "自由仿真", "等待外部关节命令，无预设物体操作任务。"
         from spd_envs.registry import get_task
 
         spec = get_task(scene, task)
-        return spec.title_zh, spec.goal_zh
+        sampled = (scene_manifest or {}).get("sampled_values", {})
+        return spec.title_zh, sampled.get("task_goal_zh", spec.goal_zh)
 
     def _task_manifest(self, plant, scene: str, task: str, seed: int) -> dict:
-        title, goal = self._task_text(scene, task)
+        title, goal = self._task_text(scene, task, plant.scene_manifest)
         return {
             **(plant.scene_manifest or {}),
             "task": task, "scene": scene, "seed": seed,
@@ -151,7 +150,7 @@ class RosViewerApp:
 
     def _create_window(self, plant):
         window = ViewerWindow(
-            plant.model, plant.data, headless=self.args.headless,
+            plant.model, plant.data, headless=self.args.headless, split_view=True,
             shutdown=self.request_stop, recording_control=self.recording_control,
             joint_control=self.joint_control,
         )
@@ -160,20 +159,7 @@ class RosViewerApp:
 
     def _open_window(self) -> None:
         self.window.open()
-        handle = self.window.window
-        if handle is not None:
-            with handle.lock():
-                if self.plant.scene_manifest is not None:
-                    frame_scene(handle.cam, handle.opt, self.args.table_distance)
-                else:
-                    visual_positions = self.plant.data.geom_xpos[self.plant.model.geom_group == 1]
-                    low, high = visual_positions.min(axis=0), visual_positions.max(axis=0)
-                    handle.cam.lookat[:] = (low + high) * 0.5
-                    handle.cam.distance = max(2.0, float(np.linalg.norm(high - low)) * 2.0)
-                    handle.cam.azimuth = 135.0
-                    handle.cam.elevation = -20.0
-                    handle.opt.geomgroup[0] = 0
-                    handle.opt.geomgroup[3] = 0
+        self.window.frame(self.args.table_distance if self.plant.scene_manifest is not None else None)
 
     def _announce_task(self) -> None:
         mode = "每段随机" if self._task_sequence.randomized else "固定任务"
@@ -214,7 +200,7 @@ class RosViewerApp:
         self.collection_ros.executor = executor
         self.args.scene, self.args.task, self.args.seed = scene, task, seed
         self.args.table_distance = result.table_near_edge_m
-        self.task_title, self.task_goal = self._task_text(scene, task)
+        self.task_title, self.task_goal = self._task_text(scene, task, plant.scene_manifest)
         self.window = self._create_window(plant)
         self.three_key = ThreeKeyControl(self.collection, executor)
         self.three_key.notice = "Next task ready; r starts a new episode and checkpoint 0"

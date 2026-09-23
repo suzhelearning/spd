@@ -90,19 +90,19 @@ class HandGhost:
         self._templates = tuple(templates)
         self._installed_scene: Any | None = None
 
-    def draw(self, scene: Any, position_rad: np.ndarray) -> None:
-        """Update only the requested hand pose; caller holds the viewer lock."""
-        if len(self._templates) > scene.maxgeom:
-            raise RuntimeError("viewer user scene cannot hold the hand ghost geometry")
+    def draw(self, scene: Any, position_rad: np.ndarray, *, start_index: int = 0) -> None:
+        """Draw into a ghost-only scene or append after refreshed physical geometry."""
+        if start_index < 0 or start_index + len(self._templates) > scene.maxgeom:
+            raise RuntimeError("viewer scene cannot hold the hand ghost geometry")
         scratch = self._scratch
         scratch.qpos[:] = self.data.qpos
         scratch.qpos[self._qpos] = position_rad
         scratch.mocap_pos[:] = self.data.mocap_pos
         scratch.mocap_quat[:] = self.data.mocap_quat
         self._mujoco.mj_kinematics(self.model, scratch)
-        install = self._installed_scene is not scene
+        install = start_index != 0 or self._installed_scene is not scene
         for index, template in enumerate(self._templates):
-            geom = scene.geoms[index]
+            geom = scene.geoms[start_index + index]
             if install:
                 for name in self._SCALARS:
                     setattr(geom, name, getattr(template, name))
@@ -110,5 +110,5 @@ class HandGhost:
                     getattr(geom, name)[:] = getattr(template, name)
             geom.pos[:] = scratch.geom_xpos[template.objid]
             geom.mat[:] = scratch.geom_xmat[template.objid].reshape(3, 3)
-        scene.ngeom = len(self._templates)
+        scene.ngeom = start_index + len(self._templates)
         self._installed_scene = scene

@@ -14,7 +14,19 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
-REVISION = "spd-original-surface-art-1"
+REVISION = "spd-original-surface-art-2"
+LETTER_FACE_RGB = (248, 238, 213)
+# Repeated in alphabet order so letter identity has a stable, reproducible ink.
+LETTER_INKS = (
+    ("red", (209, 39, 43)),
+    ("blue", (30, 88, 191)),
+    ("green", (22, 135, 65)),
+    ("orange", (222, 104, 15)),
+    ("violet", (128, 54, 171)),
+    ("teal", (0, 132, 147)),
+    ("magenta", (191, 40, 116)),
+    ("gold", (173, 126, 0)),
+)
 # Normalized five-by-seven drawing coordinates, not a bitmap font.
 STROKES = {
     "A": [[(0, 7), (2.5, 0), (5, 7)], [(1, 4.5), (4, 4.5)]],
@@ -69,10 +81,10 @@ def main() -> None:
         Image.fromarray(image).save(path)
         files.append(path)
     # Supersampling produces smooth, readable letter strokes without micro-geoms.
-    for letter in string.ascii_uppercase:
-        image = Image.new("RGB", (1024, 1024), (238, 226, 198))
+    for index, letter in enumerate(string.ascii_uppercase):
+        image = Image.new("RGB", (1024, 1024), LETTER_FACE_RGB)
         draw = ImageDraw.Draw(image)
-        ink = (49, 70, 71)
+        _, ink = LETTER_INKS[index % len(LETTER_INKS)]
         draw.rounded_rectangle((45, 45, 979, 979), radius=50, outline=ink, width=24)
         for stroke in STROKES[letter]:
             points = [(220 + px * 116, 135 + py * 105) for px, py in stroke]
@@ -86,6 +98,19 @@ def main() -> None:
         "revision": REVISION,
         "provenance": "Original SPD procedural wood/glaze and hand-authored A-Z stroke artwork; no external image or font assets.",
         "generator": {"file": Path(__file__).name, "sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+        "letter_art": {
+            "face_rgb": list(LETTER_FACE_RGB),
+            "ink_palette": [{"name": name, "rgb": list(rgb)} for name, rgb in LETTER_INKS],
+            "letters": {
+                letter: {
+                    "ink_name": LETTER_INKS[index % len(LETTER_INKS)][0],
+                    "ink_rgb": list(LETTER_INKS[index % len(LETTER_INKS)][1]),
+                    "file": f"letter_{letter}.png",
+                    "source": "hand-authored-strokes",
+                }
+                for index, letter in enumerate(string.ascii_uppercase)
+            },
+        },
         "files": [{"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in files],
     }
     (ROOT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

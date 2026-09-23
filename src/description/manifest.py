@@ -121,7 +121,7 @@ def resolve_model_addresses(
     *,
     allow_scene_dofs: bool = False,
 ) -> list[ManifestJoint]:
-    """Resolve robot addresses by name; optionally allow free scene bodies."""
+    """Resolve robot addresses by name; allow free or bounded sliding scene roots."""
     try:
         import mujoco
     except ImportError as exc:  # pragma: no cover
@@ -152,8 +152,22 @@ def resolve_model_addresses(
         extras = set(model_joint_ids) - set(expected_joints)
         for name in extras:
             joint_id = model_joint_ids[name]
-            if not name.endswith("_free") or model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_FREE:
+            kind = model.jnt_type[joint_id]
+            body_id = int(model.jnt_bodyid[joint_id])
+            body_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+            suffix = "free" if kind == mujoco.mjtJoint.mjJNT_FREE else "slide"
+            if (
+                kind not in (mujoco.mjtJoint.mjJNT_FREE, mujoco.mjtJoint.mjJNT_SLIDE)
+                or body_name is None or name != f"{body_name}_{suffix}"
+                or model.body_parentid[body_id] != 0
+            ):
                 raise ManifestError(f"unexpected non-scene joint: {name}")
+            if kind == mujoco.mjtJoint.mjJNT_SLIDE and (
+                not model.jnt_limited[joint_id]
+                or not all(math.isfinite(float(value)) for value in model.jnt_range[joint_id])
+                or model.jnt_range[joint_id, 0] >= model.jnt_range[joint_id, 1]
+            ):
+                raise ManifestError(f"scene slide joint must have finite bounds: {name}")
         if set(model_joint_names) - extras != set(expected_joints):
             raise ManifestError("model robot joint names differ from manifest")
     elif set(model_joint_names) != set(expected_joints):

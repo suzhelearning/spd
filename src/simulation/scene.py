@@ -117,14 +117,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     window = ViewerWindow(plant.model, plant.data, headless=args.headless)
     spec = get_task(result.scene, result.task)
-    window.set_task(spec.title_zh, spec.goal_zh)
+    goal = result.sampled_values.get("task_goal_zh", spec.goal_zh)
+    window.set_task(spec.title_zh, goal)
     summary: dict[str, Any] = {}
     try:
         window.open()
-        if window.window is not None:
-            with window.window.lock():
-                frame_scene(window.window.cam, window.window.opt, result.table_near_edge_m)
-        print(f"任务：{spec.title_zh}；目标：{spec.goal_zh}", flush=True)
+        window.frame(result.table_near_edge_m)
+        print(f"任务：{spec.title_zh}；目标：{goal}", flush=True)
         timestep = float(plant.model.opt.timestep)
         steps = None if args.duration is None else math.ceil(args.duration / timestep)
         start = time.monotonic()

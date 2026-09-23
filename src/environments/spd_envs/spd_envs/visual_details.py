@@ -16,14 +16,27 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
-GEOMETRY_REVISION = "spd-detailed-surfaces-1"
+GEOMETRY_REVISION = "surfaces-v2"
 _TEXTURES = Path(__file__).resolve().parent / "assets" / "detail_textures"
 _PALETTES = {
-    "cup": ((0.36, 0.55, 0.51), (0.70, 0.43, 0.31), (0.78, 0.65, 0.38), (0.38, 0.48, 0.60)),
+    "cup": ((.96, .06, .045), (.045, .76, .14), (.035, .24, .97), (1.0, .83, .015)),
     "mug": ((0.87, 0.88, 0.80), (0.40, 0.57, 0.53), (0.43, 0.51, 0.62), (0.74, 0.47, 0.35)),
     "plate": ((0.94, 0.92, 0.84), (0.82, 0.88, 0.83), (0.84, 0.87, 0.91)),
     "bin": ((0.27, 0.37, 0.39), (0.42, 0.48, 0.40), (0.55, 0.43, 0.33)),
 }
+_WOOD_CLASSES = frozenset({"jenga_block", "letter_block", "domino", "rack", "mug_tree", "cabinet", "drawer"})
+_WOOD_VARIANTS = 3
+
+
+def appearance_count(class_name: str) -> int:
+    """Number of selectable appearances; palette definitions are authoritative."""
+    if class_name in _PALETTES:
+        return len(_PALETTES[class_name])
+    if class_name in _WOOD_CLASSES:
+        return _WOOD_VARIANTS
+    if class_name == "bottle":
+        return 1  # The imported bottle supplies its own appearance.
+    raise ValueError(f"no appearance palette for {class_name!r}")
 
 
 def _numbers(values: Any) -> str:
@@ -169,7 +182,7 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
     """Build render-only meshes/materials and record every appearance selection.
 
     ``letters`` maps object names to uppercase A-Z labels. Object positions,
-    collision proxies and mass are intentionally neither read nor modified.
+    collision proxies and mass are never modified; fixture surfaces follow proxies.
     """
     asset = ET.Element("asset")
     result: dict[str, tuple[dict, ...]] = {}
@@ -181,7 +194,7 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
         variant = int(obj.appearance_variant)
         # Seeded choices are independent of iteration order and other classes.
         choice = int.from_bytes(hashlib.sha256(f"{seed}:{obj.instance_id}:{variant}".encode()).digest()[:4], "big")
-        wood_index = choice % 3
+        wood_index = variant % _WOOD_VARIANTS if obj.class_name in _WOOD_CLASSES else choice % _WOOD_VARIANTS
         wood_texture = _texture(asset, f"wood_{wood_index}.png")
         wood = _material(asset, prefix + "_wood", (1, 1, 1), texture=wood_texture, specular=.12, shininess=.1)
         metal = _material(asset, prefix + "_metal", (.38, .41, .40), specular=.75, shininess=.65)
@@ -220,7 +233,7 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
 
         kind = obj.class_name
         if kind in {"jenga_block", "letter_block", "domino"}:
-            box("body", obj.size, wood if kind != "domino" else glaze)
+            box("body", obj.size, wood)
             if kind == "letter_block":
                 label = letters[obj.name]
                 if len(label) != 1 or label not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
@@ -237,40 +250,36 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
                     ("bottom", (0, 0, -obj.size[2] / 2 - .000025), (0, 1, 0, 0), (obj.size[0] * .82, obj.size[1] * .82, .00005)),
                 ):
                     box("letter_" + side, dimensions, label_mat, pos=pos, quat=quat, bevel=.000008)
-                variants[obj.name] = {"letter": label}
-            elif kind == "domino":
-                width, depth, height = obj.size
-                pairs = ((1, 4), (2, 5), (3, 6), (4, 4), (2, 3), (5, 6), (0, 6))
-                pips = pairs[choice % len(pairs)]
-                dots = {0: (), 1: ((0, 0),), 2: ((-1, -1), (1, 1)),
-                        3: ((-1, -1), (0, 0), (1, 1)),
-                        4: ((-1, -1), (-1, 1), (1, -1), (1, 1)),
-                        5: ((-1, -1), (-1, 1), (0, 0), (1, -1), (1, 1)),
-                        6: ((-1, -1), (-1, 0), (-1, 1), (1, -1), (1, 0), (1, 1))}
-                for side in (-1, 1):
-                    box(f"divider_{side}", (width * .77, .0001, .0006), dark, pos=(0, side * (depth / 2 + .00004), 0), bevel=.00001)
-                    for half, count in enumerate(pips):
-                        for j, (x, z) in enumerate(dots[count]):
-                            add(f"pip_{side}_{half}_{j}", "cylinder", dark, size=(.0022, .000045),
-                                pos=(x * width * .23, side * (depth / 2 + .000045), (1 if half == 0 else -1) * height * .245 + z * height * .105),
-                                quat=(math.sqrt(.5), math.sqrt(.5), 0, 0))
-                variants[obj.name] = {"pips": list(pips)}
+                variants[obj.name] = {
+                    "letter": label,
+                    "letter_art": _provenance()["textures"]["letter_art"]["letters"][label],
+                }
         elif kind in {"cup", "mug"}:
-            radius, height, wall = obj.size[:3]
-            bottom = .028 if kind == "cup" else radius
-            roundover = min(wall * .24, .0007)
-            lathe("shell", ((0, 0), (bottom - roundover, 0), (bottom, roundover),
-                            (bottom, wall), (radius, height - roundover),
-                            (radius - roundover, height), (radius - wall + roundover, height),
-                            (radius - wall, height - roundover),
-                            (bottom - wall, wall + roundover), (bottom - wall - roundover, wall), (0, wall)), glaze)
+            if kind == "cup":
+                radius, height, wall, bottom, nest_step = obj.size
+                variants[obj.name] = {"bottom_radius_m": bottom, "nest_step_m": nest_step}
+            else:
+                radius, height, wall = obj.size
+                bottom = radius
+            # Revolve the contact panels' radial cross-section: their thickness
+            # is measured normal to the taper, not along the radius. The floor
+            # meets the inner wall at z=wall, without flattening the outer taper.
+            slope = math.atan2(radius - bottom, height)
+            radial_half_wall = wall / (2 * math.cos(slope))
+            outer_bottom = bottom - wall / 2 + radial_half_wall
+            outer_top_z = height - wall * math.sin(slope)
+            outer_top = outer_bottom + (radius - bottom) * outer_top_z / height
+            inner_top = radius - wall / 2 - radial_half_wall
+            inner_floor = bottom - wall / 2 - radial_half_wall + (radius - bottom) * wall / height
+            lathe("shell", ((0, 0), (outer_bottom, 0), (outer_top, outer_top_z),
+                            (inner_top, height), (inner_floor, wall), (0, wall)), glaze)
             ring("lip_accent", radius - wall * .5, height - wall * .24, wall * .22, accent)
             ring("foot", bottom - wall * .5, wall * .4, wall * .36, accent)
             if kind == "cup":
                 for index in range(3):
                     angle = index * math.tau / 3
-                    add(f"nest_stop_{index}", "cylinder", glaze, size=(.002, (.018 - wall) / 2),
-                        pos=(.023 * math.cos(angle), .023 * math.sin(angle), (.018 + wall) / 2))
+                    add(f"nest_stop_{index}", "cylinder", glaze, size=(wall, (nest_step - wall) / 2),
+                        pos=(bottom * .82 * math.cos(angle), bottom * .82 * math.sin(angle), (nest_step + wall) / 2))
                 # Molded lower strengthening bead remains inside the wall envelope.
                 bead_z = height * .15
                 bead_radius = bottom + (radius - bottom) * bead_z / height - wall * .2
@@ -290,31 +299,17 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
                            (radius * .70, well), (0, well)), glaze)
             ring("rim_glaze", radius * .97, high - .00012, .00012, accent)
             ring("well_glaze", radius * .715, well + .00006, .00009, accent)
-        elif kind == "rack":
+        elif kind in {"rack", "mug_tree", "cabinet", "drawer"}:
+            # Follow every load-bearing component, including open trays and
+            # separate drawer roots. Never span slots or openings with a shell.
             for index, source in enumerate(obj.geoms):
-                material = metal if source["type"] == "capsule" else wood
+                if kind in {"cabinet", "drawer"}:
+                    material = metal if "handle" in source["name"] else wood
+                elif kind == "rack":
+                    material = metal if source["type"] == "capsule" else wood
+                else:
+                    material = wood if "base" in source["name"] or "trunk" in source["name"] else metal
                 copy_shape(index, source, material)
-                if source["type"] == "capsule":
-                    x, y, z = source["fromto"][:3]
-                    add(f"peg_socket_{index}", "cylinder", dark, size=(.0065, .0018), pos=(x, y, z))
-            width, depth, _ = obj.size
-            for side in (-1, 1):
-                for end in (-1, 1):
-                    box(f"foot_{side}_{end}", (.014, .020, .003), dark,
-                        pos=(side * (width / 2 - .007), end * (depth / 2 - .014), .0015))
-                    add(f"screw_{side}_{end}", "cylinder", metal, size=(.0022, .00012),
-                        pos=(side * (width / 2 - .007), end * .065, .01605))
-        elif kind == "mug_tree":
-            lathe("base", ((0, 0), (.062, 0), (.068, .001), (.070, .004), (.070, .013),
-                           (.068, .017), (.064, .018), (0, .018)), wood)
-            for index, source in enumerate(obj.geoms):
-                if source["type"] == "cylinder":
-                    continue
-                copy_shape(index, source, wood if "trunk" in source["name"] else metal)
-            ring("base_trim", .0685, .013, .0008, dark)
-            for z in (.023, .147, .207):
-                add(f"trunk_collar_{round(z * 1000)}", "cylinder", metal, size=(.0105, .002), pos=(0, 0, z))
-            add("finial", "sphere", wood, size=(.0098,), pos=(0, 0, .290))
         elif kind == "bin":
             width, depth, height = obj.size[:3]
             wall = .008
@@ -342,7 +337,7 @@ def build_visual_details(objects: Sequence[Any], seed: int, letters: dict[str, s
                                                color_rgb=list(color))
 
     table_prefix = "scene_detail_table"
-    table_wood_index = int(seed) % 3
+    table_wood_index = int(seed) % _WOOD_VARIANTS
     table_wood = _material(asset, table_prefix + "_wood", (1, 1, 1),
                            texture=_texture(asset, f"wood_{table_wood_index}.png"), specular=.16, shininess=.12)
     table_edge = _material(asset, table_prefix + "_edge", (.36, .25, .16),

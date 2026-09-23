@@ -16,9 +16,9 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from .abc_assets import BOTTLE_VARIANTS, bottle_geometry
-from .visual_details import build_visual_details
+from .visual_details import appearance_count, build_visual_details
 
-GEOMETRY_REVISION = "detailed-scenes-v1"
+GEOMETRY_REVISION = "paper-aligned-scenes-v2"
 
 # Reference height for task layouts; each build shifts them to its sampled tabletop.
 TABLE_Z = 0.75
@@ -30,6 +30,7 @@ WORKSPACE_Y = (-0.55, 0.55)
 MAX_RESET_CANDIDATES = 32
 
 JENGA_BLOCK_SIZE = (0.075, 0.025, 0.015)
+DOMINO_SIZE = (0.025, 0.015, 0.075)
 LETTER_BLOCK_SIZE = (0.040, 0.040, 0.040)
 PLATE_RADIUS = 0.100
 PLATE_THICKNESS = 0.008
@@ -42,7 +43,19 @@ VESSEL_SIDES = 32
 BOTTLE_RADIUS = 0.035
 BOTTLE_HEIGHT = 0.180
 BIN_INNER_SIZE = (0.350, 0.250, 0.150)
-FIXTURE_CLASSES = frozenset({"rack", "mug_tree", "bin"})
+FIXTURE_CLASSES = frozenset({"rack", "mug_tree", "bin", "cabinet"})
+CABINET_SIZE = (0.260, 0.320, 0.426)
+DRAWER_SIZE = (0.238, 0.292, 0.085)
+DRAWER_FLOORS = (0.018, 0.154, 0.290)
+DRAWER_TRAVEL = 0.250
+CUP_PROFILES = (
+    (0.045, 0.090, 0.002, 0.028, 0.018),
+    (0.048, 0.096, 0.002, 0.029, 0.020),
+    (0.041, 0.082, 0.0018, 0.025, 0.017),
+)
+MUG_PROFILES = ((0.040, 0.090, 0.003), (0.036, 0.080, 0.0028), (0.044, 0.100, 0.0032))
+PLATE_PROFILES = ((0.100, 0.008), (0.090, 0.007), (0.110, 0.009))
+BIN_PROFILES = ((0.350, 0.250, 0.150), (0.310, 0.280, 0.170), (0.370, 0.230, 0.130))
 
 CLASS_IDS = {
     "jenga_block": 1,
@@ -55,6 +68,8 @@ CLASS_IDS = {
     "mug_tree": 8,
     "bin": 9,
     "domino": 10,
+    "cabinet": 11,
+    "drawer": 12,
 }
 # Dry-contact engineering defaults, not measured material-pair coefficients.
 # Wood mass uses 650 kg/m^3; nominal plate mass retains the reference disk estimate.
@@ -70,6 +85,8 @@ _MATERIALS = {
     "rack": ("coated_metal", (0.35, 0.55)),
     "mug_tree": ("wood", (0.40, 0.60)),
     "bin": ("plastic", (0.30, 0.55)),
+    "cabinet": ("wood", (0.40, 0.60)),
+    "drawer": ("wood", (0.35, 0.50)),
 }
 
 BASE_MASSES = {
@@ -82,7 +99,9 @@ BASE_MASSES = {
     "rack": 0.500,
     "mug_tree": 0.400,
     "bin": 0.800,
-    "domino": 650.0 * 0.060 * 0.012 * 0.070,
+    "domino": 650.0 * math.prod(DOMINO_SIZE),
+    "cabinet": 3.0,
+    "drawer": 0.45,
 }
 
 # Cohesive, seeded appearance choices instead of arbitrary RGB hues.
@@ -92,16 +111,16 @@ _PALETTES = {
     "plastic": ((0.25, 0.43, 0.48), (0.74, 0.40, 0.28), (0.78, 0.69, 0.42)),
     "coated_metal": ((0.24, 0.27, 0.29), (0.56, 0.58, 0.58), (0.83, 0.81, 0.74)),
 }
-_SPELLING_WORD = "ROBOTICS"
+SPELLING_WORDS = ("CAFE", "IMAGE", "ROBOTICS", "ROBOT", "TABLE", "CUP", "BLOCKS", "VISION")
 
 
-def _letters_for(objects: tuple[ObjectSpec, ...], seed: int, task: str) -> dict[str, str]:
+def _letters_for(objects: tuple[ObjectSpec, ...], seed: int, task: str, target_word: str) -> dict[str, str]:
     blocks = [obj for obj in objects if obj.class_name == "letter_block"]
     if not blocks:
         return {}
     rng = np.random.default_rng(seed)
     if task == "spelling":
-        letters = rng.permutation(list(_SPELLING_WORD))
+        letters = rng.permutation(list(target_word))
     elif task == "vowel_consonant_sort":
         letters = np.concatenate((
             rng.choice(list("AEIOU"), 4, replace=False),
@@ -145,6 +164,7 @@ class ObjectSpec:
     visual_geoms: tuple[dict[str, Any], ...] = ()
     asset_definitions: tuple[dict[str, Any], ...] = ()
     asset_provenance: dict[str, Any] = field(default_factory=dict)
+    joint: dict[str, Any] = field(default_factory=dict)
 
     def manifest(self) -> dict[str, Any]:
         values = asdict(self)
@@ -152,7 +172,7 @@ class ObjectSpec:
         if self.class_name in _MATERIALS:
             material, friction_range = _MATERIALS[self.class_name]
             values.update(material=material, friction_range=list(friction_range),
-                          nominal_mass_kg=BASE_MASSES[self.class_name],
+                          reference_mass_kg=BASE_MASSES[self.class_name],
                           material_parameter_source="engineering defaults; not calibrated")
         return values
 
@@ -313,17 +333,16 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
         return tuple(geoms)
     if class_name in {"cup", "mug"}:
         radius, height, wall = size[:3]
-        bottom_radius = CUP_BOTTOM_RADIUS if class_name == "cup" else radius
+        bottom_radius = size[3] if class_name == "cup" else radius
         geoms = _vessel_geoms(prefix, radius, bottom_radius, height, wall, rgba)
         if class_name == "cup":
-            # Three internal anti-jam feet support the next cup's flat bottom.
-            # A nest increment of 18 mm leaves radial clearance between walls;
-            # the feet, not an overlap exception, carry the nested stack.
+            # Three internal feet carry the next cup; tapered walls remain clear.
+            nest_step = size[4]
             for index in range(3):
                 angle = index * 2.0 * math.pi / 3.0
                 geoms.append(_cylinder_geom(
-                    f"{prefix}_nest_stop_{index}", 0.002, CUP_NEST_STEP - wall,
-                    pos=(0.023 * math.cos(angle), 0.023 * math.sin(angle), (CUP_NEST_STEP + wall) * 0.5), rgba=rgba,
+                    f"{prefix}_nest_stop_{index}", wall, nest_step - wall,
+                    pos=(bottom_radius * 0.82 * math.cos(angle), bottom_radius * 0.82 * math.sin(angle), (nest_step + wall) * 0.5), rgba=rgba,
                 ))
         else:
             # Closed oval handle in the x-z plane: about 26 x 42 mm clear.
@@ -355,12 +374,19 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
             _cylinder_geom(f"{prefix}_base", 0.070, 0.018, pos=(0.0, 0.0, 0.009), rgba=rgba),
             _capsule_geom(f"{prefix}_trunk", 0.010, (0.0, 0.0, 0.018, 0.0, 0.0, 0.290), rgba=rgba),
         ]
-        # Thin inclined hooks fit through the mug handle and rise at the tips.
+        # Tangential pegs cross the handle opening perpendicular to its plane.
+        # The radial branches stay behind the ring instead of piercing its rim.
         for index, angle in enumerate((0.0, math.pi, math.pi * 0.5, -math.pi * 0.5)):
             z = 0.185 if index < 2 else 0.245
-            x, y = 0.085 * math.cos(angle), 0.085 * math.sin(angle)
-            geoms.append(_capsule_geom(f"{prefix}_branch_{index}", 0.005, (0.0, 0.0, z - 0.035, x, y, z), rgba=rgba))
-            geoms.append(_capsule_geom(f"{prefix}_tip_{index}", 0.005, (x, y, z, x, y, z + 0.018), rgba=rgba))
+            radial = np.array((math.cos(angle), math.sin(angle)))
+            tangent = np.array((-math.sin(angle), math.cos(angle)))
+            start, end = 0.085 * radial - 0.028 * tangent, 0.085 * radial + 0.028 * tangent
+            geoms.append(_capsule_geom(f"{prefix}_branch_{index}", 0.005,
+                                      (0.0, 0.0, z - 0.035, *start, z), rgba=rgba))
+            geoms.append(_capsule_geom(f"{prefix}_hook_{index}", 0.004,
+                                      (*start, z, *end, z), rgba=rgba))
+            geoms.append(_capsule_geom(f"{prefix}_tip_{index}", 0.004,
+                                      (*end, z, *end, z + 0.014), rgba=rgba))
         return tuple(geoms)
     if class_name == "bin":
         width, depth, height = size[:3]
@@ -372,6 +398,40 @@ def _geoms_for(class_name: str, size: tuple[float, ...], color: tuple[float, flo
             _box_geom(f"{prefix}_y1", (width, wall, height), pos=(0.0, (depth + wall) * 0.5, wall + height * 0.5), rgba=rgba),
             _box_geom(f"{prefix}_y2", (width, wall, height), pos=(0.0, -(depth + wall) * 0.5, wall + height * 0.5), rgba=rgba),
         )
+    if class_name == "cabinet":
+        depth, width, height = size
+        wall = 0.010
+        geoms = [
+            _box_geom(f"{prefix}_back", (wall, width, height), pos=((depth - wall) / 2, 0, height / 2), rgba=rgba),
+            _box_geom(f"{prefix}_top", (depth, width, wall), pos=(0, 0, height - wall / 2), rgba=rgba),
+        ]
+        for side in (-1, 1):
+            geoms.append(_box_geom(f"{prefix}_side_{side}", (depth, wall, height),
+                                  pos=(0, side * (width - wall) / 2, height / 2), rgba=rgba))
+        # The slide guides carry drawer weight. A 1 mm running gap prevents
+        # redundant, immovable normal contacts between shelf and guided tray.
+        for level, floor in enumerate(DRAWER_FLOORS):
+            geoms.append(_box_geom(f"{prefix}_shelf_{level}", (depth, width - 2 * wall, wall),
+                                  pos=(0, 0, floor - 0.001 - wall / 2), rgba=rgba))
+        # Close the underside without filling the open-front drawer bays.
+        geoms.append(_box_geom(f"{prefix}_bottom", (depth, width, 0.008), pos=(0, 0, 0.004), rgba=rgba))
+        return tuple(geoms)
+    if class_name == "drawer":
+        depth, width, height = size
+        wall = 0.006
+        geoms = [_box_geom(f"{prefix}_floor", (depth, width, wall), pos=(0, 0, wall / 2), rgba=rgba)]
+        for side in (-1, 1):
+            geoms.append(_box_geom(f"{prefix}_side_{side}", (depth, wall, height - wall),
+                                  pos=(0, side * (width - wall) / 2, (height + wall) / 2), rgba=rgba))
+            geoms.append(_box_geom(f"{prefix}_end_{side}", (wall, width - 2 * wall, height - wall),
+                                  pos=(side * (depth - wall) / 2, 0, (height + wall) / 2), rgba=rgba))
+        handle_x, handle_z = -depth / 2 - 0.032, height * 0.62
+        geoms.append(_capsule_geom(f"{prefix}_handle_grip", 0.004,
+                                  (handle_x, -0.054, handle_z, handle_x, 0.054, handle_z), rgba=rgba))
+        for side in (-1, 1):
+            geoms.append(_capsule_geom(f"{prefix}_handle_mount_{side}", 0.004,
+                                      (-depth / 2, side * 0.054, handle_z, handle_x, side * 0.054, handle_z), rgba=rgba))
+        return tuple(geoms)
     raise ValueError(f"unknown procedural class: {class_name}")
 
 
@@ -397,6 +457,8 @@ class ProceduralSceneBuilder:
         self.scene = scene
         self.task = task
         self.seed = int(seed)
+        self.target_word = str(np.random.default_rng(self.seed).choice(SPELLING_WORDS))
+        self.layout_values: dict[str, Any] = {}
 
     def _layout(self) -> list[tuple[str, tuple[float, float, float], bool]]:
         scene, task = self.scene, self.task
@@ -412,18 +474,25 @@ class ProceduralSceneBuilder:
                 # floating layers that collapse before the operator can act.
                 return [("jenga_block", (0.24 + (i % 3) * 0.18, -0.15 + (i // 3) * 0.15, TABLE_Z + JENGA_BLOCK_SIZE[2] * 0.5), False) for i in range(9)]
             if task == "dominos":
-                return [("domino", (0.16 + (i % 5) * 0.12, -0.16 + (i // 5) * 0.12, TABLE_Z + 0.035), False) for i in range(9)]
+                return [("domino", (0.21 + (i % 3) * 0.18, -0.16 + (i // 3) * 0.15, TABLE_Z + DOMINO_SIZE[2] / 2), False) for i in range(9)]
             if task in {"handover_lr", "handover_rl"}:
                 return [("jenga_block", (0.45, 0.0, TABLE_Z + JENGA_BLOCK_SIZE[2] * 0.5), False)]
         if scene == "spelling_blocks":
-            if task == "spelling":
-                return [("letter_block", (0.27 + (i % 4) * 0.10, -0.045 + (i // 4) * 0.13, TABLE_Z + 0.02), False) for i in range(8)]
+            count = {"spelling": len(self.target_word), "sort_and_unload": 8,
+                     "pyramid": 6, "vowel_consonant_sort": 10}[task]
+            openings = (0.245, 0.165, 0.085) if task == "sort_and_unload" else (0.0, 0.0, 0.0)
+            layout = [("cabinet", (0.66, 0.0, TABLE_Z), True)]
+            layout.extend(("drawer", (0.66 - opening, 0.0, TABLE_Z + floor), True)
+                          for opening, floor in zip(openings, DRAWER_FLOORS, strict=True))
             if task == "sort_and_unload":
-                return [("letter_block", (0.22 + (i % 4) * 0.10, -0.20 + (i // 4) * 0.10, TABLE_Z + 0.02), False) for i in range(8)]
-            if task == "pyramid":
-                return [("letter_block", (0.30 + (i % 3) * 0.10, -0.10 + (i // 3) * 0.10, TABLE_Z + 0.02), False) for i in range(6)]
-            if task == "vowel_consonant_sort":
-                return [("letter_block", (0.22 + (i % 5) * 0.10, -0.18 + (i // 5) * 0.10, TABLE_Z + 0.02), False) for i in range(10)]
+                layout.extend(("letter_block",
+                               (0.66 - openings[i // 3] - 0.075, (i % 3 - 1) * 0.080,
+                                TABLE_Z + DRAWER_FLOORS[i // 3] + 0.006 + LETTER_BLOCK_SIZE[2] / 2),
+                               True) for i in range(count))
+            else:
+                layout.extend(("letter_block", (0.23 + (i % 3) * 0.105, -0.23 + (i // 3) * 0.130,
+                                                TABLE_Z + LETTER_BLOCK_SIZE[2] / 2), False) for i in range(count))
+            return layout
         if scene == "mugs" and task == "hang_mug":
             return [("mug", (0.30, -0.13, TABLE_Z), False), ("mug_tree", (0.52, 0.12, TABLE_Z), True)]
         if scene == "dishes":
@@ -446,59 +515,111 @@ class ProceduralSceneBuilder:
     def _size(class_name: str) -> tuple[float, ...]:
         return {
             "jenga_block": JENGA_BLOCK_SIZE,
-            "domino": (0.060, 0.012, 0.070),
+            "domino": DOMINO_SIZE,
             "letter_block": LETTER_BLOCK_SIZE,
             "plate": (PLATE_RADIUS, PLATE_THICKNESS),
-            "cup": (CUP_OUTER_RADIUS, CUP_HEIGHT, CUP_WALL),
+            "cup": CUP_PROFILES[0],
             "mug": (0.040, 0.090, 0.003),
             "bottle": (BOTTLE_RADIUS, BOTTLE_HEIGHT),
             "rack": (0.24, 0.17, 0.14),
             "mug_tree": (0.18, 0.18, 0.30),
             "bin": BIN_INNER_SIZE,
+            "cabinet": CABINET_SIZE,
+            "drawer": DRAWER_SIZE,
         }[class_name]
 
     def _sample_candidate(self, rng: np.random.Generator, candidate: int, table_top_z: float) -> tuple[ObjectSpec, ...]:
         objects: list[ObjectSpec] = []
-        # Move complete assemblies together so nesting and tower contacts survive
-        # randomization. No per-object jitter on mechanically assembled parts.
-        assembly_jitter = rng.uniform(-0.015, 0.015, size=2)
+        # Whole-layout transforms preserve every mechanical assembly. Independent
+        # loose-object scatter stays bounded and passes the actual contact gate.
+        layout_variant = int(rng.integers(3))
+        assembly_yaw = float(rng.uniform(-0.16, 0.16))
+        translation = rng.uniform(-0.015, 0.015, size=2)
+        mirror_y = bool(rng.integers(2)) and self.scene != "spelling_blocks"
+        scatter = (0.010, 0.020, 0.028)[layout_variant]
+        cup_profile = CUP_PROFILES[int(rng.integers(len(CUP_PROFILES)))]
+        rotation = np.array(((math.cos(assembly_yaw), -math.sin(assembly_yaw)),
+                             (math.sin(assembly_yaw), math.cos(assembly_yaw))))
+        self.layout_values = {
+            "arrangement": ("grid", "staggered", "scattered")[layout_variant],
+            "assembly_yaw_rad": assembly_yaw, "assembly_translation_xy_m": translation.tolist(),
+            "mirrored_y": mirror_y, "loose_scatter_limit_m": scatter,
+        }
+        drawer_index = 0
+        reference_volumes: dict[str, float] = {}
         for instance_id, (class_name, base_position, assembled) in enumerate(self._layout(), start=1):
             size = self._size(class_name)
+            if class_name == "cup":
+                size = cup_profile
+            elif class_name in {"mug", "plate", "bin"}:
+                profiles = {"mug": MUG_PROFILES, "plate": PLATE_PROFILES, "bin": BIN_PROFILES}[class_name]
+                size = profiles[int(rng.integers(len(profiles)))]
             asset_id = f"procedural/{class_name}/{GEOMETRY_REVISION}"
             asset_definitions, visual_geoms, provenance = (), (), {}
             if class_name == "bottle":
                 asset_id = str(rng.choice(BOTTLE_VARIANTS))
                 size = (size[0] * float(rng.uniform(0.92, 1.08)),
                         size[1] * float(rng.uniform(0.90, 1.12)))
-            jitter = assembly_jitter if assembled else rng.uniform(-0.015, 0.015, size=2)
-            yaw = 0.0 if assembled else float(rng.uniform(-math.radians(15.0), math.radians(15.0)))
+            elif class_name in {"cup", "mug", "plate", "bin"}:
+                asset_id += "/" + "x".join(f"{value:g}" for value in size)
+            xy = np.array(base_position[:2], dtype=float)
+            if mirror_y:
+                xy[1] *= -1
+            if not assembled:
+                xy += rng.uniform(-scatter, scatter, size=2)
+                if layout_variant == 1:
+                    xy[1] += 0.020 if instance_id % 2 else -0.020
+            xy = rotation @ (xy - (0.45, 0.0)) + (0.45, 0.0) + translation
+            yaw = assembly_yaw
+            if not assembled:
+                yaw += float(rng.uniform(-math.pi, math.pi))
             if self.scene == "jenga" and self.task == "playing":
-                yaw = ((instance_id - 1) // 3 % 2) * math.pi * 0.5
-            position = (float(base_position[0] + jitter[0]), float(base_position[1] + jitter[1]),
-                        float(base_position[2] + (table_top_z - TABLE_Z)))
+                yaw += ((instance_id - 1) // 3 % 2) * math.pi * 0.5
+            z = base_position[2] + table_top_z - TABLE_Z
+            if class_name == "plate":
+                z += (size[1] - PLATE_THICKNESS) / 2
+            elif class_name == "cup":
+                layer = round((base_position[2] - TABLE_Z) / CUP_NEST_STEP)
+                z = table_top_z + layer * size[4]
+            position = (float(xy[0]), float(xy[1]), float(z))
             if not (WORKSPACE_X[0] <= position[0] <= WORKSPACE_X[1] and WORKSPACE_Y[0] <= position[1] <= WORKSPACE_Y[1]):
                 raise SceneResetError(f"object {instance_id} leaves workspace")
-            mass = BASE_MASSES[class_name] * float(rng.uniform(0.8, 1.2))
-            if class_name == "bottle":
-                mass *= (size[0] / BOTTLE_RADIUS) ** 2 * size[1] / BOTTLE_HEIGHT
-            friction_range = _MATERIALS.get(class_name, ("", (0.6, 1.2)))[1]
-            friction = float(rng.uniform(*friction_range))
-            appearance_variant = int(rng.integers(0, 3))
+            friction = float(rng.uniform(*_MATERIALS[class_name][1]))
+            appearance_variant = int(rng.integers(appearance_count(class_name)))
             palette = _PALETTES[_MATERIALS[class_name][0]]
-            color = tuple(float(value) for value in palette[appearance_variant])
+            color = tuple(float(value) for value in palette[appearance_variant % len(palette)])
             if class_name == "bottle":
                 assets, geoms, visual_geoms, provenance = bottle_geometry(asset_id, size, instance_id)
                 asset_definitions = tuple({"tag": element.tag, "attributes": dict(element.attrib)} for element in assets)
+                nominal_mass = BASE_MASSES[class_name] * (size[0] / BOTTLE_RADIUS) ** 2 * size[1] / BOTTLE_HEIGHT
             else:
                 geoms = _geoms_for(class_name, size, color, instance_id)
+                nominal_mass = BASE_MASSES[class_name]
+                if class_name in {"cup", "mug", "plate", "bin", "cabinet", "drawer"}:
+                    volume = sum(_geom_volume(geom) for geom in geoms)
+                    if class_name in {"cabinet", "drawer"}:
+                        nominal_mass = 650.0 * volume
+                    else:
+                        if class_name not in reference_volumes:
+                            reference_volumes[class_name] = sum(
+                                _geom_volume(geom) for geom in _geoms_for(class_name, self._size(class_name), color, 0))
+                        nominal_mass *= volume / reference_volumes[class_name]
+            joint: dict[str, Any] = {}
+            if class_name == "drawer":
+                opening = (0.245, 0.165, 0.085)[drawer_index] if self.task == "sort_and_unload" else 0.0
+                joint = {"type": "slide", "axis": (-1.0, 0.0, 0.0),
+                         "range": (0.0, DRAWER_TRAVEL), "ref": opening,
+                         "limited": "true", "damping": 2.0, "frictionloss": 0.3}
+                drawer_index += 1
             objects.append(ObjectSpec(
                 instance_id=instance_id, class_id=CLASS_IDS[class_name], class_name=class_name,
                 name=f"{self.scene}_{self.task}_object_{instance_id:03d}", position=position,
-                yaw_rad=yaw, size=tuple(float(value) for value in size), mass_kg=mass,
+                yaw_rad=yaw, size=tuple(float(value) for value in size),
+                mass_kg=nominal_mass * float(rng.uniform(0.8, 1.2)),
                 friction=friction, contact_group="hand_object", assembled=assembled,
                 color_rgb=color, geoms=geoms, asset_id=asset_id,
                 appearance_variant=appearance_variant, visual_geoms=visual_geoms,
-                asset_definitions=asset_definitions, asset_provenance=provenance,
+                asset_definitions=asset_definitions, asset_provenance=provenance, joint=joint,
             ))
         return tuple(objects)
 
@@ -521,7 +642,9 @@ class ProceduralSceneBuilder:
             body = ET.SubElement(worldbody, "body", name=obj.name,
                 pos=" ".join(f"{value:.12g}" for value in obj.position),
                 quat=" ".join(f"{value:.12g}" for value in _quat_z(obj.yaw_rad)))
-            if obj.class_name not in FIXTURE_CLASSES:
+            if obj.joint:
+                ET.SubElement(body, "joint", name=f"{obj.name}_slide", **_geom_attributes(obj.joint))
+            elif obj.class_name not in FIXTURE_CLASSES:
                 ET.SubElement(body, "joint", name=f"{obj.name}_free", type="free", damping="0.002")
             # MuJoCo integrates the actual compound geometry to obtain the COM
             # and full inertia tensor, including the offset mug handle.
@@ -550,7 +673,7 @@ class ProceduralSceneBuilder:
             try:
                 objects = self._sample_candidate(rng, candidate, table_top_z)
                 worldbody = self._worldbody(objects, table_top_z)
-                labels = _letters_for(objects, self.seed, self.task)
+                labels = _letters_for(objects, self.seed, self.task, self.target_word)
                 assets, visuals, table_visuals, appearance = build_visual_details(
                     objects, self.seed, labels, table_top_z=table_top_z,
                 )
@@ -578,7 +701,9 @@ class ProceduralSceneBuilder:
                 root.append(assets)
                 root.append(worldbody)
                 model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
-                contact_gate(model, mujoco.MjData(model), {item.name for item in objects})
+                data = mujoco.MjData(model)
+                contact_gate(model, data, {item.name for item in objects})
+                table_clearances = _table_clearances(model, data, objects)
                 values = {
                     "geometry_revision": GEOMETRY_REVISION,
                     "appearance": appearance,
@@ -593,12 +718,14 @@ class ProceduralSceneBuilder:
                         item.class_name: list(_MATERIALS.get(item.class_name, ("", (0.6, 1.2)))[1])
                         for item in objects
                     },
-                    "xy_jitter_m": 0.015,
-                    "yaw_jitter_deg": 15.0,
+                    "layout": self.layout_values,
+                    "loose_yaw_range_rad": [-math.pi, math.pi],
+                    "table_edge_clearance_m": table_clearances,
+                    "affordances": _affordances(objects),
                     "candidate": candidate,
                     "dimension_source": "engineering dimensions; Figure 4 / A.4 give object counts and actions, not CAD dimensions",
-                    "cup_bottom_radius_m": CUP_BOTTOM_RADIUS,
-                    "cup_nest_step_m": CUP_NEST_STEP,
+                    "cup_bottom_radius_m": next((item.size[3] for item in objects if item.class_name == "cup"), None),
+                    "cup_nest_step_m": next((item.size[4] for item in objects if item.class_name == "cup"), None),
                     "fixed_fixture_classes": sorted(FIXTURE_CLASSES),
                     "object_sizes_m": {str(item.instance_id): list(item.size) for item in objects},
                     "object_masses_kg": {str(item.instance_id): item.mass_kg for item in objects},
@@ -608,8 +735,12 @@ class ProceduralSceneBuilder:
                 if labels:
                     values["object_letters"] = labels
                 if self.scene == "spelling_blocks" and self.task == "spelling":
-                    values["target_word"] = _SPELLING_WORD
-                    values["prompt"] = f"Spell {_SPELLING_WORD} with the letter blocks."
+                    values["target_word"] = self.target_word
+                    values["prompt"] = f"Spell {self.target_word} with the letter blocks."
+                    values["task_goal_zh"] = f"用字母积木拼出 {self.target_word}。"
+                if self.scene == "spelling_blocks" and self.task == "sort_and_unload":
+                    values["prompt"] = "Open the drawers, sort the letter blocks, and unload them onto the table."
+                    values["task_goal_zh"] = "拉开抽屉，将其中的字母积木分类并取出放到桌上。"
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
                 result = SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody, assets=assets)
@@ -619,6 +750,97 @@ class ProceduralSceneBuilder:
         raise SceneResetError(
             f"scene reset failed after {MAX_RESET_CANDIDATES} candidates for {self.scene}/{self.task} seed={self.seed}: {last_error}"
         )
+
+
+def _table_clearances(model: Any, data: Any, objects: tuple[ObjectSpec, ...]) -> dict[str, float]:
+    """Conservative compiled contact bounds, including both drawer endpoints."""
+    import mujoco
+
+    clearances: dict[str, float] = {}
+    for obj in objects:
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, obj.name)
+        minimum = math.inf
+        offsets = (0.0,)
+        direction = np.array((-math.cos(obj.yaw_rad), -math.sin(obj.yaw_rad), 0.0))
+        if obj.joint:
+            offsets = (-obj.joint["ref"], DRAWER_TRAVEL - obj.joint["ref"])
+        for geom_id in range(model.ngeom):
+            if model.geom_bodyid[geom_id] != body_id or not model.geom_contype[geom_id]:
+                continue
+            rotation = data.geom_xmat[geom_id].reshape(3, 3)
+            local_center, local_half = model.geom_aabb[geom_id, :3], model.geom_aabb[geom_id, 3:]
+            center = data.geom_xpos[geom_id] + rotation @ local_center
+            half = np.abs(rotation) @ local_half
+            for offset in offsets:
+                shifted = center + offset * direction
+                lower, upper = shifted - half, shifted + half
+                minimum = min(minimum, float(lower[0] - 0.10), float(0.90 - upper[0]),
+                              float(lower[1] + 0.55), float(0.55 - upper[1]))
+        if minimum < 0.002:
+            raise SceneResetError(f"{obj.name} contact envelope leaves tabletop ({minimum:.6g} m)")
+        clearances[obj.name] = minimum
+    return clearances
+
+
+def _affordances(objects: tuple[ObjectSpec, ...]) -> dict[str, Any]:
+    """Dimensions and probe poses in each object's local frame, not CAD claims."""
+    result: dict[str, Any] = {}
+    drawers = [obj for obj in objects if obj.class_name == "drawer"]
+    for obj in objects:
+        values: dict[str, Any] = {"coordinate_frame": "object-local; transform by object pose"}
+        if obj.class_name == "rack":
+            maximum_thickness = max(item.size[1] for item in objects if item.class_name == "plate")
+            values.update(slot_centers_xyz_m=[[x, 0.0, 0.016] for x in (-0.060, 0.0, 0.060)],
+                          slot_axis_xyz=[1, 0, 0], slot_clear_width_m=0.050,
+                          plate_axial_clearance_m=0.050 - maximum_thickness,
+                          rail_y_m=[-0.065, 0.065], rail_top_z_m=0.016,
+                          plate_insertion_quat_wxyz=[math.sqrt(0.5), 0, math.sqrt(0.5), 0])
+        elif obj.class_name == "mug_tree":
+            values.update(hook_radius_m=0.004, hook_length_m=0.056, tip_rise_m=0.014,
+                          hook_center_xyz_m=[[0.085 * math.cos(a), 0.085 * math.sin(a), 0.185 if i < 2 else 0.245]
+                                             for i, a in enumerate((0, math.pi, math.pi / 2, -math.pi / 2))],
+                          hook_radial_angles_rad=[0, math.pi, math.pi / 2, -math.pi / 2],
+                          hanging_mug_yaw_rule="tree yaw + hook radial angle + pi",
+                          hanging_mug_center_radius_rule_m="0.085 + mug.radius + 0.015",
+                          hanging_mug_bottom_z_rule_m="hook_center_z + 0.004 - 0.021 - 0.55*mug.height",
+                          hook_tip_xyz_m=[list(geom["fromto"][3:]) for geom in obj.geoms if "_tip_" in geom["name"]])
+        elif obj.class_name == "mug":
+            values.update(handle_center_xyz_m=[obj.size[0] + 0.015, 0, obj.size[1] * 0.55],
+                          handle_inner_width_m=0.030, handle_inner_height_m=0.042,
+                          handle_tube_radius_m=0.004, hook_diameter_clearance_m=0.022)
+        elif obj.class_name == "bin":
+            values.update(inner_size_xyz_m=list(obj.size[:3]), mouth_size_xy_m=list(obj.size[:2]),
+                          interior_floor_z_m=0.008, rim_top_z_m=0.008 + obj.size[2],
+                          inner_volume_m3=math.prod(obj.size[:3]), wall_thickness_m=0.008,
+                          bottle_diameter_clearance_m=min(obj.size[:2]) -
+                          max(2 * item.size[0] for item in objects if item.class_name == "bottle"))
+        elif obj.class_name == "cabinet":
+            values.update(front_x_m=-obj.size[0] / 2, drawer_floor_z_m=list(DRAWER_FLOORS),
+                          drawer_side_clearance_m=0.004, drawer_back_clearance_m=0.001,
+                          shelf_top_z_m=[floor - 0.001 for floor in DRAWER_FLOORS],
+                          drawer_running_clearance_m=0.001,
+                          drawer_bay_vertical_clearance_m=[0.040, 0.040, 0.041], open_front=True)
+        elif obj.class_name == "drawer":
+            level = drawers.index(obj)
+            contained = [item.instance_id for item in objects if item.class_name == "letter_block"
+                         and item.assembled and abs(item.position[2] - obj.position[2] - 0.026) < 1e-7]
+            values.update(joint_name=f"{obj.name}_slide", qpos_units="metres outward from closed",
+                          joint_axis_local_xyz=[-1, 0, 0], travel_range_m=[0.0, DRAWER_TRAVEL],
+                          initial_opening_m=obj.joint["ref"], qpos0_m=obj.joint["ref"],
+                          interior_size_xyz_m=[obj.size[0] - 0.012, obj.size[1] - 0.012, obj.size[2] - 0.006],
+                          interior_floor_z_m=0.006, cabinet_floor_z_m=DRAWER_FLOORS[level],
+                          handle_center_xyz_m=[-obj.size[0] / 2 - 0.032, 0, obj.size[2] * 0.62],
+                          handle_finger_gap_m=0.028, handle_clear_span_m=0.100,
+                          contained_instance_ids=contained)
+        elif obj.class_name == "cup":
+            radius, height, wall, bottom, step = obj.size
+            values.update(mouth_inner_radius_m=radius - wall, bottom_outer_radius_m=bottom,
+                          nest_step_m=step, nest_stop_top_z_m=step,
+                          nested_wall_normal_clearance_m=(radius - bottom) * step / math.hypot(height, radius - bottom) - wall)
+        else:
+            continue
+        result[str(obj.instance_id)] = values
+    return result
 
 
 def contact_gate(model: Any, data: Any, object_body_names: set[str]) -> None:

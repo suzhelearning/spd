@@ -22,12 +22,11 @@ from PIL import Image, __version__ as pillow_version
 
 from data_collector.recorder import validate_episode_path
 from data_collector.trajectory import load_model, restore_frame
-from offline_rendering.config import CAMERA_NAMES, RenderSettings
+from offline_rendering.config import CAMERA_NAMES, INSTANCE_POLICY, RENDER_SCHEMA_VERSION, RenderSettings
 
-RENDER_SCHEMA_VERSION = 1
 _RESTORE_TOLERANCE = 1e-6
 _RENDER_CONTRACT = {
-    "version": 1,
+    "version": 2,
     "backend": "mujoco_native_egl",
     "camera_names": list(CAMERA_NAMES),
     "hidden_geom_groups": [0, 3],
@@ -37,7 +36,7 @@ _RENDER_CONTRACT = {
     "jpeg_optimize": False,
     "camera_transform": "camera_to_world_xyz_rotation_matrix_local_minus_z_view",
     "segmentation_channels": ["object_id", "object_type"],
-    "instance_policy": "task_manifest_ids_else_group1_robot_else_environment",
+    "instance_policy": INSTANCE_POLICY,
     "restoration_tolerance": _RESTORE_TOLERANCE,
 }
 _FRAME_TYPES = {"source_index": "<i8", "tick": "<i8", "sim_time": "<f8", "monotonic_ns": "<i8"}
@@ -93,6 +92,13 @@ def _calibration(metadata: dict[str, Any], settings: RenderSettings) -> dict[str
 def _instance_mapping(model: Any, metadata: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
     lookup = np.full(model.ngeom, -2, dtype="<i4")
     lookup[np.asarray(model.geom_group) == 1] = -1
+    table_geoms = [
+        geom for geom in range(model.ngeom)
+        if (name := mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom)) is not None
+        and (name == "scene_table" or name.startswith("scene_detail_table_"))
+    ]
+    lookup[table_geoms] = -3
+    assigned_geoms: set[int] = set()
     used: set[int] = set()
     objects = []
     for index, item in enumerate(metadata["scene_manifest"].get("objects", [])):
@@ -102,6 +108,9 @@ def _instance_mapping(model: Any, metadata: dict[str, Any]) -> tuple[np.ndarray,
         _require(instance_id not in used, f"duplicate task instance_id: {instance_id}")
         used.add(instance_id)
         geoms = metadata["object_geom_ids"][index]
+        _require(not assigned_geoms.intersection(geoms), "task object geometry subtrees overlap")
+        _require(not set(table_geoms).intersection(geoms), "table geometry cannot be a task object")
+        assigned_geoms.update(geoms)
         lookup[geoms] = instance_id
         objects.append({"instance_id": instance_id, "name": item["name"],
                         "body_id": metadata["object_body_ids"][index], "geom_ids": geoms,
@@ -112,6 +121,7 @@ def _instance_mapping(model: Any, metadata: dict[str, Any]) -> tuple[np.ndarray,
             {"instance_id": 0, "name": "sky_or_non_geom", "geom_ids": []},
             {"instance_id": -1, "name": "robot", "geom_ids": np.flatnonzero(lookup == -1).tolist()},
             {"instance_id": -2, "name": "environment", "geom_ids": np.flatnonzero(lookup == -2).tolist()},
+            {"instance_id": -3, "name": "table", "geom_ids": table_geoms},
         ],
         "geom_instance_id": lookup.tolist(),
     }
@@ -388,10 +398,11 @@ def _validate_output(path: Path, source: _Source, settings: RenderSettings,
                      *, complete: bool, verify_restoration: bool) -> dict[str, Any]:
     with h5py.File(path, "r") as handle:
         expected_attrs = {"render_schema_version", "complete", "metadata_sha256", *source.identity}
-        _require(set(handle.attrs) == expected_attrs, "render root attributes do not match schema 1")
+        _require(set(handle.attrs) == expected_attrs, "render root attributes do not match schema 2")
         schema = handle.attrs["render_schema_version"]
         _require(isinstance(schema, (int, np.integer)) and not isinstance(schema, (bool, np.bool_))
-                 and int(schema) == RENDER_SCHEMA_VERSION, "unsupported render schema version")
+                 and int(schema) == RENDER_SCHEMA_VERSION,
+                 "unsupported render schema version: expected 2 with separate table (-3) segmentation; rerender source")
         _require(isinstance(handle.attrs["complete"], (bool, np.bool_))
                  and bool(handle.attrs["complete"]) == complete, "render completion flag is invalid")
         for name, expected in source.identity.items():
