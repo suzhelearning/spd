@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
+import numpy as np
+
 from data_collector.config import CollectionConfig, PHYSICS_HZ
 from data_collector.recorder import EpisodeRecorder
 from data_collector.trajectory import TrajectorySource
@@ -38,6 +40,7 @@ class CollectionSession:
         self.error = ""
         self.episode_path = ""
         self.last_saved_path = ""
+        self.completed_episodes = 0
         self.state_frames = 0
         self.on_transition: Callable[[], None] | None = None
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spd-record-control")
@@ -48,13 +51,30 @@ class CollectionSession:
         self._last_tick: int | None = None
         self._closed = False
         self._physics_paused = False
+        self.control_paused = False  # Unified control gate, independent of episode lifecycle.
         self._checkpoint: dict[str, Any] | None = None
         self._skip_confirmation = False
 
     @property
     def physics_paused(self) -> bool:
         """Freeze integration and command application, not ROS or operator controls."""
-        return self._physics_paused
+        return self._physics_paused or self.control_paused
+
+    @property
+    def checkpoint_targets(self) -> np.ndarray | None:
+        """Immutable canonical-54 retained targets, detached from checkpoint state."""
+        return self._checkpoint["targets"].view() if self._checkpoint is not None else None
+
+    def _capture_checkpoint(self) -> dict[str, Any]:
+        snapshot = self.plant.capture_checkpoint()
+        return {
+            "plant": snapshot,
+            # A bytes-backed view cannot be made writable by a ghost consumer.
+            "targets": np.frombuffer(snapshot.targets.tobytes(), dtype=snapshot.targets.dtype),
+            "contacts": self.source.capture_contact_state(),
+            "frames": self.state_frames,
+            "first_tick": self._first_tick, "last_tick": self._last_tick,
+        }
 
     def snapshot(self) -> dict:
         elapsed = ((self._ended_ns or time.monotonic_ns()) - self._started_ns) * 1e-9 if self._started_ns else 0.0
@@ -69,6 +89,19 @@ class CollectionSession:
             "checkpoint_frames": self._checkpoint["frames"] if self._checkpoint else None,
             "skip_confirmation": self._skip_confirmation,
         }
+
+    def replace_scene(self, plant: Any, executor: Any, task_manifest: dict) -> None:
+        """Rebind only after a completed episode; never migrate checkpoints."""
+        if self._closed or self.state != "idle" or self._job is not None or self.recorder.is_busy:
+            raise RuntimeError("scene replacement requires an idle, closed episode")
+        if plant.physics_hz != PHYSICS_HZ:
+            raise ValueError(f"collection requires {PHYSICS_HZ} Hz physics")
+        manifest = {**task_manifest, "collection_config": self.config.as_dict()}
+        source = TrajectorySource(plant, manifest)
+        self.plant, self.executor = plant, executor
+        self.task_manifest, self.source = manifest, source
+        self._checkpoint = None
+        self.cancel_skip_confirmation()
 
     def _transition(self, state: str, message: str) -> None:
         self.cancel_skip_confirmation()
@@ -152,9 +185,7 @@ class CollectionSession:
         elif operation == "revert" and self._checkpoint is None:
             reason = "No checkpoint in this episode"
         elif operation == "checkpoint":
-            if not self.state_frames:
-                reason = "Waiting for the first trajectory sample"
-            elif self.source.has_hand_object_contact():
+            if self.source.has_hand_object_contact():
                 reason = "Checkpoint rejected: a hand is in contact with a task object"
         elif operation == "save":
             if self.state == "recording" and not self.executor.mailbox.enabled:
@@ -174,9 +205,11 @@ class CollectionSession:
                 self._started_ns = self._ended_ns = 0
                 self.state_frames = 0
                 self._first_tick = self._last_tick = None
-                self._checkpoint = None
-                self._physics_paused = False
+                self._physics_paused = True
                 self.source.reset_contacts()
+                # Capture before the first motion or asynchronous disk preparation.
+                # Automatic checkpoint zero intentionally bypasses the contact gate.
+                self._checkpoint = self._capture_checkpoint()
                 self.error = ""
                 self._job = self._worker.submit(
                     self.recorder.start_episode, episode_id, self.task_manifest,
@@ -185,17 +218,12 @@ class CollectionSession:
                 )
                 self._transition("preparing", "Opening episode")
             elif operation == "checkpoint":
-                self._checkpoint = {
-                    "plant": self.plant.capture_checkpoint(),
-                    "contacts": self.source.capture_contact_state(),
-                    "frames": self.state_frames,
-                    "first_tick": self._first_tick, "last_tick": self._last_tick,
-                }
+                self._checkpoint = self._capture_checkpoint()
                 self._transition(self.state, f"Checkpoint completed at {self.state_frames} frames")
             elif operation == "pause":
                 self._physics_paused = True
                 self.executor.clear()
-                self._transition("paused", "Paused physics and recording; align targets, then tap s / middle pedal")
+                self._transition("paused", "Physics and recording paused; local s requests one-second recovery")
             elif operation == "resume":
                 self._physics_paused = False
                 self._transition("recording", "Resume completed")
@@ -248,16 +276,19 @@ class CollectionSession:
                         self._abort(reason)
                         return
                     self._started_ns = time.monotonic_ns()
+                    self._physics_paused = False
                     self._transition("recording", "Ready to sample whole-scene physical trajectories")
                 elif previous == "saving":
                     self.episode_path = self.last_saved_path = str(result)
                     self._checkpoint = None
                     self._physics_paused = False
+                    self.completed_episodes += 1
                     self._transition("idle", f"Saved episode: {result}")
                 elif previous == "discarding":
                     self.episode_path = ""
                     self._checkpoint = None
                     self._physics_paused = False
+                    self.completed_episodes += 1
                     self._transition("idle", "Episode discarded")
                 elif previous == "reverting":
                     checkpoint = self._checkpoint
@@ -267,7 +298,7 @@ class CollectionSession:
                     self._first_tick = checkpoint["first_tick"]
                     self._last_tick = checkpoint["last_tick"]
                     self.executor.clear()
-                    self._transition("paused", "Revert completed; align restored targets, then tap s / middle pedal")
+                    self._transition("paused", "Checkpoint restored; coordinator may begin automatic recovery")
                 elif previous == "aborting":
                     self.episode_path = result
                     self._transition("error", f"{self.error}; partial episode preserved")
@@ -283,8 +314,8 @@ class CollectionSession:
             elif self.state == "recording" and not self.executor.mailbox.enabled:
                 self._abort("Control disabled")
 
-    def tick(self, step: Any) -> None:
-        """Record completed physics steps; never wait for a command or render RGB."""
+    def tick(self, step: Any, *, recovery: int = 0) -> None:
+        """Record actual state; recovery labels are 0=normal, 1=start, 2=resume, 3=rewind."""
         if self.state != "recording":
             return
         try:
@@ -298,7 +329,7 @@ class CollectionSession:
                 self._first_tick = step.tick
             offset = step.tick - self._first_tick
             if offset % (PHYSICS_HZ // self.config.state_rate_hz) == 0:
-                self.recorder.append_frame(self.source.capture(step.tick, time.monotonic_ns()))
+                self.recorder.append_frame(self.source.capture(step.tick, time.monotonic_ns()), recovery=recovery)
                 self.state_frames += 1
             if offset == 0:
                 self._transition("recording", "Recording whole-scene state and hand-object contacts")

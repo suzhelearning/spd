@@ -4,7 +4,7 @@
 
 在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入接入、标定与 IK 属于外部 `tianji_teleop`；`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
 
-本版是不兼容的 schema-v2：旧的机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除。校验器拒绝旧 schema，同日 `dataset_config.json` 冲突时拒绝追加。升级应使用新的输出根目录，例如 `/data/TianjiSim-trajectories`，并将自定义采集配置更新为 version 2、state_rate_hz 60，删除 camera_rate_hz。
+旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录 `/data/TianjiSim/trajectories`，采集配置为 version 2、state_rate_hz 60。恢复过渡标签是 schema-v2 的 `collection_events` 扩展，不改动 trajectory 字段或每日配置；旧文件没有标签时校验结果明确为 `recovery_annotated=false`，不假定旧样本都是正常人工操作。
 
 ## 采样与时钟
 
@@ -43,8 +43,9 @@ episode_<UUID>.h5
 │   ├── @metadata_sha256           metadata JSON 原始 UTF-8 字节哈希
 │   ├── mjb                        uint8[B]，完整编译模型
 │   └── metadata                   scalar UTF-8 JSON
-├── collection_events/             可选，仅发生回退时创建
-│   └── rewind                     compound[R]: frame_count int64, monotonic_ns int64
+├── collection_events/             新文件始终包含恢复标签
+│   ├── recovery_transition        uint8[N]，0 正常／1 开段／2 暂停恢复／3 回退恢复
+│   └── rewind                     可选 compound[R]: frame_count int64, monotonic_ns int64
 └── trajectory/
     ├── tick                       int64[N]
     ├── monotonic_ns               int64[N]
@@ -64,6 +65,8 @@ episode_<UUID>.h5
 
 所有轨迹数据集首维必须相同且非空。可选字段按模型存在与否确定，不写虚构的零宽度数据集。`qpos/qvel` 包含机器人和所有动态场景自由度；nq 与 nv 不一定相等，free joint 是 7 个位置坐标、6 个速度自由度，不能拿 qpos 地址索引 qvel。
 
+`recovery_transition` 与轨迹逐行对应，标记采样时实际执行的一秒目标接入阶段，包含接入终点所在采样步；接入仍保存实际物理状态，不保存目标或命令向量。写入和裁剪与完整帧同队列、同逻辑事务处理。标签必须为 uint8、长度 N、值在 0..3，无额外属性；失败写入不会留下只更新轨迹或只更新标签的半行。训练可排除非零样本，但不得将排除后的跨段状态当作连续轨迹。旧 schema-v2 文件允许没有这项可选标签，不能据此推定其恢复阶段。
+
 `robot_qpos/robot_qvel` 按固定名称从完整状态提取，顺序为左臂 7、右臂 7、左手 20、右手 20，单位 rad／rad/s。它们必须与完整状态对应投影逐元素相等，不是目标值。
 
 `object_pose` 为任务物体根 body 的世界坐标 `[x,y,z,qw,qx,qy,qz]`，包含动态物体和固定任务支架；具体顺序在 metadata.object_names／object_body_ids 中定义。采样在独立 MjData 上从当前 qpos 重新计算正运动学，不使用 mj_step 后滞留的步前派生位置，不改变在线模拟状态。
@@ -76,7 +79,7 @@ episode_<UUID>.h5
 - `hand_object[n,s,o]` 表示该区间手 s 曾与物体 o 有有效接触；`hand_contact[n,s]` 是对应物体维的逻辑 OR。
 - 没有任务物体时 hand_contact 恒 false，不创建 hand_object 或 object_pose。
 - 不计机器人自碰撞、手与桌面／地面的接触。此布尔标签不等于完整接触力，也不声称只表示采样时刻的瞬时接触。
-- 在线检查点另外在独立 scratch MjData 刷新当前接触并使用同一手／物体映射；任一手的当前有效接触都会拒绝存档。它不使用区间累计值，也不修改在线积分历史。超过 10 秒的无接触裁剪仍未实现。
+- 采集中手动检查点在独立 scratch MjData 刷新当前接触；任一手的有效任务物体接触都会拒绝更新。开段自动 0 号检查点在运动之前保存完整初始状态，允许保留初始接触，不使用手动检查点的接触门。
 
 ## 模型快照与元数据
 
@@ -97,11 +100,11 @@ MJB 恢复严格要求记录时相同的 MuJoCo 版本，并重新核验字段�
 
 ## 生命周期与错误
 
-本地和 ROS 触发共用 CollectionSession。键盘 `g` 开始，`f` 保存并标记任务成功；踏板直接发送普通键盘 `r/s/d`。`r` 创建最新无接触检查点，本地 `s` 切换暂停与恢复，`d` 有检查点则回退并保持暂停，无检查点则先提示，再按 `d` 确认跳过。其他操作／状态变化清除确认，确认不跨 episode。中键恢复是本地显式授权请求，检查新鲜目标及对齐门限后才授权并恢复；ROS `resume` 仍要求已有本地授权。显式 `discard/skip` 服务保留。检查点在保存／丢弃／新段开始后失效；不启动或重新标定上游。
+上游独立 `r` 标定、`s` 启动并持续发布。SPD 待开始时 `r` 创建 episode 和运动前的 0 号检查点，再从实际关节位置做一秒实时目标混合；采集中 `r` 更新最近无接触检查点、`s` 暂停。暂停后 `s` 接入恢复；`d` 恢复检查点、裁掉失败分支后自动接入恢复；暂停后 `r → r` 确认成功保存。接入期间 r/s/d 无效，不排队；输入失鲜、非法、ready 改变或新 session 仍会撤权暂停。没有操作者丢弃分支，默认入口只发布只读状态，不开放远程 Trigger 控制。随机任务保存完成后切换下一项并等待 `r`。
 
 单个有界队列每次传递一整帧自有快照；调用 append_frame 后不得再次修改该帧数组。后台 HDF5 线程写入，保存／丢弃由协调 worker 执行，不在 ROS 控制回调同步等待。
 
-只有关闭文件、校验行数／类型／有限值／时钟／模型／元数据／状态投影后，才标记 complete 并发布 `.h5`。中断、错误、漏 tick、队列溢出保留 partial，不静默丢帧。`max_frames=0` 不限，达到正数上限发布 `complete=true, success=false`；只有显式 `f/save` 标记 success=true。任务成功不是自动评分。
+只有关闭文件、校验行数／标签／类型／有限值／时钟／模型／元数据／状态投影后，才标记 complete 并发布 `.h5`。中断、错误、漏 tick、队列溢出保留 partial，不静默丢帧。`max_frames=0` 不限，达到正数上限发布 `complete=true, success=false`；只有操作者暂停后 `r → r` 显式保存标记 success=true。任务成功不是自动评分。
 
 公开校验器拒绝 `.partial.h5` 和 complete=false 的文件。内部 `allow_partial=True` 用于最终发布前验证，其 valid=true 不表示 complete=true，更不表示采集成功。意外进程终止可能留下尚未关闭的 HDF5，应作为失败数据处理，不能通过改扩展名绕过 complete 检查。
 
@@ -109,7 +112,7 @@ MJB 恢复严格要求记录时相同的 MuJoCo 版本，并重新核验字段�
 
 在线检查点是进程内完整 `MjData` 副本，另存 tick、保留关节目标、采样相位和未结束的接触累计。它与下述磁盘 state-only 恢复不是同一契约。检查点不落盘，不能在进程重启后恢复。
 
-回退期间物理和命令应用冻结，授权与候选清除。唯一写线程处理 FIFO 裁剪事件，保留检查点时已接受的前 N 帧，删除其余所有轨迹行，恢复写入时钟并刷盘后确认；物理线程才恢复完整状态并进入 paused。出错只保留 partial，不发布完成文件；重新采样仍严格每 8 tick 一帧。
+回退期间物理和命令应用冻结，授权与候选清除。唯一写线程保留检查点时已接受的前 N 帧，同时裁剪恢复标签，恢复写入时钟并刷盘后确认；物理线程才恢复完整状态。N=0 合法，对应开段前的 0 号检查点。协调器随后用新鲜合法目标自动尝试一秒接入；目标不可用时保持暂停，需人工 `s` 重试。出错保留 partial，不发布完成文件；续采仍严格每 8 tick 一帧。
 
 可选 `/collection_events/rewind` 是一维可扩展 compound 数据集，字段顺序为 `frame_count: <i8`、`monotonic_ns: <i8`。每行标识零基帧索引 `frame_count` **之前**的分支边界及实际回退主机时间；`0 <= frame_count <= N`，等于 N 表示尚未追加续采帧。后续更早回退删除大于新保留帧数的边界，等值边界保留；帧数非递减，事件时间严格递增。此记录不是完整失败尝试审计日志。没有回退的旧 schema-v2 文件仍可读取。
 

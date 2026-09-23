@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import sys
 import time
 from typing import Any
@@ -31,6 +32,26 @@ def resolve_table_distance(value: float | None) -> float:
             return resolve_table_distance(distance)
         except ValueError:
             print("请输入有限的非负数，例如 0.25；Ctrl+C 取消。", file=sys.stderr)
+
+
+class EpisodeTasks:
+    """Choose a task and scene seed per episode, or retain an explicit task."""
+
+    def __init__(self, scene: str | None, task: str | None, seed: int | None) -> None:
+        from spd_envs.registry import TASKS
+
+        self.randomized = task is None and scene != "hardware_free"
+        self._fixed = (scene, task, 0 if seed is None else seed)
+        self._rng = random.Random(seed)
+        self._tasks = tuple(spec for spec in TASKS if scene is None or spec.scene == scene)
+        if self.randomized and not self._tasks:
+            raise ValueError(f"unknown task scene: {scene}")
+
+    def next(self) -> tuple[str | None, str | None, int]:
+        if not self.randomized:
+            return self._fixed
+        spec = self._rng.choice(self._tasks)
+        return spec.scene, spec.name, self._rng.randrange(2**31)
 
 
 def build_selected_scene(
@@ -108,21 +129,22 @@ def main(argv: list[str] | None = None) -> int:
 
     from simulation.viewer import PlantController
     from simulation.viewer_window import ViewerWindow
+    from spd_envs.registry import get_task
 
     plant = PlantController(
         strict_artifacts=True,
         scene_result=result, scene_output_dir=args.output,
     )
     window = ViewerWindow(plant.model, plant.data, headless=args.headless)
+    spec = get_task(result.scene, result.task)
+    window.set_task(spec.title_zh, spec.goal_zh)
     summary: dict[str, Any] = {}
     try:
         window.open()
         if window.window is not None:
             with window.window.lock():
                 frame_scene(window.window.cam, window.window.opt, result.table_near_edge_m)
-        if "prompt" in result.sampled_values:
-            window.update_hud({"Task": result.sampled_values["prompt"]})
-            print(result.sampled_values["prompt"], flush=True)
+        print(f"任务：{spec.title_zh}；目标：{spec.goal_zh}", flush=True)
         timestep = float(plant.model.opt.timestep)
         steps = None if args.duration is None else math.ceil(args.duration / timestep)
         start = time.monotonic()

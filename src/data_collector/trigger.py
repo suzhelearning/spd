@@ -334,12 +334,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("interactive mode needs a terminal; use --command " + "|".join((*FINAL_STATES, "status")))
     if interactive:
         print(
-            "SPD collection client (no motion controls)\n"
-            "  r = checkpoint   s = pause/resume   d = revert; without a checkpoint, d twice skips\n"
-            "  g = start recording   f = save-success\n"
-            "  Resume never authorizes motion: use local e with a fresh command first.\n"
-            "  Focus this terminal; tap only. Held-key autorepeat can confirm skip; no long press.\n"
-            "  q / Ctrl+C = exit client ONLY; never save, discard, or stop capture on exit.\n"
+            "Low-level ROS collection client (no motion authorization)\n"
+            "  Default spd-sim exposes status only: use --command status.\n"
+            "  With a separately enabled control service: r checkpoint, s pause/resume, d revert.\n"
+            "  Normal operator controls belong in the SPD window/terminal, not this client.\n"
+            "  q / Ctrl+C exits this client only; no save or discard on exit.\n"
             "Commands wait for collector completion; unknown outcomes are never retried.",
             flush=True,
         )

@@ -106,7 +106,12 @@ def resolve_home_positions(joints: list[ManifestJoint], manifest: dict[str, Any]
         arm_by_joint.update(zip(names, arm_home_for_side(manifest, side)))
     home = [0.0] * len(joints)
     for entry in joints:
-        home[entry.index] = arm_by_joint.get(entry.joint, (entry.range[0] + entry.range[1]) * 0.5)
+        # The upstream Hand2 publisher starts with neutral (zero) fingers.
+        # Mid-range fingers cannot pass the normal explicit-enable delta gate.
+        value = arm_by_joint.get(entry.joint, 0.0)
+        if not entry.range[0] <= value <= entry.range[1]:
+            raise ManifestError(f"initial target for {entry.joint} exceeds its joint range")
+        home[entry.index] = value
     return tuple(home)
 
 

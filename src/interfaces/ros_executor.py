@@ -1,7 +1,7 @@
 """ROS 2 command mailbox and physics-thread-only MuJoCo executor."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import os
 import select
@@ -34,6 +34,7 @@ class JointCommandMailbox:
         self._pending: JointCommandSnapshot | None = None
         self._enabled = False
         self._authorized_session: str | None = None
+        self._transition_ready_mask = 0
         self._last_session: str | None = None
         self._last_sequence: int | None = None
         self._last_stamp_ns: int | None = None
@@ -60,6 +61,8 @@ class JointCommandMailbox:
     def _reject(self, reason: Any) -> bool:
         self.rejected += 1
         self.last_reject_reason = str(reason)
+        if self._transition_ready_mask:
+            self.authorize(False)
         return False
 
     def receive(self, message: Any, *, now_ns: int | None = None) -> bool:
@@ -76,10 +79,11 @@ class JointCommandMailbox:
             except (AttributeError, JointCommandError, TypeError, ValueError, OverflowError) as exc:
                 return self._reject(exc)
             if self._authorized_session is not None and snapshot.session_id != self._authorized_session:
-                self._enabled = False
-                self._authorized_session = None
-                self._pending = None
+                self.authorize(False)
                 self.last_reject_reason = "session changed; explicit authorization required"
+            elif self._transition_ready_mask and snapshot.ready_mask != self._transition_ready_mask:
+                self.authorize(False)
+                self.last_reject_reason = "ready groups changed during transition; explicit authorization required"
             self._latest = snapshot
             self._last_session = snapshot.session_id
             self._last_sequence = snapshot.sequence
@@ -96,6 +100,7 @@ class JointCommandMailbox:
             self._enabled = False
             self._authorized_session = None
             self._pending = None
+            self._transition_ready_mask = 0
             if not enabled:
                 return True
             candidate = self._latest
@@ -127,6 +132,7 @@ class JointCommandMailbox:
             self._last_stamp_ns = None
             self._authorized_session = None
             self._enabled = False
+            self._transition_ready_mask = 0
             self.last_reject_reason = ""
 
     def take_pending(self) -> JointCommandSnapshot | None:
@@ -154,6 +160,9 @@ class RosJointCommandExecutor:
         self._last_ready_ns: dict[int, int] = {}
         self._latched_hold = VALID_READY_MASK
         self._hold_mask = VALID_READY_MASK
+        self._transition_start_ns: int | None = None
+        self._transition_origin: np.ndarray | None = None
+        self._transition_frame = False
         self.subscription = node.create_subscription(
             JointCommand, TOPIC, self._on_message, best_effort_qos(),
         )
@@ -170,12 +179,31 @@ class RosJointCommandExecutor:
                 return "candidate" if self.mailbox._latest is not None else "disabled"
             return "holding" if self._hold_mask else "enabled"
 
+
+    @property
+    def transition_active(self) -> bool:
+        with self.mailbox._lock:
+            return bool(self.mailbox._enabled and self.mailbox._transition_ready_mask)
+
+    @property
+    def transition_frame(self) -> bool:
+        """Whether the last applied physics tick was blended, including its endpoint."""
+        with self.mailbox._lock:
+            return self._transition_frame
+
+    def _cancel_transition(self) -> None:
+        self.mailbox._transition_ready_mask = 0
+        self._transition_start_ns = None
+        self._transition_origin = None
+        self._transition_frame = False
+
     def _on_message(self, message: Any) -> None:
         self.mailbox.receive(message)
 
     def authorize(self, enabled: bool) -> bool:
         """Physics-thread operator gate; never reset or modify MuJoCo state."""
         with self.mailbox._lock:
+            self._cancel_transition()
             if not enabled:
                 self._hold_mask = self._latched_hold = VALID_READY_MASK
                 return self.mailbox.authorize(False)
@@ -200,14 +228,83 @@ class RosJointCommandExecutor:
             self._hold_mask = VALID_READY_MASK ^ candidate.ready_mask
             return True
 
+    def authorize_transition(self) -> bool:
+        """Authorize a one-second live-target blend instead of the enable-delta gate.
+
+        The physics thread captures actual joint positions and starts the monotonic
+        timer on the first apply, after asynchronous recording preparation finishes.
+        Authorization never writes physical state or command references.
+        """
+        with self.mailbox._lock:
+            self._cancel_transition()
+            self._hold_mask = self._latched_hold = VALID_READY_MASK
+            if not self.mailbox.authorize(True):
+                return False
+            candidate = self.mailbox._latest
+            try:
+                self.plant.joint_command_start_positions()
+            except (TypeError, ValueError) as exc:
+                self.mailbox._reject(exc)
+                self.mailbox.authorize(False)
+                return False
+            self.mailbox._transition_ready_mask = candidate.ready_mask
+            self._last_ready_ns.clear()
+            self._latched_hold = 0
+            self._hold_mask = VALID_READY_MASK ^ candidate.ready_mask
+            return True
+
 
     def clear(self) -> None:
         """Clear control and re-sync held targets, including after a plant restore."""
         with self.mailbox._lock:
+            self._cancel_transition()
             self.mailbox.clear()
             self._held_targets = self.plant.joint_command_targets()
             self._last_ready_ns.clear()
             self._hold_mask = self._latched_hold = VALID_READY_MASK
+
+
+    def _apply_transition(self, now: int) -> AppliedCommand | None:
+        """Apply a fresh live endpoint every tick, not merely on ROS arrivals."""
+        snapshot = self.mailbox._latest
+        try:
+            utc_now = time.time_ns()
+            if snapshot is None or snapshot.session_id != self.mailbox._authorized_session:
+                raise JointCommandError("transition lost its authorized session")
+            snapshot.validate(now_ns=utc_now)
+            if snapshot.ready_mask != self.mailbox._transition_ready_mask:
+                raise JointCommandError("ready groups changed during transition")
+            self.plant.validate_joint_command(snapshot)
+            if self._transition_start_ns is None:
+                self._transition_origin = self.plant.joint_command_start_positions()
+                self._transition_start_ns = now
+            fraction = min(1.0, max(0.0, (now - self._transition_start_ns) / 1_000_000_000))
+            if fraction == 1.0:
+                reference = snapshot
+            else:
+                weight = fraction ** 3 * (10.0 + fraction * (-15.0 + 6.0 * fraction))
+                targets = self._transition_origin + weight * (
+                    np.asarray(snapshot.position_rad) - self._transition_origin
+                )
+                reference = replace(snapshot, position_rad=tuple(targets))
+            self.plant.submit_joint_command(reference)
+        except (TypeError, ValueError) as exc:
+            self.mailbox._reject(exc)
+            self.authorize(False)
+            self.plant.set_joint_command_hold(VALID_READY_MASK)
+            return None
+        self.mailbox.take_pending()
+        self._hold_mask = VALID_READY_MASK ^ snapshot.ready_mask
+        source_monotonic = now - max(0, utc_now - snapshot.stamp_ns)
+        for bit, _ in self._groups:
+            if snapshot.ready_mask & bit:
+                self._last_ready_ns[bit] = source_monotonic
+        self._held_targets = self.plant.joint_command_targets()
+        if fraction == 1.0:
+            self._cancel_transition()
+        self._transition_frame = True
+        return AppliedCommand(snapshot, int(self.plant.sim_time_ns), self._hold_mask,
+                              tuple(float(value) for value in self._held_targets))
 
     def apply_pending(self, *, now_ns: int | None = None) -> AppliedCommand | None:
         """Called only on the physics thread immediately before integration.
@@ -217,10 +314,15 @@ class RosJointCommandExecutor:
         """
         now = int(time.monotonic_ns() if now_ns is None else now_ns)
         with self.mailbox._lock:
+            self._transition_frame = False
             if not self.mailbox._enabled:
+                self._cancel_transition()
                 self._hold_mask = VALID_READY_MASK
                 self.plant.set_joint_command_hold(self._hold_mask)
                 return None
+            if self.mailbox._transition_ready_mask:
+                return self._apply_transition(now)
+            self._cancel_transition()
             for bit, _ in self._groups:
                 if now - self._last_ready_ns.get(bit, now) > MAX_AGE_NS:
                     self._latched_hold |= bit
@@ -286,10 +388,9 @@ class ControlTerminal:
                     return
                 if self._stop.is_set():
                     return
-                if key in {"c", "e", "q"}:
+                if key == "q":
                     self._joint_control(key)
-                    if key == "q":
-                        return
+                    return
                 elif key in KEY_COMMANDS:
                     self._recording_control(KEY_COMMANDS[key])
         finally:

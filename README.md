@@ -1,6 +1,73 @@
+# 简介 cmd
+
+## PICO 裸手 teleop → 本项目仿真
+
+准备：头显运行**裸手跟踪 APK（不是手柄 APK）**，USB 连接电脑并授权调试；停止旧 PICO／Manus／外骨骼会话。本流程仅控制仿真，张手、握拳、捏合等识别标签**不会自动启停遥操**。
+
+```bash
+# 终端 A：上游独立操作 r 标定 → s 开始，随后持续生成双臂／双手目标
+cd /home/current/syz/tianji_teleop-ros2
+bash bash/run_pico_hand_sim.sh --height-m 1.75 --headless
+
+# 终端 B：SPD 本地 r 开始采集；默认每段随机任务
+cd /home/current/syz/spd-syz
+pixi run spd-sim --table-distance 0.2
+```
+
+`1.75` 换成操作者实际身高（米）；先聚焦终端 A 按 `r` 标定：面向前方、双臂水平前伸、双手约肩宽、掌心相对，稳定保持约 1 秒。标定成功后按上游 `s`，上游才开始跟随并持续发布目标。SPD 不再向上游发送标定、跟随或暂停请求；上游暂停、退出等管理操作仍在上游执行。
+
+再聚焦 SPD 窗口或终端 B，按 `r` 开始本条数据。SPD **不传 `--task` 就从 18 个任务中随机选择**；成功保存后自动选择下一任务，等待再次按 `r` 开段。暂停、恢复、检查点回退和保存失败不换任务；机器人实际姿态、速度和保留目标延续，旧检查点不跨任务。
+
+窗口顶部显示中文任务名称和目标。`--table-distance 0.2` 为桌沿距基座 0.2 米；省略时启动询问一次。默认目录 `/data/TianjiSim/trajectories`，可用 `--output` 覆盖。两端独立加载环境，关节目标直接通过本机 ROS domain `120` 的 `JointCommand` 传递，不需要控制 socket 或远程控制开关。DDS 只用于可信环境，不是认证或实机安全边界。
+
+轨迹按每段**开始当天的本机日期**分文件夹保存：`/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5`。跨午夜的当前段不拆分，下一段自动进入新的日期目录。
+
+可选：`--task mugs/hang_mug` 固定任务，不逐段切换；`--scene cups` 只在杯子任务中随机；`--seed 0` 复现随机任务／场景序列，不指定则每次启动重新随机。随机抽取允许重复任务；每段记录实际任务和场景种子。固定任务未给种子时仍使用 `0`。`--scene hardware_free` 保留无任务场景。
+
+**按键按窗口和状态解释，普通单键即时生效，无需回车：**
+
+| 位置／状态 | `r` | `s` | `d` |
+|---|---|---|---|
+| 上游 PICO | 标定／重新标定 | 标定成功后启动跟随 | — |
+| SPD 待开始 | 开段＋0 号检查点＋1 秒接入 | 无操作 | 无操作 |
+| SPD 正常采集 | 更新最近检查点；手接触任务物体时拒绝 | 冻结场景和采集，上游继续 | 无操作，必须先暂停 |
+| SPD 已暂停 | 第一次提示保存，第二次确认成功保存 | 不回退，1 秒接入后继续 | 回退最近检查点、裁掉失败分支，再1秒接入并自动继续 |
+| SPD 接入／准备／回退等待／保存／中止处理中 | 无效 | 无效 | 无效 |
+
+暂停显示**检查点双手目标虚影**；接入期间切换为**实时上游双手目标虚影**；正常采集隐藏。只画 Wuji2 双手，不画双臂／机身，虚影无碰撞且不写物理状态。
+
+一秒接入从实体当前关节位置出发，对所有 ready 的双臂／双手关节做平滑混合，目标持续跟随上游更新；一秒以主机单调时钟计，从首个实际执行步开始计时。时间到即结束目标混合，不保证实体实际到位，不瞬移 qpos。失鲜、session 改变或接入期间 ready 组改变会撤销授权并保持暂停，即使接入期间按键无效，安全保护仍有效。
+
+MuJoCo 软限位可能让实测关节略微超出命令范围；这时只将接入的**命令起点**投影到合法限位，不改实际 qpos/qvel。上游越限目标仍严格拒绝，不做隐式裁剪。
+
+**一条数据的流程：** 上游 `r → s` 一次准备 → SPD `r` 开段 → 采集中 `r` 存点 → 失误时 `s → d` 回退并自动继续 → 成功后 `s → r → r` 保存 → 等中文任务更新 → SPD `r` 开下一条。没有丢弃按键，失败通过回退重做；“成功”由操作者确认，不是自动评分。保存提示出现后，`s/d` 取消确认并执行各自的恢复／回退动作。
+
+开段自动保存运动前的完整 0 号检查点；接入过程仍记录真实物理状态，并用 `/collection_events/recovery_transition` 标注：`0` 正常，`1` 开段接入，`2` 暂停恢复，`3` 回退恢复。训练可排除非零样本，但不得把跨接入／回退的状态拼成连续人工动作。
+
+保存后两端分别 `Ctrl+C` 退出；SPD 退出不会代替成功保存，也不会停止上游。只点按、不长按，系统自动重复可能触发保存确认；不需要设备路径或输入设备权限。PICO 仍自动检查／补建 ADB 转发，多设备时设置 `ANDROID_SERIAL`。
+
+<details>
+<summary>首次使用／依赖或原生代码更新后：先安装与构建</summary>
+
+```bash
+# 上游：构建双臂控制器、ROS 消息及独立 Hand2 重定向程序
+cd /home/current/syz/tianji_teleop-ros2
+pixi install --locked -e spd
+pixi run --locked -e spd build
+
+# 本项目：安装仿真环境并生成本地 ROS 消息绑定
+cd /home/current/syz/spd-syz
+pixi install --locked
+pixi run ros-build-interfaces
+```
+
+</details>
+
+---
+
 # SPD Simulation Collection — Tianji + Wuji Hand 2
 
-SPD **负责仿真轨迹采集与离线渲染**：订阅外部 ROS 2 `JointCommand`，在线记录 60 Hz 完整场景物理轨迹及接触信息；离线进程再恢复实际状态，生成 RGB 和实例分割。在线采集不创建相机渲染器、不保存 RGB。SPD 不接收 PICO 原始输入，不做标定、IK 或手部重定向，不提供命令发布器，也不控制实机。
+SPD **负责仿真轨迹采集与离线渲染**：订阅外部 ROS 2 `JointCommand`，在线记录 60 Hz 完整场景物理轨迹及接触信息；离线恢复状态生成 RGB 和实例分割。在线采集不创建相机渲染器、不保存 RGB。SPD 不接收 PICO 原始输入，不计算人体标定、IK 或手部重定向，不提供关节命令发布器，也不控制实机；仅在显式开始／恢复时对收到的合法目标做一秒接入。
 
 上游 `tianji_teleop-ros2` 已定稿：负责 PICO 标定、共享根坐标下的 Franka DLS + Ruckig、Hand2 映射及默认 ROS 关节命令发布。其入口是在上游工作区运行 `bash bash/run_pico_hand_sim.sh --height-m 1.75`。SPD 启动器不会启动或管理上游进程；上游功能定稿不替代本工作区的真实头显端到端验收。
 
@@ -33,20 +100,23 @@ docs/                                架构、数据契约与论文
 
 ## 安装与启动
 
-在项目根目录操作，支持 Linux x86-64。环境固定 Python 3.12，保留 MuJoCo 3.12，并锁定兼容的 ROS 2 Jazzy / Fast DDS 依赖。图形查看需要可用显示环境；SPD 本身不需要 ADB 或头显。在线仿真从本 checkout 读取资源；轨迹内嵌已编译模型和网格／纹理，可脱离原场景 XML 恢复，但必须使用记录时的精确 MuJoCo 版本。不支持将 Python wheel 脱离工作区作为完整在线仿真部署。
+在项目根目录操作，支持 Linux x86-64。环境固定 Python 3.12，保留 MuJoCo 3.12，并锁定兼容的 ROS 2 Jazzy / Fast DDS 依赖。图形查看需要可用显示环境；中文任务条使用系统 `fonts-noto-cjk` 的 Noto Sans CJK 字体（缺失时程序给出安装提示），无图形模式不加载字体。SPD 本身不需要 ADB 或头显。在线仿真从本 checkout 读取资源；轨迹内嵌已编译模型和网格／纹理，可脱离原场景 XML 恢复，但必须使用记录时的精确 MuJoCo 版本。不支持将 Python wheel 脱离工作区作为完整在线仿真部署。
 
 ```bash
 pixi install --locked
 pixi run ros-build-interfaces
 
-# 在当前终端前台启动订阅器；发布端在上游工作区单独启动
+# 默认逐段随机任务；首次询问桌距，发布端在上游工作区单独启动
 pixi run spd-sim
 
-# 选择采集任务；未给桌距时先在终端询问，确认后才开窗
+# 固定采集任务；未给桌距时先在终端询问，确认后才开窗
 pixi run spd-sim --task mugs/hang_mug --seed 0
 
-# 无图形订阅；当前终端仍可控制授权和录制
-pixi run spd-sim --headless --output data/headless-episodes
+# 无图形随机任务；显式给桌距，当前终端仍可控制授权和录制
+pixi run spd-sim --headless --table-distance 0.2 --output data/headless-episodes
+
+# 无任务场景，不随机选择
+pixi run spd-sim --scene hardware_free
 
 # 退出：在运行 SPD 的终端按 Ctrl+C，不停止上游发布器
 ```
@@ -58,23 +128,11 @@ colcon build --base-paths src/interfaces/tianji_spd_interfaces \
   --build-base .ros/build --install-base .ros/install --merge-install
 ```
 
-发布侧须使用相同消息定义并加载对应 ROS 接口 overlay。SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
+发布侧须使用相同消息定义并加载对应 ROS 接口 overlay。SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim/trajectories`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
 
-SPD 直接在当前终端前台运行，不使用 tmux，不后台启动，也不提供 `--attach` 或独立停止命令。`Ctrl+C` 或 `q` 退出当前 SPD；Viewer 中 `Esc` 也可退出。需要成功保存时先按 `f` 并等保存完成，再退出；中断不是成功确认，未完成段保留为 partial。一次只启动一个采集进程，避免多个实例同时写入同一个输出目录。
+SPD 在当前终端前台运行，不使用 tmux、不后台启动。`q`／`Ctrl+C` 或 Viewer `Esc` 退出当前 SPD，不停止上游。先 `s → r → r` 成功保存并等待完成再退出；中断不是成功确认，未完成段保留 partial。一次只启动一个采集进程。
 
-### 与定稿发布端配合
-
-在 `/home/current/syz/tianji_teleop-ros2` 的独立终端启动：
-
-```bash
-bash bash/run_pico_hand_sim.sh --height-m 1.75
-# 只关闭上游辅助 Viewer，仍生成并发布 ROS 关节目标：
-bash bash/run_pico_hand_sim.sh --height-m 1.75 --headless
-```
-
-两条命令二选一，身高填写操作者实测值。发布最多 60 Hz 的双臂＋双手 54 维绝对关节目标，单位 rad；原生 Viewer 不是命令数据来源。C、跟随、失鲜及 P／H／Q 制动和回程的 readiness／session 语义全部由上游维护，SPD 不重做这些逻辑，也不根据发布端窗口关闭推断仿真已回程。
-
-随后在 SPD 工作区启动 `pixi run spd-sim --task cups/pyramid --seed 0`。上游提供新鲜且满足接收端启用目标差门限的候选后，在 SPD 按 `e` 显式启用，再按 `g` 开始采集。消息到达、上游进入跟随和 SPD 本地授权是不同状态；新 session 或失鲜后的恢复仍遵循下述接收端规则。
+上游始终独立执行 `r` 标定、`s` 跟随。SPD 暂停／回退期间，上游继续计算和发布当前目标；SPD 只控制本地物理执行和采集，不让虚影改变物理场景。
 
 ### ROS 连接与授权
 
@@ -102,38 +160,25 @@ export ROS_STATIC_PEERS=''
 
 54 维顺序为左臂 7、右臂 7、左手 20、右手 20，单位 rad。订阅端校验固定关节名称契约、维度、有限值、ready 组关节限位、session、递增 sequence 和 UTC 新鲜度，随后按 manifest 名称映射到机器人 qpos/actuator 地址。场景 free joints 不占用这 54 维；收到目标不意味着授权运动。
 
-| 操作 | 作用 |
-|---|---|
-| `e` | 显式启用／禁用命令应用；启用须有新鲜候选并通过目标差门限 |
-| `c` | 清除候选与授权，保持已有目标；不回 HOME、不重置物理场景 |
-| `F8` / `F9` | Viewer 切换所选关节的实际应用目标与实际 qpos 曲线 |
-| `g` | 已启用且至少一组命令新鲜、ready、未 hold 时准备新 episode |
-| `f` | 停止接收本段数据，后台校验并保存为成功 episode |
-| 左踏／`r` | 创建／替换本段最新检查点；任一手接触任务物体时拒绝 |
-| 中踏／本地 `s` | 暂停／恢复切换；恢复即显式授权请求，须通过新鲜度与对齐门限 |
-| 右踏／`d` | 有检查点：回退并保持暂停；无检查点：首次提示，再按 `d` 确认跳过本段 |
-| `q` / `Ctrl+C` | 退出当前进程；不会代替成功保存 |
+所有启动方式统一使用首页的本地 `r/s/d` 状态机，不再提供 `e/c/g/f` 运动／录制快捷键。`F8/F9` 保留关节曲线选择，`q`／`Ctrl+C` 保留退出。默认只发布 `/spd/collection/status`，不开放外部 Trigger 控制服务，避免绕过本地确认和一秒接入流程。
 
-Viewer、SPD 控制终端和独立触发终端均即时读取单键，不需要回车；操作前须把焦点放到目标窗口／终端。运动授权与录制独立，启动订阅器或按 `e` 不会自动录制。
-
-启用检查只针对 ready 组，相对当前保留目标计算，默认最大差值 `0.15 rad`（`--max-enable-delta-rad` 可调整）。双臂共用 ready 位，左右手各自独立；未 ready 组保持已有目标。每组超过 **100 ms** 未获得新鲜 ready 命令后锁存 hold，仍新鲜的其他组可继续。消息恢复不自动解除 hold，需要显式禁用后重新启用。合法新 session 撤销原有授权；物理 tick 消费目标时再次检查年龄，不把接收时合法等同于应用时仍有效。
+`r` 开段、暂停后的 `s` 和 `d` 是显式运动授权操作。它们检查新鲜合法候选、ready 和 session，并从实际 qpos 做一秒混合；不要求先把大目标差人工压到 `0.15 rad`，也不直接跳到该目标。普通执行器 `authorize()` 的旧目标差门仍保留在底层 API，交互入口只使用受控接入。接入期间 ready 集合改变、非法输入、新 session 或失鲜会撤销授权；恢复必须再次显式操作，不能自动续控。
 
 应用输出 `ready` 仅表示初始化完成，不代表发现了发布端、已收到有效候选或已授权。查看 HUD 的接收／有效／拒绝计数、候选年龄、session、ready/hold 和跟踪误差。曲线的实际应用目标与 MuJoCo 实际 qpos 是两条不同数据，目标不是观测。
 
 ### 论文 A.1 检查点与失败回退
 
-典型流程：键盘 `e → g` 开始；左踏 `r` 创建检查点；失误后右踏 `d` 回退；对齐上游目标后中踏 `s` 恢复；最后键盘 `f` 成功保存。
+上游 `r → s`；SPD `r` 开段并自动建立 0 号检查点 → 采集中 `r` 更新检查点 → `s` 暂停 → `d` 回退并自动一秒接入 → 成功后 `s → r → r` 保存。
 
-- 检查点仅属于当前 episode，保留最新一个。保存完整内存 `MjData`（包括执行器控制、求解器历史）、保留目标、物理 tick 和尚未采样的接触累计；不是从 HDF5 观测反推控制状态。
-- 存档前在独立 scratch 状态刷新当前接触，任一手与任务物体有 solver-active 接触就拒绝，已有检查点不变。手–桌接触、自碰撞不属于此判据；无接触不等于物体静止。
-- 暂停和回退冻结物理／命令应用，但继续接收 ROS、显示状态和处理操作。回退先由唯一写线程按队列顺序裁去检查点后的全部轨迹行，完成刷盘后恢复物理与接触累计；失败保留 partial，不伪装成功。
-- 回退与暂停清除候选及运动授权。上游不会被自动回程或重标定；人工对齐后按中踏（或 SPD 本地 `s`）即明确请求授权并恢复，必须有新鲜 ready 目标且通过原有 `0.15 rad` 门限，否则保持暂停和未授权。ROS `resume`／独立触发终端不具备此授权能力，仍要求本地先 `e`。
-- 三键职责对齐论文的 `checkpoint / pause / revert·skip`。有检查点时 `d` 只回退；无检查点时第一次 `d` 提示，第二次确认跳过。其他控制操作、状态转换或新 episode 会取消待确认跳过；`skip` 只丢弃当前段，不自动换任务。这些确认规则是论文未详述部分的本项目交互选择。
+- 检查点仅属于当前 episode，保存完整 `MjData`、保留目标、tick、采样相位和接触累计；不是从 HDF5 反推控制状态。
+- 0 号检查点在任何运动前自动建立，允许保留初始接触。采集中手动 `r` 仍要求双手没有与任务物体的有效接触；拒绝时旧点保留。
+- 回退先冻结物理并裁掉检查点后的全部数据和恢复标签，刷盘后恢复完整状态。邮箱清空后最多等待一个新鲜度窗口（100 ms）接收同 session 的新目标，再自动接入，避免把正常 60 Hz 包间隔误判为失败；超时、换 session 或目标无效则保持暂停，需人工 `s` 重试。
+- 每段始终有 0 号或更新后的检查点，`d` 不再表示丢弃；失败应回退重做。正常成功保存后随机换任务，新任务等待 `r`，不自动录制。
 - 检查点不跨进程持久化。最终 HDF5 只保留选择后的轨迹和 `/collection_events/rewind` 分支边界；失败片段不作为正常演示保留。暂停期间仿真时钟不走，真实单调时钟继续走。
 
 #### 脚踏板直接作为键盘
 
-踏板保持左 `r`、中 `s`、右 `d`，不需要重编程，也不需要设备路径、读取权限或专用驱动。程序不区分脚踏与普通键盘，同一字母使用同一映射；旧 `r/s/d` 开始／保存／丢弃映射及 `k/p/u/b/n` 交互快捷键已经移除。
+踏板保持左 `r`、中 `s`、右 `d`，无需重编程、设备路径、读取权限或专用驱动；程序不区分普通键盘与踏板。所有启动方式统一使用本地三键状态机：
 
 ```bash
 pixi run spd-sim --task cups/pyramid --table-distance 0.10
@@ -141,11 +186,13 @@ pixi run spd-sim --task cups/pyramid --table-distance 0.10
 
 把焦点放到 SPD 控制终端或 Viewer 后直接点按。终端使用 cbreak 单键输入，保留 Ctrl+C；关闭、EOF 或启动失败时恢复原终端设置。原 evdev 模块、设备参数和长按逻辑已经删除，不再读取或占用 `/dev/input`，无需执行设备 ACL 配置。
 
-**只点按，不长按。** 普通键盘输入没有可靠松开事件，无法区分多次真实点按与系统自动重复；长按 `s` 可能重复切换，长按 `d` 的重复字符可能确认跳过。确认提示不是物理防误触保证；需要时在桌面／踏板设置中关闭这些键的自动重复。程序不擅自修改系统键盘设置。脚踏作为普通键盘时也不提供设备拔出检测。
+**只点按，不长按。** 普通终端没有可靠松开事件；自动重复可能确认保存或在不同状态产生新的操作。接入期间收到的 `r/s/d` 丢弃，不在结束后执行；程序不修改系统键盘设置，也不检测设备拔出。
 
 ## 任务场景与模型
 
 环境包管理 `jenga`、`spelling_blocks`、`mugs`、`dishes`、`cups`、`bottles` 六类场景，保留论文 Table 2 的 17 个任务和附录 A.4 的 `jenga/playing`。独立场景查看保持机器人 HOME 目标，不启动 ROS 或发布器：
+
+在线 `spd-sim` 不指定 `--task` 时按 episode 随机选择；指定 `--task` 时固定。选择范围与任务中文名称／目标统一由注册表维护，任务 ID 不变。任务切换发生在成功保存完成后，不在暂停或回退中重建场景；新场景保留机器人状态并清除授权，物体重新生成，等待本地 `r`。每段 metadata 包含 `task_title_zh`、`task_goal_zh`、实际 `scene/task/seed`。
 
 ```bash
 pixi run spd-scene --task dishes/rack_dishes --seed 0
@@ -194,64 +241,30 @@ pixi run spd-envs-check
 
 正式资源在 `src/tianji_wuji2/tianji_wuji2/{assets,generated}`。不要在采集会话中替换模型；更改资产后重新编译、验证再使用，不混合不同机器人配置的数据。
 
-## 配置化采集与独立触发终端
+## 配置化采集与状态查看
 
-借鉴 `protype-yam-update` 的配置、触发服务和采集状态流程，复用 SPD 的同一个 MuJoCo 物理所有者和后台 HDF5 写入器。**独立的是触发客户端，不是第二套仿真或写入器**；不复制 CAN、真机、PICO、IK、缓存补帧或缺失数据补零。
+`pixi run spd-collect` 与 `spd-sim` 使用同一仿真／录制入口，二选一运行，均使用首页的三键逻辑。上游和 SPD 分别操作，SPD 不请求上游标定、暂停或跟随。
 
-终端一启动采集会话（与 `spd-sim` 二选一，不要同时启动）：
-
-```bash
-pixi run spd-collect --task cups/pyramid --table-distance 0.25
-# 同等 shell 入口：
-# bash bash/run_data_collector.sh --task cups/pyramid --table-distance 0.25
-```
-
-在这个终端点按 `e`，显式启用新鲜且满足目标差门限的关节候选，无需回车。启动采集进程不会自动运动或录制。已有 `spd-sim` 也提供同样的采集服务；升级代码后需重启旧进程。
-
-终端二启动触发器：
-
-```bash
-pixi run spd-collect-trigger
-# 或 bash bash/collect_trigger.sh
-```
-
-触发终端直接按键，无需回车：`g/f` 开始／成功保存，`r` 检查点，`s` 按当前状态选择暂停或恢复，`d` 有检查点则回退、无检查点需两次确认跳过。触发客户端不具有运动授权能力：远程恢复仍要求先在 SPD 本地 `e`，与本地中踏的授权＋恢复不同。`q`／`Ctrl+C` 仅退出触发器，**不会结束正在进行的录制**，也不会保存、丢弃或停止 SPD。退出、其他按键、采集器或 episode／状态变化会取消客户端待确认跳过。
-
-非交互调用：
-
-```bash
-pixi run spd-collect-trigger --command status
-pixi run spd-collect-trigger --command start
-pixi run spd-collect-trigger --command save
-pixi run spd-collect-trigger --command discard
-pixi run spd-collect-trigger --command checkpoint
-pixi run spd-collect-trigger --command pause
-pixi run spd-collect-trigger --command revert
-# 在 SPD 本地对齐、按 e 重新授权后：
-pixi run spd-collect-trigger --command resume
-pixi run spd-collect-trigger --command skip
-```
-
-这些是按需执行的独立操作，不是一组连续运行的脚本。客户端等待匹配的 collector／operation 完成，显示状态、帧数和路径；`save completed` 才表示关闭、校验及文件发布完成。拒绝、服务缺失、多实例冲突、状态失鲜或超时会明确报错，不自动重试；超时不能解释为操作未发生。默认 `--timeout 30`，失败后先检查 SPD 终端和当前状态。
+当前交互入口只发布只读状态 `/spd/collection/status`；可使用 `pixi run spd-collect-trigger --command status` 查看。旧远程 start/save/discard/skip 等控制示例不再适用于当前入口，外部 Trigger 服务不开放。
 
 采集配置 `config/collect_sim.yaml`：
 
 ```yaml
 version: 2
-data_dir: /data/TianjiSim
+data_dir: /data/TianjiSim/trajectories
 state_rate_hz: 60
 writer_queue_size: 256
 max_frames: 0
 ```
 
-- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如 `/data/TianjiSim/20260922/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
+- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如 `/data/TianjiSim/trajectories/20260922/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
 - 轨迹固定每 8 个 480 Hz 物理步采一帧，即仿真时间 60 Hz。记录物理步编号、仿真时间和主机单调时间；实际墙钟频率必须另行统计，不能以名义调度推断。旧配置中的 `camera_rate_hz` 已移除，配置版本改为 2。
 - `writer_queue_size` 限制后台写入队列；溢出报错并保留 partial，不静默丢帧。
 - `max_frames: 0` 表示不限；正数限制完整场景轨迹帧数，不按接收的命令数计数。可用 `--max-frames N` 覆盖。
-- 到达上限自动结束、校验并保存为 **`success=false`**，不会自动开启下一段。只有显式 `f`／`save` 标记成功。
+- 到达正数上限自动结束、校验并保存为 **`success=false`**，不会自动开启下一段；默认 `0` 不限帧数。只有操作者暂停后 `r → r` 确认保存才标记成功。
 - 每段记录实际生效的配置与配置文件路径；采样直接读取当前物理状态，不等待新的 ROS cmd，也不补写录制前缓存。
 
-服务为 `/spd/collection/{start,save,discard,checkpoint,pause,resume,revert,skip}`（`std_srvs/srv/Trigger`）；状态为 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local），包括 `physics_paused`、可空的 `checkpoint_frames` 和 `skip_confirmation`。服务成功响应表示操作已接受，最终结果由携带 `collector_id`、`operation_id` 的状态确认。显式 ROS 服务名不因键位更改而变化，也不授予运动权限或放宽启用门限。升级后采集器和触发客户端均需重启。
+默认仅发布 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local），包含状态、帧数、路径、`physics_paused`、`checkpoint_frames` 等。`checkpoint_frames=0` 是合法起始检查点，不代表无检查点。底层采集类保留管理接口供专用集成，但 `spd-sim` 不开放外部 Trigger 控制；升级后须重启采集进程。
 
 ## 物理轨迹、场景恢复与离线渲染边界
 
@@ -263,12 +276,12 @@ max_frames: 0
 
 新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
-每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。**升级后请指定新的采集根目录，例如 `--output /data/TianjiSim-trajectories`。** 历史数据不迁移、不删除。
+每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为 `/data/TianjiSim/trajectories`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不迁移、不删除。
 
 ```bash
 # 将路径替换为采集状态输出的实际文件路径
-pixi run validate_episode '/data/TianjiSim-trajectories/YYYYMMDD/episode_<UUID>.h5'
-pixi run replay_episode '/data/TianjiSim-trajectories/YYYYMMDD/episode_<UUID>.h5'
+pixi run validate_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
+pixi run replay_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
 ```
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
@@ -290,7 +303,7 @@ pixi run -e render spd-render --check-gpus
 
 # 最终相机已写入模型并确认标定后，正式批量渲染
 pixi run -e render spd-render \
-  --input /data/TianjiSim-trajectories \
+  --input /data/TianjiSim/trajectories \
   --output /data/TianjiSim-rendered
 ```
 
@@ -320,17 +333,19 @@ pixi run -e render spd-render \
 
 ## 能力与验证边界
 
-正式运行入口包括订阅仿真、配置化采集及独立采集触发、模型编译、场景查看／检查、轨迹恢复和 EGL 离线渲染。不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
+正式运行入口包括订阅仿真、本地三键采集及只读采集状态查询、模型编译、场景查看／检查、轨迹恢复和 EGL 离线渲染。当前仿真入口不开放外部采集 Trigger 服务；不存在 SPD 内的 PICO 启动、H5 命令发布、Zenoh tracking 或遥操作兼容入口。
 
 真实头显到上游再到 SPD 的端到端采集、硬件安全、跨主机网络、录制负载下的实时性能及论文数据等价性必须分别验收，不能以进程启动或模块存在替代。上游发布契约已定稿；本次 SPD 验证范围见下文，不宣称已完成真实头显联调。架构与职责见 [docs/architecture.md](docs/architecture.md)。
 
-### 普通键盘三键采集验证（2026-09-22）
+### 历史：普通键盘三键采集验证（2026-09-22）
+
+本节及下节记录独立采集方案确定前的操作；旧跳过按键、对齐门限和外部 Trigger 控制不属于当前入口。当前操作以首页本地 R/S/D 流程为准，独立采集的既有验收记录见文末。
 
 - 真实 PTY 向 ControlTerminal 写入无换行 `e/g/r/s/d/f/q`，驱动真实 ROS／MuJoCo 采集：首次无检查点 `d` 只提示，其他操作取消确认，第二次 `d` 才跳过；检查点回退恢复原物理状态，中键拒绝未对齐目标并在对齐后授权续采。
 - 生成的 7 帧 HDF5 通过独立恢复，机器人和物体状态最大误差均为 0；PTY 原有终端属性在关闭后恢复。8 项当前回归通过，包括即时单键输入、EOF、线程启动失败和终端恢复。
 - 实际 `spd-sim --headless` 与交互式 `spd-collect-trigger` 使用无换行按键完成启动、两次确认跳过、检查点及本地暂停／回退／恢复／保存；最终 838 帧文件独立恢复误差为 0，两个终端按 `q` 正常退出。未验证实体踩踏、桌面焦点或长按自动重复行为；没有设备权限依赖。
 
-### 检查点与失败回退验证（2026-09-22）
+### 历史：检查点与失败回退验证（2026-09-22）
 
 - 真实 Fast DDS 服务、MuJoCo `cups/pyramid` 场景和 HDF5 写入验证：暂停期间新命令不改变物理状态或帧数；无授权恢复被拒绝；实际手–杯接触拒绝替换已有检查点。
 - 失败分支后连续两次回退，再授权续采并保存；10 帧完整文件通过独立恢复，机器人位置／速度和物体位姿最大误差均为 0；回退事件保留、tick 间隔为 8、主机时间严格递增。跳过仅删除当前段，暂停退出保留不完整文件。
@@ -373,7 +388,7 @@ pixi run -e render spd-render \
 - 实际无图形控制终端 `e/r/s/d` 完成保存和丢弃，中断保留未标记成功的 partial 文件。保存的示范包含双臂／双手各 2,202 帧、每路 RGB 551 帧，`validate_episode` 和 `replay_episode` 均通过。去除 tmux 后，前台 `spd-sim --headless` 启动、终端输入及 SIGINT 退出已重新验证，无残留订阅进程。
 - 三路 1280×720 RGB 已实际渲染并检查；本次未验证桌面 Viewer 交互、真实头显到上游发布端的完整链路、相机标定或录制实时性能。帧数不是采集频率保证。
 
-### protype 采集流程适配验证（2026-09-22）
+### 历史：protype 采集流程适配验证（2026-09-22）
 
 - 完整保留测试共 56 项通过；首次采样状态提示修正后，相关采集／录制 8 项回归再次通过。
 - 独立 ROS domain 128 的真实 Fast DDS、MuJoCo 和三路相机验证：未授权开始被拒绝；帧数上限 12 自动保存双臂／双手各 12 帧、各路 RGB 3 帧，`success=false`；显式保存段为状态各 57 帧、各路 RGB 15 帧，`success=true`，均通过文件校验。
@@ -385,3 +400,43 @@ pixi run -e render spd-render \
 - 移除文件中的命令目标、命令序号／会话等扩展，采样接口不再接收 AppliedCommand。此前验证记录属于校正前的输出，不能作为当前 state-only 文件契约的证明。
 - 57 项测试通过；新增真实 MuJoCo 回归，验证没有新 cmd 时仍可采集实际 qpos，并与保留目标明确区分。
 - 再次执行真实 DDS → MuJoCo → 采集服务：新文件仅有 `observations/{arms,hands}` 和 `images`，无 commands/actions；状态各 12 帧、每路 RGB 3 帧，校验通过。录制状态与本次测试源发送目标的最大差约 0.0633 rad，未将 cmd 当 state 写入。
+
+### 历史：统一 R/S/D 控制通道迁移验证（2026-09-22）
+
+- 当时控制曾切换到 ROS `PicoControl`／`PicoControlStatus`。当前确认方案已移除 SPD 远端控制客户端：上游独立 R/S，SPD 只订阅 JointCommand、本地执行三键状态机。以下记录仅作历史，当前验收见后续章节。
+- 修正 SPD 双手启动目标：关节范围中点与上游零位不一致，原先默认 `0.15 rad` 门限拒绝接入。现使用同一零位并校验范围，不放宽授权门限。
+- 上游 `test_control_server` 与 `test_spd_publisher` 共 16 项定向测试通过；发布器单测使用独立临时锁目录，不抢占正在运行的 domain `121` 自测。
+- 键盘适配前，隔离 ROS domain `122` 的合成 PICO TCP 输入经真实 DLS／Hand2、当时的本地控制通道／DDS 与无图形 `RosViewerApp` 跑通标定、采集、检查点、暂停恢复、回退、保存和丢弃。保存 19 帧轨迹，`success=true`、`complete=true`、文件校验通过，包含 1 个回退记录。该记录不作为当前 ROS 控制或键盘交互的验收依据。
+- 当前入口只使用普通键盘，不读取或独占设备、不检测长按，暂停后 `r → r` 确认保存。真实头显、桌面 Viewer 焦点及实时性能仍需现场验收。
+- 普通键盘适配后、此次 ROS 控制迁移前，加载本地 ROS 接口 overlay 的 13 项回归通过；真实 PTY 单键输入经现有终端和应用分发，验证暂停、保存确认取消、再次 `r → r` 保存成功及 HDF5 校验。当时的无图形三键入口无需设备参数，`r/s` 无需回车即响应，未连接上游时保持未授权，`q` 正常退出（退出码 0）。该历史记录不是当前入口的验收结果；真实头显联调仍需现场验证。
+
+### 历史：随机任务与中文任务条验证（2026-09-22）
+
+以下联调记录包含旧远端控制和丢弃流程，不能作为当前独立三键入口的验收；场景／任务 API 保持不变，当前只在保存完成后切换任务。
+
+- 不传 `--task` 时按段随机选择；指定 `--task` 保持固定，`--scene` 可缩小随机范围，显式 `--seed` 可复现序列。实际无 `--task/--seed` 的启动命令选中 `cups/unstack` 并打印中文名称／目标；固定任务、场景过滤及种子复现另经运行验证。
+- 19 项回归通过：覆盖保存／丢弃后换场景、暂停和保存失败不换场景、旧输入不授权新场景、不同模型维度间机器人状态连续、新物体保持初始状态、无效状态迁移拒绝。
+- 合成 PICO TCP 输入经真实 DLS／Hand2、ROS 与无图形仿真，完成“悬挂马克杯 → 保存 → 叠放餐盘 → 确认丢弃 → 多米诺骨牌”。两次换任务均保留机器人关节位置、速度和目标，并保持未授权；首段 4 帧轨迹通过文件校验。
+- 在隔离 X 显示器上运行真实 MuJoCo Viewer，截图确认中文任务名称／目标位于窗口顶部，640 像素窄窗口下长目标正确换行。该软件渲染环境的端到端图形联调触发过失鲜保护，因此原生连续换任务验证使用无图形模式；没有放宽新鲜度或授权门限。真实头显及实际 GPU 图形实时性仍需现场验收。
+
+### 独立 R/S、零号检查点与一秒恢复验收（2026-09-22）
+
+- 上游 R 标定后保持 ready，显式 S 后才跟随；124 项裸手包回归通过（含11项定向生命周期回归）。原生 Viewer/worker 已重建；对齐当前上游源码时修复了两处阻止编译的表达式／字段引用错误，没有修改既有 YAML 运动参数。
+- SPD 当前 29 项回归通过，覆盖0号检查点、实际状态连续性、过渡逐 tick 更新、ready／session／失鲜撤权、60 Hz 包间隔下的自动回退接入、软限位实测超调的合法命令起点、恢复标签裁剪及写盘失败保护。
+- 实际原生 DLS/Hand2＋60 Hz 合成 PICO TCP＋ROS domain122＋无图形 SPD 经 PTY 按键跑通：r 开段、0号检查点、接入期间忽略 r/s/d、s 暂停期间上游继续发布、s 一秒恢复、r 更新检查点、暂停 d 自动回退接入、r→r 成功保存。
+- 保存 200 帧，恢复标签计数为 0=18、1=61、2=60、3=61；文件校验与独立恢复通过，机器人位置／速度最大恢复误差为0。失败后缀已裁掉，恢复标签与轨迹行数一致；这是合成输入验证，不是实际头显精度／实时性验收。
+- 真实 MuJoCo 窗口截图验证检查点／实时目标两种蓝色半透明手部虚影以及正常跟随时隐藏；只有42个左右 wrist 子树视觉几何，机器人 qpos/qvel/ctrl 和模型外观数组未被虚影计算修改。中文任务条显示“检查点目标／实时目标（1秒接入）”。
+
+### 独立采集单话题收敛验收（2026-09-23）
+
+- 两端只保留既有 `JointCommand` 跨项目数据链；控制 socket、远程控制客户端和试迁移的
+  `PicoControl`／`PicoControlStatus` 已移除，生成绑定清理后分别重建，消息原始指纹不变。
+- 本次 SPD 独立三键、任务生命周期、接入过渡定向回归分别 **4／1／10 项通过**；
+  上游裸手包回归 **113 项通过**。这些是本次范围，不反写前面的历史测试数量。
+- 隔离 domain **173**，实际两个前台程序经合成 PICO TCP、真实 DLS／Hand2 和直接 DDS
+  跑通上游 R→S、SPD R 开段／检查点、S 暂停、D 回退自动恢复、S→R→R 成功保存。
+  SPD 暂停时上游仍为 TELEOP；DDS 目标话题为一个发布端、一个订阅端，无跨项目控制端点。
+- `hardware_free` 场景保存 **6374 帧**，`validate_episode` 和 `replay_episode` 通过，
+  `complete=true`、`success=true`、恢复标注有效，机器人 qpos/qvel 最大恢复误差为 **0**。
+  两端 Q 退出码均为 0，临时测试源和数据已清理。
+- 本次没有真实头显、任务物体交互、图形虚影或 GPU 吞吐验收，不把单话题结构当作端到端低延迟证明。

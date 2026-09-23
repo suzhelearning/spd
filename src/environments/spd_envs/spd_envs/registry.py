@@ -12,6 +12,8 @@ from .scene_builder import ProceduralSceneBuilder, SceneBuildResult
 class TaskSpec:
     name: str
     prompt: str
+    title_zh: str
+    goal_zh: str
     target_duration_s: float | None
     build: Callable[[int], SceneBuildResult]
     reset: Callable[[int], SceneBuildResult]
@@ -66,6 +68,29 @@ PROMPTS = {
     ("cups", "unstack"): "Unstack the nested cups.",
     ("bottles", "toss_in_bin"): "Toss every bottle into the bin.",
 }
+TASK_TEXT_ZH = {
+    ("jenga", "hollow_tower"): ("空心积木塔", "用积木搭建一座空心塔。"),
+    ("jenga", "tower"): ("搭建积木塔", "用积木搭建一座稳固的塔。"),
+    ("jenga", "dominos"): ("多米诺骨牌", "将积木排列成一条多米诺骨牌链。"),
+    ("jenga", "criss_cross"): ("交错积木塔", "将积木交错堆叠成塔。"),
+    ("jenga", "handover_lr"): ("左手交给右手", "将积木从左手传递到右手。"),
+    ("jenga", "handover_rl"): ("右手交给左手", "将积木从右手传递到左手。"),
+    ("jenga", "playing"): (
+        "抽取并叠放积木",
+        "先推出塔中间的一块积木，再将其完整抽出，保持塔不倒塌，最后把积木放到塔顶。",
+    ),
+    ("spelling_blocks", "spelling"): ("字母拼词", "用字母积木拼出 ROBOTICS。"),
+    ("spelling_blocks", "sort_and_unload"): ("字母积木分拣", "将字母积木分类并取出。"),
+    ("spelling_blocks", "pyramid"): ("字母积木金字塔", "用字母积木搭建金字塔。"),
+    ("spelling_blocks", "vowel_consonant_sort"): ("元音辅音分类", "将字母积木按元音和辅音分成两组。"),
+    ("mugs", "hang_mug"): ("悬挂马克杯", "将马克杯挂到杯架上。"),
+    ("dishes", "rack_dishes"): ("餐盘入架", "将餐盘放入沥水架。"),
+    ("dishes", "plate_dishes"): ("叠放餐盘", "将餐盘整齐叠成一摞。"),
+    ("cups", "pyramid"): ("杯子金字塔", "用杯子搭建金字塔。"),
+    ("cups", "stack_two_threes"): ("两组三杯叠放", "将杯子叠成两组，每组三个。"),
+    ("cups", "unstack"): ("拆分套叠杯", "将套叠在一起的杯子逐个分开。"),
+    ("bottles", "toss_in_bin"): ("投瓶入箱", "将所有瓶子投入收纳箱。"),
+}
 
 
 def _build(scene: str, task: str, seed: int) -> SceneBuildResult:
@@ -90,6 +115,8 @@ def _task(scene: str, task: str) -> TaskSpec:
     return TaskSpec(
         name=task,
         prompt=PROMPTS[(scene, task)],
+        title_zh=TASK_TEXT_ZH[(scene, task)][0],
+        goal_zh=TASK_TEXT_ZH[(scene, task)][1],
         target_duration_s=duration,
         build=builder,
         reset=builder,

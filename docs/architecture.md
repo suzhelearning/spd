@@ -2,7 +2,7 @@
 
 ## 1. 边界与数据流
 
-SPD 是 **ROS 关节命令订阅端与 MuJoCo 仿真数据采集端**。输入设备接入、人体标定、共享根坐标下的 Franka DLS + Ruckig、Hand2 映射和 ROS 发布属于独立上游 `tianji_teleop-ros2`；已定稿入口是在其工作区运行 `bash bash/run_pico_hand_sim.sh --height-m 1.75`。SPD 不启动上游，不包含 PICO/IK/重定向/命令发布器，不发布实机控制。上游最多 60 Hz 发布 54 维 rad 目标，`--headless` 只关闭辅助窗口，发布继续；C、跟随、失鲜和 P／H／Q 制动／回程的 readiness 与会话由上游负责。
+SPD 是 **ROS 关节命令订阅端与 MuJoCo 仿真数据采集端**。人体标定、共享根 DLS/Ruckig、Hand2 映射与 ROS 发布属于独立上游 `tianji_teleop-ros2`。上游普通入口 `bash bash/run_pico_hand_sim.sh --height-m HEIGHT` 使用 `r` 标定、`s` 显式启动。SPD 不请求或管理上游标定、跟随、暂停；本地暂停时上游继续发布目标。SPD 仅对收到的合法目标做一秒接入，不实现 IK 或实机控制。
 
 ```text
 独立上游：输入 / 标定 / 求解 / ROS JointCommand 发布
@@ -52,11 +52,15 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
 
 订阅回调校验名称顺序、维度、有限值、ready 组限位、session、递增 sequence 与 UTC 新鲜度，完整通过后才原子替换最新候选。物理 tick 消费时再次校验年龄；按 manifest 名称预计算 qpos/actuator 地址，场景 free joints 不改变机器人索引。
 
-显式 `e` 启用要求新鲜候选，且 ready 组每个关节相对保留目标的差不超过默认 `0.15 rad`；该门限可通过 `--max-enable-delta-rad` 调整。新 session 撤销已有授权，`c` 清除控制与授权但不回 HOME 或重置场景。
+SPD 统一使用本地状态化 r/s/d：待开始 r 开段，暂停 s 恢复，暂停 d 回退后自动恢复。这些操作调用受控的一秒目标接入，不直接将大目标差应用到执行器。计时从准备完成后的首个物理应用步开始，以主机单调时钟计算五次平滑权重；起点是实际 qpos，终点每步取最新合法目标。1 秒结束目标混合，不保证物理到位。普通 authorize API 的 0.15 rad 差值门仍保留，但不再提供 e/c 快捷键或该门限的交互选项。
+
+物理软限位允许少量实测超调。接入时将实测位置投影为合法命令起点，不写回物理 qpos/qvel；上游目标仍严格做范围验证，不对输入静默裁剪。回退清空邮箱后可在100ms新鲜度窗口内等待同session的新包再接入；超时或换session保持暂停，需人工操作。
 
 ready/hold 三组分别为双臂（bit 0）、右手（bit 1）、左手（bit 2）。未 ready 组保持目标；每组超过 100 ms 没有新鲜 ready 目标后锁存 hold，其他新鲜组仍可执行。数据恢复不能自动恢复该组运动，须再次显式禁用／启用。目标保持不是冻结 qpos：物理积分、接触和跟随误差继续存在。
 
 Viewer 用 `F8/F9` 选择关节，展示实际应用目标与实际 qpos；HUD 展示接收／有效／拒绝计数、候选年龄、session、ready/hold 与跟踪误差。进程 ready、DDS 对端发现、有效候选和运动授权是四种不同状态。
+
+暂停／回退期间，Viewer 在 user_scn 中显示检查点目标的 Wuji2 双手虚影；接入期间切换为实时目标虚影，正常采集隐藏。使用只读目标、独立 MjData 正运动学和仅左右 wrist 子树的视觉几何；不修改实际 model/data、不复制机身／机械臂／物体、不参与碰撞。中文任务条标明“检查点目标／实时目标”。
 
 ## 4. 进程与网络边界
 
@@ -68,7 +72,7 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 ## 5. 物理场景、随机化与模型限制
 
-环境注册表保留六类场景、Table 2 的 17 个任务和 A.4 的 `jenga/playing`。`spd-scene --task SCENE/TASK --seed N` 可独立查看；`spd-sim` 使用同样的任务／seed 参数接入订阅仿真。场景在启动时选择，不运行中切换。
+环境注册 18 个任务。spd-sim 未指定 --task 时启动随机选择，每段完成后重建下一场景并清除授权；显式 --task 固定任务，--scene 可限制随机范围，--seed 可复现选择序列。跨模型只保留机器人实际位置、速度及保留目标，新物体重新初始化，旧检查点不继承；新任务等待 r 开段。
 
 先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。桌高 0.75 m；固定盘架、杯架和箱体，任务物体通过 free joints、重力、摩擦与真实接触运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放，RGB 来自该状态渲染，不是录制画面的替代粘贴。
 
@@ -88,7 +92,7 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 `config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机定义仍由 `config/sim_cameras.yaml` 注入模型并保存，但在线采集不创建渲染器、不采 RGB。Viewer 是操作反馈，与后续训练渲染无关。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
 
-运动与录制独立：已启用且至少一组新鲜 ready／非 hold 命令时，`g` 准备新 episode，`f` 确认成功并保存。普通键盘与脚踏共用 `r/s/d`：左键检查点、中键暂停／恢复、右键有检查点则回退；无检查点首次提示，再按右键确认跳过。其他控制操作、状态转换、新 episode 取消待确认跳过。暂停时本地 `s` 属于显式授权，重新检查目标新鲜度和对齐门限；远程客户端不获得此授权能力。准备／保存／丢弃／回退期间拒绝新采集操作。退出、非暂停造成的撤权、队列溢出或数据错误保留不完整 partial；分组 hold 不冻结物理。
+SPD 本地 r 开段并在任何运动前创建 0 号检查点，采集中 r 更新检查点、s 冻结物理和采样。暂停 s 做一秒接入恢复；暂停 d 回退并自动接入，不需再次按 s；采集中 d 无效。暂停 r→r 确认成功保存，没有操作者丢弃分支。接入期间普通 r/s/d 丢弃，不在终点后重放；失鲜、非法数据或接入期间 ready 集合变化仍撤权暂停。开文件等 I/O 准备不计入一秒过渡。
 
 `TrajectorySource` 在会话初始化时序列化完整 MuJoCo 模型，包含网格、纹理和相机。SHA-256、精确 MuJoCo 版本、物理设置、源资产溯源、任务随机参数及关节／物体地址映射随 episode 保存。原场景 XML 删除或搬迁不影响恢复；不支持不同 MuJoCo 版本之间直接加载二进制快照。
 
@@ -98,17 +102,17 @@ Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATIL
 
 `CollectionSession` 是本地按键和 ROS 请求共享的唯一录制状态机。单个协调 worker 负责准备／保存／丢弃；单个 HDF5 写线程接收有界整帧队列。队列满、数据不合法或漏 tick 立即报错，绝不覆盖旧样本或静默丢帧。完成后校验全部行、数据类型、时间轴、模型和元数据哈希，才发布 `.h5`；完整性 `complete` 与任务结果 `success` 分离。帧数上限为 `success=false`，仅显式保存为 true。
 
-检查点按论文 A.1 拒绝任一手与任务物体的当前 solver-active 接触；使用独立 scratch MjData 刷新接触，不以旧接触缓存或整个采样区间判定。在线检查点通过 `mj_copyData` 保存完整 MjData、tick、保留目标和未结束接触区间，仅存在内存中且不可跨模型／episode 使用。回退先冻结物理并清除授权，由协调 worker 向唯一写线程发送 FIFO 裁剪事件，缩短全部轨迹数据集并刷盘；完成后恢复检查点和采样计数，再次清空邮箱并同步执行器保留目标。主循环暂停时继续 ROS、控制操作、HUD 和心跳，不执行目标应用或物理积分。恢复要求操作者对齐后显式授权，不改动上游 IK、标定或会话。
+开段自动保存完整初始检查点，允许初始接触；采集中手动更新仍拒绝任一手与任务物体的当前 solver-active 接触。检查点保存 MjData、tick、保留目标、采样相位及接触累计。回退先冻结并清除授权，唯一写线程裁去失败后缀和标签后刷盘，再恢复完整状态。目标仍有效时自动一秒接入；否则保持暂停等待人工 s，不自动重试。检查点不跨 episode 或模型。
 
-`interfaces.keyboard_control` 统一 Viewer、SPD 控制终端与触发终端的 `r/s/d/g/f` 键义，终端通过 cbreak 即时读取单键，无需回车，保留 Ctrl+C 并在退出时恢复原 tty 属性。输入线程只向物理线程排队；Viewer 或终端须获得焦点，程序无法区分普通键盘与踏板。原 evdev 读取器、设备参数和长按识别已移除，不需要输入设备权限。普通键盘自动重复会成为重复命令，必须点按；不提供拔出检测。`request_local("pause_toggle")` 只用于本地授权恢复；`request_local("revert_skip")` 在物理线程维护本段确认状态。ROS 不提供这两个本地操作；触发客户端依据新鲜状态选择现有服务，并在客户端维护跳过确认，不能远程授权。
+普通键盘和踏板均使用 r/s/d，终端 cbreak 输入无需回车；q／Ctrl+C 退出，F8/F9 保留曲线选择。输入回调只排队，接入期间收到的录制按键直接丢弃。无 evdev、长按或拔出检测；普通自动重复可能确认保存，操作者须点按。上游键位独立，不因 SPD 按键转发任何控制请求。
 
-裁剪移除失败分支而保留前缀，恢复原仿真 tick／时间和采样相位，真实单调时钟不回退。可选 `/collection_events/rewind` 记录保留帧数与回退墙钟时间，后续样本不得跨该分支边界。三键职责与论文一致；暂停同时冻结物理、无检查点两次确认跳过、跳过不自动换任务，是论文未详述行为的工程选择。
+裁剪删除失败分支，恢复原仿真 tick／时间和采样相位；主机单调时钟不回退。collection_events/rewind 记录分支边界；新增 recovery_transition uint8[N] 标记正常、开段接入、暂停恢复、回退恢复（0/1/2/3）。接入期间保留真实采样和标签，不伪造连续人工动作。旧无标签文件仍能验证，但明确报告未标注；训练窗口不能跨回退或被排除的接入段。
 
 每次接受 start 时按本机日期固定 `YYYYMMDD/`。跨午夜不拆段，下一段重新选日期；每日 `dataset_config.json` 仅约束模型无关的共享 schema。旧 schema-v1 目录拒绝追加，不修改历史数据。输出优先级保持 `--output`、`SPD_EPISODE_OUTPUT`、配置 `data_dir`。
 
 `replay_episode` 加载内嵌模型，在独立 MjData 逐帧赋值并调用前向计算，验证机器人投影和物体位姿；不调用 `mj_step`、不发送目标、不渲染。记录不包含 ctrl 或全部积分器历史，不能当作恢复原控制运行的检查点。公开校验和恢复拒绝 partial／未完成文件，且拒绝 schema、模型、元数据和 MuJoCo 版本不匹配。详见 [schema-v2.md](schema-v2.md)。
 
-`CollectionRosControl` 在同一节点提供 `/spd/collection/{start,save,discard,checkpoint,pause,resume,revert,skip}`；服务响应只表示接受，最终状态带 collector／operation ID。可靠 transient-local `/spd/collection/status` 包含状态、帧数、路径、错误、elapsed、`physics_paused`、可空 `checkpoint_frames` 和 `skip_confirmation`。独立触发客户端支持全部采集操作但无运动授权能力；本地授权／清除也通过动作队列交给物理线程。升级后两端均须重启。
+默认 CollectionRosControl 只发布可靠 transient-local 的 /spd/collection/status；外部 Trigger 控制禁用，避免绕过本地确认和接入流程。状态保留 collector／operation、路径、帧数、physics_paused 和 checkpoint_frames，0 表示合法起始检查点。底层 CollectionSession/recorder 的管理接口仍服务测试和专用集成，不属于操作者按键流程。
 
 采集侧已实现在线检查点／回退，不实现采后接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染输出当前保留轨迹的所有源帧，不代替这些处理。
 

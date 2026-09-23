@@ -128,7 +128,7 @@ class EpisodeRecorder:
     """Transfer owned scene snapshots through a strictly bounded writer queue.
 
     After append_frame succeeds the caller must not mutate its arrays. Each queue
-    event contains one entire row; no images, commands, or independent streams exist.
+    event contains one entire state row and its recovery label; no command streams.
     """
 
     def __init__(self, output_root: str | Path, *, queue_size: int = 256) -> None:
@@ -231,6 +231,9 @@ class EpisodeRecorder:
                 for name, (dtype, shape) in self._specs.items():
                     trajectory.create_dataset(name, shape=(0, *shape), maxshape=(None, *shape),
                                               dtype=dtype, chunks=(64, *shape))
+                events = handle.create_group("collection_events")
+                events.create_dataset("recovery_transition", shape=(0,), maxshape=(None,),
+                                      dtype=np.uint8, chunks=(64,))
             self._partial_path, self._final_path = partial, final
             self._queue = queue.Queue(maxsize=self._queue_size)
             self._previous = None
@@ -250,16 +253,20 @@ class EpisodeRecorder:
                 self._done.set()
                 raise
 
-    def append_frame(self, frame: dict[str, Any]) -> None:
+    def append_frame(self, frame: dict[str, Any], *, recovery: int = 0) -> None:
+        """Enqueue one atomic state/label row: 0=normal, 1=start, 2=resume, 3=rewind."""
         with self._lock:
             if self._error is not None:
                 raise RecorderError(str(self._error)) from self._error
             if self._state != "recording" or self._queue is None:
                 raise RuntimeError("no episode is recording")
             try:
+                if (isinstance(recovery, (bool, np.bool_))
+                        or not isinstance(recovery, (int, np.integer)) or not 0 <= recovery <= 3):
+                    raise ValueError("recovery must be an integer in 0..3")
                 previous = _check_frame(frame, self._specs, self._previous)
                 # Copy only the small mapping, never its owned snapshot arrays.
-                self._queue.put_nowait(_Event("frame", dict(frame)))
+                self._queue.put_nowait(_Event("frame", (dict(frame), int(recovery))))
                 self._previous = previous
             except (ValueError, TypeError, OverflowError, queue.Full) as exc:
                 error = RecorderQueueOverflow("schema-v2 writer queue overflow") if isinstance(exc, queue.Full) else exc
@@ -314,6 +321,7 @@ class EpisodeRecorder:
         try:
             with h5py.File(path, "r+") as handle:
                 datasets = dict(handle["trajectory"].items())
+                recovery = handle["collection_events/recovery_transition"]
                 index = 0
                 while True:
                     try:
@@ -323,14 +331,18 @@ class EpisodeRecorder:
                             break
                         continue
                     if event.kind == "frame":
+                        frame, label = event.payload
                         # Roll back every dataset extent if an individual write fails.
                         try:
                             for name, dataset in datasets.items():
                                 dataset.resize(index + 1, axis=0)
-                                dataset[index] = event.payload[name]
+                                dataset[index] = frame[name]
+                            recovery.resize(index + 1, axis=0)
+                            recovery[index] = label
                         except BaseException:
                             for dataset in datasets.values():
                                 dataset.resize(index, axis=0)
+                            recovery.resize(index, axis=0)
                             raise
                         index += 1
                     elif event.kind == "truncate":
@@ -346,6 +358,7 @@ class EpisodeRecorder:
                             )
                             for dataset in datasets.values():
                                 dataset.resize(count, axis=0)
+                            recovery.resize(count, axis=0)
                             events = handle.require_group("collection_events")
                             if "rewind" not in events:
                                 events.create_dataset("rewind", shape=(0,), maxshape=(None,),
@@ -580,23 +593,35 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
             dataset = trajectory[name]
             if not isinstance(dataset, h5py.Dataset) or dataset.dtype != dtype or dataset.shape != (frames, *shape):
                 raise ValueError(f"trajectory/{name} dtype, shape or row count mismatch")
+        recovery_annotated = False
         if "collection_events" in handle:
             events = handle["collection_events"]
-            if not isinstance(events, h5py.Group) or set(events) != {"rewind"} or events.attrs:
-                raise ValueError("collection_events must contain only rewind, with no attributes")
-            rewinds = events["rewind"]
-            if (not isinstance(rewinds, h5py.Dataset) or rewinds.ndim != 1
-                    or rewinds.dtype != _REWIND_DTYPE or rewinds.attrs):
-                raise ValueError("collection_events/rewind must be (frame_count:int64, monotonic_ns:int64) rows")
-            previous_count, previous_time = -1, -1
-            for start in range(0, rewinds.shape[0], _VALIDATION_ROWS):
-                for event in rewinds[start:start + _VALIDATION_ROWS]:
-                    count, timestamp = int(event["frame_count"]), int(event["monotonic_ns"])
-                    if count < 0 or count > frames or count < previous_count:
-                        raise ValueError("rewind frame counts must be ordered retained-prefix boundaries")
-                    if timestamp < 0 or timestamp <= previous_time:
-                        raise ValueError("rewind monotonic timestamps must be non-negative and strictly increasing")
-                    previous_count, previous_time = count, timestamp
+            if (not isinstance(events, h5py.Group)
+                    or set(events) - {"rewind", "recovery_transition"} or events.attrs):
+                raise ValueError("collection_events permits only rewind and recovery_transition, with no attributes")
+            if "recovery_transition" in events:
+                recovery = events["recovery_transition"]
+                if (not isinstance(recovery, h5py.Dataset) or recovery.dtype != np.dtype("uint8")
+                        or recovery.shape != (frames,) or recovery.attrs):
+                    raise ValueError("collection_events/recovery_transition must be uint8[frames], with no attributes")
+                for start in range(0, frames, _VALIDATION_ROWS):
+                    if np.any(recovery[start:start + _VALIDATION_ROWS] > 3):
+                        raise ValueError("recovery_transition values must be 0=normal, 1=start, 2=resume, 3=rewind")
+                recovery_annotated = True
+            if "rewind" in events:
+                rewinds = events["rewind"]
+                if (not isinstance(rewinds, h5py.Dataset) or rewinds.ndim != 1
+                        or rewinds.dtype != _REWIND_DTYPE or rewinds.attrs):
+                    raise ValueError("collection_events/rewind must be (frame_count:int64, monotonic_ns:int64) rows")
+                previous_count, previous_time = -1, -1
+                for start in range(0, rewinds.shape[0], _VALIDATION_ROWS):
+                    for event in rewinds[start:start + _VALIDATION_ROWS]:
+                        count, timestamp = int(event["frame_count"]), int(event["monotonic_ns"])
+                        if count < 0 or count > frames or count < previous_count:
+                            raise ValueError("rewind frame counts must be ordered retained-prefix boundaries")
+                        if timestamp < 0 or timestamp <= previous_time:
+                            raise ValueError("rewind monotonic timestamps must be non-negative and strictly increasing")
+                        previous_count, previous_time = count, timestamp
         qpos_indices = metadata["robot_qpos_indices"]
         qvel_indices = metadata["robot_qvel_indices"]
         if specs["qpos"][1] != (model.nq,) or specs["qvel"][1] != (model.nv,):
@@ -622,7 +647,7 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
     return {
         "episode_path": str(h5_path), "schema_version": SCHEMA_VERSION,
         "task": task, "success": success, "frames": frames, "complete": complete,
-        "model_sha256": model_hash, "valid": True,
+        "model_sha256": model_hash, "valid": True, "recovery_annotated": recovery_annotated,
     }
 
 

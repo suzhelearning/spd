@@ -151,6 +151,7 @@ class PlantController:
         self._closed = False
         self.tick = 0
         self._set_home_state()
+        self._robot_state_inheritable = True
 
     def _prepare_joint_commands(self) -> None:
         """Resolve the wire contract by names, independently of scene DOFs."""
@@ -166,6 +167,7 @@ class PlantController:
             self.model.jnt_type[joint_ids] != self._mujoco.mjtJoint.mjJNT_HINGE
         ):
             raise ManifestError("joint commands require named hinge joints")
+        self._command_joints = joint_ids
         self._command_qpos = self.model.jnt_qposadr[joint_ids].copy()
         self._command_dof = self.model.jnt_dofadr[joint_ids].copy()
         self._command_actuators = np.asarray([self._actuator_ids[e.actuator] for e in entries])
@@ -203,6 +205,93 @@ class PlantController:
         self.data.time = 0.0
         self._mujoco.mj_forward(self.model, self.data)
 
+    def inherit_robot_state(self, previous: PlantController) -> None:
+        """Carry only robot state into a fresh scene, without stepping or authorizing it.
+
+        Call on the physics owner thread while neither plant is being integrated.
+        Scene joints, fixture state and the new scene clock retain their initial values.
+        """
+        if not isinstance(previous, PlantController) or previous is self:
+            raise ValueError("robot state requires a different source plant")
+        if self.model is previous.model or self.data is previous.data:
+            raise ValueError("robot state requires a new model and independent physics data")
+        if self._closed or previous._closed:
+            raise RuntimeError("cannot inherit robot state from or into a shut down plant")
+        if not self._robot_state_inheritable or self.tick != 0 or self.data.time != 0:
+            raise ValueError("robot state can only be inherited by a fresh plant")
+        if (
+            self.artifact_hash in ("", "unknown", "unverified")
+            or self.artifact_hash != previous.artifact_hash
+        ):
+            raise ValueError("robot state requires matching verified base artifacts")
+
+        initial_qpos = self.model.qpos0.copy()
+        initial_qpos[self._command_qpos] = self._command_home
+        initial_ctrl = np.zeros(self.model.nu, dtype=np.float64)
+        initial_ctrl[self._command_actuators] = self._command_home
+        if (
+            not np.array_equal(self.data.qpos, initial_qpos)
+            or np.any(self.data.qvel)
+            or not np.array_equal(self.data.ctrl, initial_ctrl)
+            or not np.array_equal(self._command_targets, self._command_home)
+            or self.hold_mask != VALID_READY_MASK
+        ):
+            raise ValueError("destination robot and scene state must still be initial")
+
+        for plant in (previous, self):
+            model, ids = plant.model, plant._command_actuators
+            gain, bias = model.actuator_gainprm[ids], model.actuator_biasprm[ids]
+            gear = model.actuator_gear[ids]
+            if (
+                len(np.unique(ids)) != len(JOINT_NAME_TUPLE)
+                or np.any(model.actuator_trntype[ids] != self._mujoco.mjtTrn.mjTRN_JOINT)
+                or not np.array_equal(model.actuator_trnid[ids, 0], plant._command_joints)
+                or np.any(model.actuator_dyntype[ids] != self._mujoco.mjtDyn.mjDYN_NONE)
+                or np.any(model.actuator_gaintype[ids] != self._mujoco.mjtGain.mjGAIN_FIXED)
+                or np.any(model.actuator_biastype[ids] != self._mujoco.mjtBias.mjBIAS_AFFINE)
+                or not np.all(np.isfinite(gain))
+                or not np.all(np.isfinite(bias))
+                or np.any(gain[:, 0] <= 0)
+                or np.any(gain[:, 1:])
+                or np.any(bias[:, 0])
+                or not np.array_equal(bias[:, 1], -gain[:, 0])
+                or np.any(bias[:, 2] > 0)
+                or np.any(bias[:, 3:])
+                or np.any(gear[:, 0] != 1)
+                or np.any(gear[:, 1:])
+            ):
+                raise ValueError("robot state requires direct stateless position actuators")
+            state_spec = self._mujoco.mjtState.mjSTATE_INTEGRATION
+            state = np.empty(self._mujoco.mj_stateSize(model, state_spec), dtype=np.float64)
+            self._mujoco.mj_getState(model, plant.data, state, state_spec)
+            if not np.all(np.isfinite(state)) or not np.all(np.isfinite(plant.data.qacc)):
+                raise ValueError("robot state contains non-finite physics data")
+        for name in (
+            "actuator_gainprm", "actuator_biasprm", "actuator_gear",
+            "actuator_ctrllimited", "actuator_ctrlrange",
+            "actuator_forcelimited", "actuator_forcerange",
+        ):
+            if not np.array_equal(
+                getattr(self.model, name)[self._command_actuators],
+                getattr(previous.model, name)[previous._command_actuators],
+            ):
+                raise ValueError("robot position actuator semantics do not match")
+        targets = previous.joint_command_targets()
+        if not np.all(np.isfinite(targets)) or any(
+            np.any(targets < plant._command_limits[:, 0])
+            or np.any(targets > plant._command_limits[:, 1])
+            for plant in (previous, self)
+        ):
+            raise ValueError("retained robot targets are outside the joint/actuator limits")
+
+        self.data.qpos[self._command_qpos] = previous.joint_command_positions()
+        self.data.qvel[self._command_dof] = previous.joint_command_velocities()
+        self._command_targets[:] = targets
+        self.data.ctrl[self._command_actuators] = targets
+        self.hold_mask = VALID_READY_MASK
+        self._robot_state_inheritable = False
+        self._mujoco.mj_forward(self.model, self.data)
+
     @property
     def sim_time_ns(self) -> int:
         return int(round(float(self.data.time) * 1_000_000_000.0))
@@ -210,6 +299,17 @@ class PlantController:
     def joint_command_positions(self) -> np.ndarray:
         """Return simulated joint positions in canonical wire order."""
         return self.data.qpos[self._command_qpos]
+
+    def joint_command_start_positions(self) -> np.ndarray:
+        """Project measured soft-limit overshoot into the legal servo envelope.
+
+        This changes only the reference used to begin a transition, never the
+        physical state. Incoming targets still pass strict command validation.
+        """
+        actual = self.joint_command_positions()
+        if not np.all(np.isfinite(actual)):
+            raise ValueError("transition origin contains non-finite joint positions")
+        return np.clip(actual, self._command_limits[:, 0], self._command_limits[:, 1])
 
     def joint_command_velocities(self) -> np.ndarray:
         """Return simulated velocities by named joint DOFs, not qpos addresses."""
@@ -238,6 +338,7 @@ class PlantController:
     def submit_joint_command(self, snapshot: Any, *, hold_mask: int = 0) -> None:
         """Apply validated targets atomically at the physics boundary."""
         values = self.validate_joint_command(snapshot)
+        self._robot_state_inheritable = False
         effective_hold = (VALID_READY_MASK ^ snapshot.ready_mask) | hold_mask
         for _side, _group, bit, wire in self._command_groups:
             if not effective_hold & bit:
@@ -285,6 +386,7 @@ class PlantController:
         if self._closed:
             raise RuntimeError("plant is shut down")
         self._validate_checkpoint(snapshot)
+        self._robot_state_inheritable = False
         self._mujoco.mj_copyData(self.data, self.model, snapshot.data)
         self.tick = snapshot.tick
         self._command_targets[:] = snapshot.targets
@@ -293,6 +395,7 @@ class PlantController:
     def physics_tick(self) -> PlantStep:
         if self._closed:
             raise RuntimeError("plant is shut down")
+        self._robot_state_inheritable = False
         self.data.ctrl[self._command_actuators] = self._command_targets
         self._mujoco.mj_step(self.model, self.data)
         self.tick += 1

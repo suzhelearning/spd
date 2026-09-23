@@ -13,9 +13,7 @@ from typing import Iterator
 KEY_COMMANDS = {
     "r": "checkpoint",
     "s": "pause_toggle",
-    "d": "revert_skip",
-    "g": "start",
-    "f": "save",
+    "d": "revert",
 }
 
 

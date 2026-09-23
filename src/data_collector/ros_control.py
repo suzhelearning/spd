@@ -16,7 +16,7 @@ STATUS_TOPIC = "/spd/collection/status"
 class CollectionRosControl:
     """Callbacks run in the viewer's spin_once, never on a writer thread."""
 
-    def __init__(self, node: Any, session: Any) -> None:
+    def __init__(self, node: Any, session: Any, *, allow_requests: bool = True) -> None:
         from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
         from std_msgs.msg import String
         from std_srvs.srv import Trigger
@@ -32,7 +32,7 @@ class CollectionRosControl:
         self.services = [
             node.create_service(Trigger, endpoint, self._callback(operation))
             for operation, endpoint in SERVICE_NAMES.items()
-        ]
+        ] if allow_requests else []
         session.on_transition = self.publish
         self.publish()
 

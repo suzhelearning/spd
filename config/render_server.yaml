@@ -1,6 +1,6 @@
 version: 1
 # Copy complete trajectory date directories, including dataset_config.json.
-input_dir: /data/TianjiSim-trajectories
+input_dir: /data/TianjiSim/trajectories
 # Keep rendered products separate; raw trajectories remain read-only.
 output_dir: /data/TianjiSim-rendered
 # EGL enumeration indices, NOT guaranteed to match nvidia-smi/CUDA ordinals.
