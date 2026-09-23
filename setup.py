@@ -21,7 +21,6 @@ setup(
     entry_points={
         "console_scripts": [
             "spd-model = description.model_compiler.cli:main",
-            "spd-viewer = simulation.ros_viewer:main",
             "spd-scene = simulation.scene:main",
             "spd-collect-trigger = data_collector.trigger:main",
             "spd-render = offline_rendering.cli:main",

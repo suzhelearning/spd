@@ -55,10 +55,10 @@ cd /home/current/syz/tianji_teleop-ros2
 pixi install --locked -e spd
 pixi run --locked -e spd build
 
-# 本项目：安装仿真环境并生成本地 ROS 消息绑定
+# 本项目：安装仿真环境并构建 ROS 消息和 C++ 执行器
 cd /home/current/syz/spd-syz
 pixi install --locked
-pixi run ros-build-interfaces
+pixi run spd-native-build
 ```
 
 </details>
@@ -79,8 +79,9 @@ SPD **负责仿真轨迹采集与离线渲染**：订阅外部 ROS 2 `JointComma
 pixi.toml / pixi.lock                 受维护运行环境与命令
 setup.py                            Python 安装配置与 CLI 入口
 src/
-  interfaces/                       JointCommand 校验、邮箱、会话与授权
-  simulation/                       MuJoCo 物理执行、ROS Viewer、场景查看
+  spd_native/                       C++ ROS 订阅、控制状态机、物理步进与接触采集
+  interfaces/                       Python wire 工具、终端键盘与 ROS 消息定义
+  simulation/                       Python 模型准备、原生执行器编排、Viewer 与场景查看
   cameras/                          仿真多视角相机
   data_collector/                   完整场景轨迹、模型快照、ROS 采集控制及独立恢复检查
   offline_rendering/                EGL 多 GPU 调度、只读状态恢复、RGB／实例分割输出
@@ -104,7 +105,7 @@ docs/                                架构、数据契约与论文
 
 ```bash
 pixi install --locked
-pixi run ros-build-interfaces
+pixi run spd-native-build
 
 # 默认逐段随机任务；首次询问桌距，发布端在上游工作区单独启动
 pixi run spd-sim
@@ -121,12 +122,11 @@ pixi run spd-sim --scene hardware_free
 # 退出：在运行 SPD 的终端按 Ctrl+C，不停止上游发布器
 ```
 
-`ros-build-interfaces` 在 `ros-jazzy` Pixi 环境中执行：
+`spd-native-build` 在 `ros-jazzy` Pixi 环境中构建 `tianji_spd_interfaces` 和 `spd_native`，生成 `.ros/install/lib/spd_native/spd_executor` 与 `_spd_native` Python 扩展。原生源码或依赖更新后重新构建；仅运行旧的 `ros-build-interfaces` 不会构建执行器。
 
-```bash
-colcon build --base-paths src/interfaces/tianji_spd_interfaces \
-  --build-base .ros/build --install-base .ros/install --merge-install
-```
+在线入口为 C++ 可执行程序，内嵌 Python 复用场景生成、Viewer 和 HDF5 文件生命周期；ROS 订阅、命令校验／授权／失鲜保持、一秒接入、三键状态机、480 Hz 调度、MuJoCo 步进及手–物接触循环在 C++ 中。ROS 回调只更新邮箱，执行线程独占物理变更；步进释放 GIL，使终端输入和后台写入继续运行。这不是完全无 Python 或硬实时执行器，也不保证消除 MuJoCo 接触求解瓶颈。
+
+`pixi run spd-scene` 自动进入原生运行环境并加载 overlay；模型编译、独立场景生成及离线恢复／渲染仍可使用各自 Python 环境。回归入口为 `pixi run spd-test`，需先完成原生构建。旧 Python 订阅／三键状态机实现和 `spd-viewer` console 入口已移除，不提供回退实现。
 
 发布侧须使用相同消息定义并加载对应 ROS 接口 overlay。SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim/trajectories`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
 
@@ -210,6 +210,8 @@ pixi run spd-scene --task cups/pyramid --seed 0 \
 桌高为 `0.75 m`，尺寸 `0.80 × 1.10 × 0.05 m`。距离 `d` 沿机器人前方 `+X`，从**底座原点到近侧桌沿**测量；中心为 `(d + 0.40, 0, 0.725) m`。交互回车默认 `d=0.10 m`；`--table-distance` 可显式指定，非交互场景启动必须提供。桌子、物体与固定支架整体平移，不重新采样，桌子保持静态碰撞体。接受有限非负距离，不代表已验证碰撞净空或可达范围。
 
 种子可重现位置、质量、摩擦、资产型号、材质变体及字母分配；任务 manifest 记录实际参数、桌距和 `geometry_revision=detailed-scenes-v1`。物体使用重力、碰撞与摩擦，不直接写 qpos 播放、不焊住自由物体、不用禁用接触或允许穿透伪造稳定。盘架、杯架、箱体固定，任务物体自由运动；场景不是自动策略、任务评分或论文视觉资产的精确复刻。
+
+物理求解统一使用 `480 Hz`、`implicitfast`、`cone="elliptic"` 和 `noslip_iterations="1"`，对齐论文 A.1；机器人完整模型／双臂投影、独立场景及初始化接触检查均使用该设置。物体质量、摩擦和几何仍是工程设定，不代表与论文物理等价。接触密集场景不保证墙钟实时：六类 seed 0 场景各推进 960 步的本机无渲染检查中，`jenga/playing` 新设置平均约 `13.96 ms/步`（原设置约 `6.56 ms/步`），超过 480 Hz 的 `2.08 ms/步` 预算；其他五类新设置平均约 `0.18–0.99 ms/步`。这仅是 HOME 保持下的短时接触／耗时检查，不是抓取或完整遥操作验收。
 
 场景按 ABC 的方式分开**外观资产与碰撞代理**：外观使用有纹理的网格、圆滑表面和细节零件，质量为零且不参与接触；碰撞几何独立承担质量、惯性与实际接触。场景碰撞组为 3，Viewer／相机默认隐藏这一组，只影响显示、不禁用物理。
 
@@ -440,3 +442,11 @@ pixi run -e render spd-render \
   `complete=true`、`success=true`、恢复标注有效，机器人 qpos/qvel 最大恢复误差为 **0**。
   两端 Q 退出码均为 0，临时测试源和数据已清理。
 - 本次没有真实头显、任务物体交互、图形虚影或 GPU 吞吐验收，不把单话题结构当作端到端低延迟证明。
+
+### ROS 2 C++ 在线执行迁移验证（2026-09-23）
+
+- `pixi run spd-native-build` 构建原生可执行程序与扩展；`pixi run spd-test` 的 29 项回归通过，包括一秒接入、失鲜／换 session 撤权、真实 DDS、三键回退、接触检查、完整检查点和跨场景机器人状态保留。
+- 实际 `spd_executor` 进程在 `cups/pyramid` seed 0 下接收独立 DDS 发布端，通过真实终端完成开段、检查点、暂停、回退自动接入及 `r→r` 成功保存，`q` 退出码为 0；1,795 帧文件通过 schema-v2 校验，保留恢复标签。
+- 默认 Python 环境的 `replay_episode` 独立恢复上述全部帧，机器人位置／速度与物体位姿最大误差均为 0；无需原生执行器参与离线恢复。
+- 修复内嵌 Python 的 `sys.executable` 指向，使 GLFW 等库启动 Python 探测子进程时使用实际解释器，而非递归启动执行器。物理步进释放 GIL，后台文件写入与终端输入正常。
+- 本次未验证真实头显、主动手–物操作或图形 Viewer；迁移不构成 Jenga 已达到 480 Hz 墙钟实时的证明。

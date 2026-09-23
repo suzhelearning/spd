@@ -7,7 +7,7 @@ import time
 import unittest
 from uuid import uuid4
 
-from interfaces.three_key_control import ThreeKeyControl
+from _spd_native import ThreeKeyControl
 
 try:
     ROS_AVAILABLE = (importlib.util.find_spec("rclpy") is not None
@@ -24,7 +24,7 @@ class ThreeKeyGateTests(unittest.TestCase):
         from tianji_spd_interfaces.msg import JointCommand
         from data_collector.config import CollectionConfig
         from data_collector.session import CollectionSession
-        from interfaces.ros_executor import RosJointCommandExecutor
+        from _spd_native import RosJointCommandExecutor
         from interfaces.ros_joint_command import TOPIC, best_effort_qos
         from simulation.viewer import PlantController
 
@@ -45,7 +45,8 @@ class ThreeKeyGateTests(unittest.TestCase):
         self.publisher = self.peer.create_publisher(JointCommand, TOPIC, best_effort_qos())
         self.plant = PlantController()
         self.addCleanup(self.plant.close)
-        self.executor = RosJointCommandExecutor(self.node, self.plant)
+        self.executor = RosJointCommandExecutor(self.plant, domain_id=126)
+        self.addCleanup(self.executor.close)
         self.collection = CollectionSession(
             CollectionConfig(2, self.root, 60, 128, 0), self.plant, self.executor, {"task": "rsd-test"},
         )
@@ -70,6 +71,7 @@ class ThreeKeyGateTests(unittest.TestCase):
             self.publisher.publish(message)
         for _ in range(4):
             self.ros.spin_once(timeout_sec=0.)
+        self.executor.spin_once()
         self.control.poll()
         self.collection.poll()
         if not self.collection.physics_paused:
@@ -206,7 +208,7 @@ class ThreeKeyGateTests(unittest.TestCase):
     def test_real_terminal_starts_pauses_and_saves_without_remote_control(self):
         import pty
         import queue
-        from interfaces.ros_executor import ControlTerminal
+        from interfaces.keyboard_control import ControlTerminal
         from simulation.ros_viewer import RosViewerApp
         from data_collector.recorder import validate_episode_path
 

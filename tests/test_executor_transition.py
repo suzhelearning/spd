@@ -1,12 +1,10 @@
 """Live-target blend regressions using the real plant and deterministic clocks."""
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 
-from interfaces.ros_executor import RosJointCommandExecutor
+from _spd_native import RosJointCommandExecutor
 from interfaces.ros_joint_command import JOINT_NAME_TUPLE, JointCommandSnapshot, VALID_READY_MASK
 from simulation.viewer import PlantController
 
@@ -27,18 +25,11 @@ class ExecutorTransitionTests(unittest.TestCase):
         self.utc_base = 1_700_000_000_000_000_000
         self.sequence = 0
         self.session = "transition-test"
-        self.addCleanup(patch.stopall)
-        patch("interfaces.ros_executor.time.monotonic_ns", side_effect=lambda: self.now).start()
-        patch("interfaces.ros_executor.time.time_ns", side_effect=lambda: self.utc).start()
-        # Only subscription construction is stubbed: mailbox validation and every
-        # reference mutation exercise the real executor and PlantController.
-        package = ModuleType("tianji_spd_interfaces")
-        messages = ModuleType("tianji_spd_interfaces.msg")
-        messages.JointCommand = SimpleNamespace
-        with patch.dict(sys.modules, {package.__name__: package, messages.__name__: messages}), \
-                patch("interfaces.ros_executor.best_effort_qos", return_value=None):
-            node = SimpleNamespace(create_subscription=lambda *args: object())
-            self.executor = RosJointCommandExecutor(node, self.plant)
+        self.executor = RosJointCommandExecutor(
+            self.plant, subscribe=False,
+            clock_ns=lambda: self.utc, monotonic_ns=lambda: self.now,
+        )
+        self.addCleanup(self.executor.close)
         self.origin = self.plant.joint_command_positions().copy()
         entries = {entry.joint: entry for entry in self.plant.joints}
         limits = np.asarray([entries[name].range for name in JOINT_NAME_TUPLE])

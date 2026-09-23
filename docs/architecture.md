@@ -7,9 +7,9 @@ SPD 是 **ROS 关节命令订阅端与 MuJoCo 仿真数据采集端**。人体�
 ```text
 独立上游：输入 / 标定 / 求解 / ROS JointCommand 发布
                               ↓
-SPD interfaces：校验 → 最新候选 → 会话与显式授权 → 分组 hold
+SPD C++ executor：校验 → 最新候选 → 会话与显式授权 → 分组 hold
                               ↓
-SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理积分
+SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理积分
                               ↓
               完整场景状态 / 任务物体 / 手–物接触
                      ↙                    ↘
@@ -28,8 +28,9 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
 
 | 路径 | 职责 |
 |---|---|
-| `src/interfaces/` | JointCommand wire 契约、校验、邮箱、订阅执行器与授权／保持门 |
-| `src/simulation/` | 机器人 MuJoCo 物理执行、ROS Viewer、窗口与场景查看 |
+| `src/spd_native/` | C++ ROS 订阅、邮箱与授权、三键状态机、物理调度／步进、检查点与接触累计 |
+| `src/interfaces/` | Python wire 工具、终端键盘输入与 ROS 消息定义 |
+| `src/simulation/` | Python 模型准备、原生执行器编排、Viewer 与场景查看 |
 | `src/cameras/` | 世界／腕部仿真相机与 RGB 获取 |
 | `src/data_collector/` | 配置、采集状态机、ROS 控制、完整物理轨迹与模型快照、独立恢复验证 |
 | `src/offline_rendering/` | spawn 多 GPU 调度、原生 EGL、逐帧恢复渲染与输出校验 |
@@ -44,7 +45,11 @@ SPD simulation：按名称映射目标 → position actuators → MuJoCo 物理�
 
 运行时 Python 包直接位于 `src/`，按职责使用 `interfaces`、`simulation`、`cameras`、`data_collector`、`description`，不保留统一外层包或旧导入兼容层。根目录 `setup.py` 安装这些包，发行包名仍为 `spd`；依赖方向为 `spd → spd-envs`，独立环境包保持 `spd_envs`，只负责场景，不依赖 ROS 或遥操作算法，也不硬编码机器人路径。资源定位通过 `description/model_builder.py` 的 `workspace_root()`、`description_root()` 和 `config_root()`，不以调用者当前目录猜测资源位置。
 
-`pixi.toml` / `pixi.lock` 是受维护运行环境；ROS 接口构建到 `.ros/{build,install}`，与原始源文件和机器人生成模型分离。`ros-build-interfaces` 使用 `src/interfaces/tianji_spd_interfaces`，SPD 不自动构建上游工作区。
+`pixi.toml` / `pixi.lock` 是受维护运行环境。`pixi run spd-native-build` 在 `ros-jazzy` 环境中构建 `tianji_spd_interfaces` 和 `spd_native` 到 `.ros/{build,install}`，与源文件和机器人模型分离；`ros-build-interfaces` 仅供单独构建消息。SPD 不自动构建上游工作区。
+
+`spd_executor` 是内嵌 CPython 的 C++ 入口；`_spd_native` 暴露原生 ROS 执行器、三键状态机、MuJoCo 状态操作及接触累计。Python 保留模型／场景准备、Viewer、轨迹序列化和 HDF5 异步文件生命周期。原生 `run_loop` 持有调度循环，仍会调用这些 Python 生命周期回调，因此不宣称无 GIL、无 Python 热路径或硬实时。`mj_step` 期间释放 GIL，避免接触密集时阻塞终端与写入线程。
+
+ROS 回调只校验并更新邮箱；控制应用、步进、恢复和接触观察顺序运行在唯一执行线程。MuJoCo Python 对象为 Viewer／序列化保留模型与数据存储，原生组件持有强引用，避免悬垂指针；原生目标数组不提供可写视图。检查点与接触区间带创建者身份，拒绝跨模型／来源恢复。旧 Python 订阅执行器及三键实现已删除，不提供回退路径。
 
 ## 3. 订阅契约与授权状态
 
@@ -64,7 +69,7 @@ Viewer 用 `F8/F9` 选择关节，展示实际应用目标与实际 qpos；HUD �
 
 ## 4. 进程与网络边界
 
-`bash/start_spd_sim.sh` 在 ROS Pixi 环境中以 `exec` 启动前台订阅进程，直接使用当前终端，不创建 tmux 会话、不后台运行。`pixi run spd-sim` 直接选择 `ros-jazzy` 环境，避免嵌套任务启动；脚本从裸 shell 调用时自行进入同一环境。当前终端 `Ctrl+C` 或 Viewer 退出只结束 SPD，不停止上游或硬件控制器。启动不代替运动授权；一次只运行一个采集进程，不共享输出目录。
+`bash/start_spd_sim.sh` 在 ROS Pixi 环境中以 `exec` 启动 `.ros/install/lib/spd_native/spd_executor`，直接使用当前终端，不创建 tmux 会话、不后台运行。`pixi run spd-sim` 直接选择 `ros-jazzy` 环境；脚本从裸 shell 调用时自行进入同一环境。当前终端 `Ctrl+C` 或 Viewer 退出只结束 SPD，不停止上游或硬件控制器。启动不代替运动授权；一次只运行一个采集进程，不共享输出目录。
 
 Jazzy/Fast DDS 使用 domain 120，QoS 为 `BEST_EFFORT / KEEP_LAST(1) / VOLATILE`。在 Pixi 激活和接口 overlay 加载后显式设置 `ROS_DOMAIN_ID=120`、`RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''`；无桥接进程。
 
@@ -96,11 +101,11 @@ SPD 本地 r 开段并在任何运动前创建 0 号检查点，采集中 r 更�
 
 `TrajectorySource` 在会话初始化时序列化完整 MuJoCo 模型，包含网格、纹理和相机。SHA-256、精确 MuJoCo 版本、物理设置、源资产溯源、任务随机参数及关节／物体地址映射随 episode 保存。原场景 XML 删除或搬迁不影响恢复；不支持不同 MuJoCo 版本之间直接加载二进制快照。
 
-物理线程每步观察手–物接触，按左右手及任务物体累计到下一个轨迹样本。接触分类使用 `l_wrist/r_wrist` 子树和 task manifest 的物体子树，不把机器人自碰撞、手–桌接触算作手–物接触。每帧保存全场景 qpos/qvel、机器人实际 54 维状态、任务物体世界位姿，以及存在时的 act/mocap/equality 状态。派生位姿通过独立数据对象刷新，不修改在线物理状态。
+原生 `ContactCollector` 每步观察手–物接触，按左右手及任务物体累计到下一个轨迹样本。接触分类使用 `l_wrist/r_wrist` 子树和 task manifest 的物体子树，不把机器人自碰撞、手–桌接触算作手–物接触；手动检查点在独立 scratch data 上刷新当前接触，不改变在线求解器历史。每帧保存全场景 qpos/qvel、机器人实际 54 维状态、任务物体世界位姿，以及存在时的 act/mocap/equality 状态。Python 轨迹层负责快照与序列化，派生位姿通过独立数据对象刷新。
 
 每帧记录严格递增的物理 tick、绝对仿真秒数和主机单调纳秒。物理 tick 差必须为 8，仿真间隔必须为 1/60 秒；墙钟间隔单独保留，不伪造实时频率。首帧来自准备完成后的第一个物理步；接触首区间只覆盖该步，之后覆盖 8 个物理步。
 
-`CollectionSession` 是本地按键和 ROS 请求共享的唯一录制状态机。单个协调 worker 负责准备／保存／丢弃；单个 HDF5 写线程接收有界整帧队列。队列满、数据不合法或漏 tick 立即报错，绝不覆盖旧样本或静默丢帧。完成后校验全部行、数据类型、时间轴、模型和元数据哈希，才发布 `.h5`；完整性 `complete` 与任务结果 `success` 分离。帧数上限为 `success=false`，仅显式保存为 true。
+`CollectionSession` 保留为 Python 文件生命周期协调器，由原生三键状态机驱动。单个协调 worker 负责准备／保存／丢弃；单个 HDF5 写线程接收有界整帧队列。队列满、数据不合法或漏 tick 立即报错，绝不覆盖旧样本或静默丢帧。完成后校验全部行、数据类型、时间轴、模型和元数据哈希，才发布 `.h5`；完整性 `complete` 与任务结果 `success` 分离。帧数上限为 `success=false`，仅显式保存为 true。
 
 开段自动保存完整初始检查点，允许初始接触；采集中手动更新仍拒绝任一手与任务物体的当前 solver-active 接触。检查点保存 MjData、tick、保留目标、采样相位及接触累计。回退先冻结并清除授权，唯一写线程裁去失败后缀和标签后刷盘，再恢复完整状态。目标仍有效时自动一秒接入；否则保持暂停等待人工 s，不自动重试。检查点不跨 episode 或模型。
 
@@ -112,7 +117,7 @@ SPD 本地 r 开段并在任何运动前创建 0 号检查点，采集中 r 更�
 
 `replay_episode` 加载内嵌模型，在独立 MjData 逐帧赋值并调用前向计算，验证机器人投影和物体位姿；不调用 `mj_step`、不发送目标、不渲染。记录不包含 ctrl 或全部积分器历史，不能当作恢复原控制运行的检查点。公开校验和恢复拒绝 partial／未完成文件，且拒绝 schema、模型、元数据和 MuJoCo 版本不匹配。详见 [schema-v2.md](schema-v2.md)。
 
-默认 CollectionRosControl 只发布可靠 transient-local 的 /spd/collection/status；外部 Trigger 控制禁用，避免绕过本地确认和接入流程。状态保留 collector／operation、路径、帧数、physics_paused 和 checkpoint_frames，0 表示合法起始检查点。底层 CollectionSession/recorder 的管理接口仍服务测试和专用集成，不属于操作者按键流程。
+`CollectionRosControl` 只负责 JSON 状态序列化与心跳，由原生 rclcpp publisher 向 `/spd/collection/status` 发布可靠 transient-local 消息；不创建外部 Trigger 控制服务，避免绕过本地确认和接入流程。状态保留 collector／operation、路径、帧数、physics_paused 和 checkpoint_frames，0 表示合法起始检查点。底层 CollectionSession/recorder 管理接口仍服务测试和专用集成，不属于操作者按键流程。
 
 采集侧已实现在线检查点／回退，不实现采后接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染输出当前保留轨迹的所有源帧，不代替这些处理。
 

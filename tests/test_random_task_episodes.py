@@ -18,7 +18,6 @@ except ModuleNotFoundError:
 @unittest.skipUnless(ROS_AVAILABLE, "run inside ros-jazzy with the local interface overlay")
 class RandomTaskEpisodeTests(unittest.TestCase):
     def setUp(self):
-        import rclpy
         from description.model_builder import config_root
         from simulation.ros_viewer import RosViewerApp
 
@@ -30,8 +29,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
             headless=True,
         ))
         self.sequence = 0
-        self.addCleanup(rclpy.shutdown)
-        self.addCleanup(lambda: self.app.node.destroy_node())
+        self.addCleanup(lambda: self.app.executor.close())
         self.addCleanup(lambda: self.app.plant.close())
         self.addCleanup(lambda: self.app.window.close())
         self.addCleanup(lambda: self.app.collection.close())

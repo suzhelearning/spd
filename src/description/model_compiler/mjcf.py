@@ -207,7 +207,8 @@ def render_mjcf(
     child_map = _children(model)
     root = ET.Element("mujoco", model="tianji_wuji2_unified" if mode == "full" else "tianji_wuji2_arm")
     ET.SubElement(root, "compiler", angle="radian", meshdir=".", inertiafromgeom="false")
-    ET.SubElement(root, "option", timestep=f"{1.0 / 480.0:.17g}", integrator="implicitfast")
+    ET.SubElement(root, "option", timestep=f"{1.0 / 480.0:.17g}", integrator="implicitfast",
+                  cone="elliptic", noslip_iterations="1")
     ET.SubElement(root, "size", nuser_jnt="1")
     asset_element = ET.SubElement(root, "asset")
     for source, (asset_name, asset_path, scale) in sorted(mesh_assets.items()):

@@ -29,9 +29,11 @@ render = { features = ["sim"], solve-group = "default" }
 [tasks]
 spd-envs-check = "validate_scenes"
 spd-model = "python -m description.model_compiler.cli --urdf src/tianji_wuji2/tianji_wuji2/assets/tianji_wuji2.urdf --output src/tianji_wuji2/tianji_wuji2/generated --cache src/tianji_wuji2/tianji_wuji2/collision_cache --raw-collisions"
-spd-scene = "python -m simulation.scene"
+spd-scene = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m simulation.scene"
 spd-render = "python -m offline_rendering"
 ros-build-interfaces = "pixi run -e ros-jazzy bash -lc 'colcon build --base-paths src/interfaces/tianji_spd_interfaces --build-base .ros/build --install-base .ros/install --merge-install'"
+spd-native-build = "pixi run -e ros-jazzy bash bash/build_native.sh"
+spd-test = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m unittest discover -s tests -v"
 
 [feature.ros-jazzy.tasks]
 spd-sim = "bash bash/start_spd_sim.sh"
@@ -49,6 +51,11 @@ ros-jazzy-std-msgs = "*"
 ros-jazzy-std-srvs = "*"
 colcon-core = "*"
 colcon-ros = "*"
+ros-jazzy-rclcpp = ">=28.1.21,<29"
+pybind11 = ">=3.0.4,<4"
+cmake = ">=4.4.3,<5"
+ninja = ">=1.13.2,<2"
+cxx-compiler = ">=2.0.0,<3"
 
 [feature.ros-jazzy.activation.env]
 RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"

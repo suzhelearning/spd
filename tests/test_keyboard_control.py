@@ -7,8 +7,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from interfaces.keyboard_control import read_key, terminal_input
-from interfaces.ros_executor import ControlTerminal
+from interfaces.keyboard_control import ControlTerminal, read_key, terminal_input
 
 
 class KeyboardControlTests(unittest.TestCase):

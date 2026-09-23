@@ -42,8 +42,8 @@ while (($#)); do
   esac
 done
 command -v pixi >/dev/null || { echo "pixi is required" >&2; exit 1; }
-[[ -f "$repo_root/.ros/install/setup.sh" ]] || {
-  echo "Missing ROS interfaces; run pixi run ros-build-interfaces" >&2; exit 1;
+[[ -x "$repo_root/.ros/install/lib/spd_native/spd_executor" ]] || {
+  echo "Missing native executor; run pixi run spd-native-build" >&2; exit 1;
 }
 viewer_args=(--collection-config "$collection_config")
 if [[ -n "$seed" ]]; then viewer_args+=(--seed "$seed"); fi
@@ -66,4 +66,4 @@ set +u
 source "$repo_root/.ros/install/setup.sh"
 set -u
 export ROS_DOMAIN_ID=120 RMW_IMPLEMENTATION=rmw_fastrtps_cpp ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS=""
-exec python -m simulation.ros_viewer "${viewer_args[@]}"
+exec "$repo_root/.ros/install/lib/spd_native/spd_executor" "${viewer_args[@]}"

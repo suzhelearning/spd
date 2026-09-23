@@ -1,12 +1,7 @@
 """External ROS joint targets -> MuJoCo physics, live comparison, and recording."""
 from __future__ import annotations
 
-# Load ROS's native extension before simulation/compiler native dependencies.
-# Importing rclpy after those libraries can resolve incompatible C++ symbols.
-try:
-    import rclpy
-except ImportError:  # The non-ROS environment can still import simulation modules.
-    rclpy = None
+from _spd_native import RosJointCommandExecutor, ThreeKeyControl, run_loop
 
 import argparse
 import os
@@ -21,9 +16,8 @@ import numpy as np
 from data_collector.config import load_collection_config
 from data_collector.ros_control import CollectionRosControl
 from data_collector.session import CollectionSession
-from interfaces.ros_executor import ControlTerminal, RosJointCommandExecutor
+from interfaces.keyboard_control import ControlTerminal
 from interfaces.ros_joint_command import JOINT_NAMES, TOPIC
-from interfaces.three_key_control import ThreeKeyControl
 from simulation.viewer import PlantController
 from simulation.scene import EpisodeTasks, build_selected_scene, frame_scene
 from simulation.viewer_window import ViewerWindow
@@ -32,8 +26,6 @@ from description.model_builder import config_root
 
 class RosViewerApp:
     def __init__(self, args: argparse.Namespace) -> None:
-        import rclpy
-
         collection_config = load_collection_config(
             args.collection_config, output=args.output, max_frames=args.max_frames,
         )
@@ -54,18 +46,12 @@ class RosViewerApp:
         self.task_title, self.task_goal = self._task_text(args.scene, args.task)
         self.plant = self._create_plant(scene_result)
         self.window = self._create_window(self.plant)
-        rclpy.init()
-        self.node = rclpy.create_node("spd_mujoco_joint_command_executor")
-        self.executor = RosJointCommandExecutor(
-            self.node, self.plant,
-        )
+        self.executor = RosJointCommandExecutor(self.plant)
         self.collection = CollectionSession(
             collection_config, self.plant, self.executor,
             self._task_manifest(self.plant, args.scene, args.task, args.seed),
         )
-        self.collection_ros = CollectionRosControl(
-            self.node, self.collection, allow_requests=False,
-        )
+        self.collection_ros = CollectionRosControl(self.executor, self.collection)
         self.control_terminal = ControlTerminal(self.joint_control, self.recording_control)
         self.three_key = ThreeKeyControl(self.collection, self.executor)
         self._started_ns = time.monotonic_ns()
@@ -147,19 +133,18 @@ class RosViewerApp:
         executor = None
         try:
             plant.inherit_robot_state(self.plant)
-            executor = RosJointCommandExecutor(
-                self.node, plant,
-            )
+            executor = RosJointCommandExecutor(plant)
             self.collection.replace_scene(plant, executor, self._task_manifest(plant, scene, task, seed))
         except BaseException:
             if executor is not None:
-                self.node.destroy_subscription(executor.subscription)
+                executor.close()
             plant.close()
             raise
         self.window.close()
-        self.node.destroy_subscription(self.executor.subscription)
+        self.executor.close()
         self.plant.close()
         self.plant, self.executor = plant, executor
+        self.collection_ros.executor = executor
         self.args.scene, self.args.task, self.args.seed = scene, task, seed
         self.task_title, self.task_goal = self._task_text(scene, task)
         self.window = self._create_window(plant)
@@ -275,11 +260,6 @@ class RosViewerApp:
         self.window.sync(now)
 
     def run(self) -> int:
-        import rclpy
-
-        period_ns = 1_000_000_000 // self.plant.physics_hz
-        deadline = time.monotonic_ns()
-        display_deadline = deadline
         previous_handlers = {
             signum: signal.signal(signum, lambda _signum, _frame: self.request_stop())
             for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -292,46 +272,14 @@ class RosViewerApp:
                   "All entries blend for 1 second; r/s/d ignored during blending. "
                   "Paused r then r saves success. q/Ctrl+C exits without saving.", flush=True)
             self._announce_task()
-            while not self.stop and rclpy.ok() and self.window.is_running():
-                rclpy.spin_once(self.node, timeout_sec=0.0)
-                self.three_key.poll()
-                self._maybe_rotate_task()
-                if self._task_change_pending():
-                    self._discard_scene_actions()
-                else:
-                    self._process_actions()
-                self.collection.poll()
-                now = time.monotonic_ns()
-                if not self.collection.physics_paused and not self._task_change_pending():
-                    applied = self.executor.apply_pending(now_ns=now)
-                    if applied is not None:
-                        self._last_applied = applied
-                    # A physics-time validation failure must not advance or
-                    # record even one uncontrolled step before the next poll.
-                    if not self.executor.mailbox.enabled or self.executor.hold_mask & 1:
-                        self.three_key.poll()
-                        continue
-                    step = self.plant.physics_tick()
-                    self.collection.tick(step, recovery=self.three_key.recovery)
-                self.collection_ros.heartbeat()
-                if now >= display_deadline:
-                    self._update_display(now)
-                    display_deadline = now + 50_000_000
-                deadline += period_ns
-                remaining = deadline - time.monotonic_ns()
-                if remaining > 0:
-                    time.sleep(remaining * 1e-9)
-                else:
-                    deadline = time.monotonic_ns()
+            run_loop(self)
         finally:
             self.three_key.close()
             self.control_terminal.close()
             self.collection.close()
             self.window.close()
             self.plant.close()
-            self.node.destroy_node()
-            if rclpy.ok():
-                rclpy.shutdown()
+            self.executor.close()
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
         return 0

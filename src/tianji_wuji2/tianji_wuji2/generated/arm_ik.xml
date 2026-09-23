@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <mujoco model="tianji_wuji2_arm">
   <compiler angle="radian" meshdir="." inertiafromgeom="false" />
-  <option timestep="0.0020833333333333333" integrator="implicitfast" />
+  <option timestep="0.0020833333333333333" integrator="implicitfast" cone="elliptic" noslip_iterations="1" />
   <size nuser_jnt="1" />
   <asset>
     <mesh inertia="shell" name="visual_000_f22c309ed8ca" file="meshes/Base_L.STL" />

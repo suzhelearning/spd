@@ -1,13 +1,14 @@
 """Single MuJoCo physics owner for externally supplied 54-joint targets."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import tempfile
 from typing import Any, Sequence
 
 import numpy as np
+
+from _spd_native import Physics, PhysicsCheckpoint, PhysicsStep
 
 from description.manifest import ManifestError, ManifestJoint, load_manifest, resolve_home_positions, resolve_model_addresses
 from description.model_builder import description_root
@@ -16,23 +17,6 @@ from interfaces.ros_joint_command import JOINT_NAME_TUPLE, VALID_READY_MASK
 
 PHYSICS_HZ = 480
 RENDER_HZ = 60
-
-
-@dataclass(frozen=True, slots=True)
-class PlantStep:
-    tick: int
-    sim_time_ns: int
-    finite: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _PlantCheckpoint:
-    plant: Any
-    model: Any
-    data: Any
-    tick: int
-    targets: np.ndarray
-    hold_mask: int
 
 
 class PlantController:
@@ -147,11 +131,11 @@ class PlantController:
             if verified is not None else "unverified"
         )
         self._prepare_joint_commands()
-        self.hold_mask = VALID_READY_MASK
+        self._physics = Physics(
+            self.model, self.data, self._command_qpos, self._command_dof,
+            self._command_actuators, self._command_limits, self._command_home,
+        )
         self._closed = False
-        self.tick = 0
-        self._set_home_state()
-        self._robot_state_inheritable = True
 
     def _prepare_joint_commands(self) -> None:
         """Resolve the wire contract by names, independently of scene DOFs."""
@@ -172,14 +156,12 @@ class PlantController:
         self._command_dof = self.model.jnt_dofadr[joint_ids].copy()
         self._command_actuators = np.asarray([self._actuator_ids[e.actuator] for e in entries])
         self._command_home = np.asarray([self._home[e.index] for e in entries], dtype=np.float64)
-        self._command_targets = self._command_home.copy()
         self._command_limits = np.asarray([e.range for e in entries], dtype=np.float64)
         for wire_index, actuator_id in enumerate(self._command_actuators):
             if self.model.actuator_ctrllimited[actuator_id]:
                 low, high = self.model.actuator_ctrlrange[actuator_id]
                 self._command_limits[wire_index, 0] = max(self._command_limits[wire_index, 0], low)
                 self._command_limits[wire_index, 1] = min(self._command_limits[wire_index, 1], high)
-        groups = []
         for side, group, bit in (
             ("left", "arm", 1), ("right", "arm", 1),
             ("left", "hand", 4), ("right", "hand", 2),
@@ -189,21 +171,6 @@ class PlantController:
             size = 7 if group == "arm" else 20
             if len(wire) != size or set(slots) != set(range(size)):
                 raise ManifestError("invalid joint command target group")
-            groups.append((side, group, bit, wire))
-        self._command_groups = tuple(groups)
-
-    def _set_home_state(self) -> None:
-        # Preserve scene free-joint initial poses; only named robot joints use HOME.
-        self.data.qpos[:] = self.model.qpos0
-        self.data.qvel[:] = 0.0
-        self.data.ctrl[:] = 0.0
-        self._command_targets[:] = self._command_home
-        self.data.qpos[self._command_qpos] = self._command_home
-        self.data.ctrl[self._command_actuators] = self._command_home
-        if getattr(self.data, "act", None) is not None:
-            self.data.act[:] = 0.0
-        self.data.time = 0.0
-        self._mujoco.mj_forward(self.model, self.data)
 
     def inherit_robot_state(self, previous: PlantController) -> None:
         """Carry only robot state into a fresh scene, without stepping or authorizing it.
@@ -217,7 +184,7 @@ class PlantController:
             raise ValueError("robot state requires a new model and independent physics data")
         if self._closed or previous._closed:
             raise RuntimeError("cannot inherit robot state from or into a shut down plant")
-        if not self._robot_state_inheritable or self.tick != 0 or self.data.time != 0:
+        if not self._physics.fresh or self.tick != 0 or self.data.time != 0:
             raise ValueError("robot state can only be inherited by a fresh plant")
         if (
             self.artifact_hash in ("", "unknown", "unverified")
@@ -233,7 +200,7 @@ class PlantController:
             not np.array_equal(self.data.qpos, initial_qpos)
             or np.any(self.data.qvel)
             or not np.array_equal(self.data.ctrl, initial_ctrl)
-            or not np.array_equal(self._command_targets, self._command_home)
+            or not np.array_equal(self.joint_command_targets(), self._command_home)
             or self.hold_mask != VALID_READY_MASK
         ):
             raise ValueError("destination robot and scene state must still be initial")
@@ -284,134 +251,71 @@ class PlantController:
         ):
             raise ValueError("retained robot targets are outside the joint/actuator limits")
 
-        self.data.qpos[self._command_qpos] = previous.joint_command_positions()
-        self.data.qvel[self._command_dof] = previous.joint_command_velocities()
-        self._command_targets[:] = targets
-        self.data.ctrl[self._command_actuators] = targets
-        self.hold_mask = VALID_READY_MASK
-        self._robot_state_inheritable = False
-        self._mujoco.mj_forward(self.model, self.data)
+        self._physics.inherit_robot_state(previous._physics)
+
+    @property
+    def tick(self) -> int:
+        return self._physics.tick
+
+    @property
+    def hold_mask(self) -> int:
+        return self._physics.hold_mask
+
+    @hold_mask.setter
+    def hold_mask(self, value: int) -> None:
+        self._physics.set_hold(value)
 
     @property
     def sim_time_ns(self) -> int:
-        return int(round(float(self.data.time) * 1_000_000_000.0))
+        return self._physics.sim_time_ns
 
     def joint_command_positions(self) -> np.ndarray:
-        """Return simulated joint positions in canonical wire order."""
-        return self.data.qpos[self._command_qpos]
+        """Return owned simulated joint positions in canonical wire order."""
+        return self._physics.positions()
 
     def joint_command_start_positions(self) -> np.ndarray:
-        """Project measured soft-limit overshoot into the legal servo envelope.
-
-        This changes only the reference used to begin a transition, never the
-        physical state. Incoming targets still pass strict command validation.
-        """
-        actual = self.joint_command_positions()
-        if not np.all(np.isfinite(actual)):
-            raise ValueError("transition origin contains non-finite joint positions")
-        return np.clip(actual, self._command_limits[:, 0], self._command_limits[:, 1])
+        """Project measured soft-limit overshoot into the legal servo envelope."""
+        return self._physics.start_positions()
 
     def joint_command_velocities(self) -> np.ndarray:
-        """Return simulated velocities by named joint DOFs, not qpos addresses."""
-        return self.data.qvel[self._command_dof]
+        """Return owned velocities by named joint DOFs, not qpos addresses."""
+        return self._physics.velocities()
 
     def joint_command_targets(self) -> np.ndarray:
-        """Return the complete retained targets in canonical wire order."""
-        return self._command_targets.copy()
+        """Return owned retained targets in canonical wire order."""
+        return self._physics.targets()
 
     def validate_joint_command(self, snapshot: Any) -> np.ndarray:
         """Validate every ready group before any target or freshness mutation."""
-        snapshot.validate()
-        values = np.asarray(snapshot.position_rad, dtype=np.float64)
-        for side, group, bit, wire in self._command_groups:
-            if snapshot.ready_mask & bit and np.any(
-                (values[wire] < self._command_limits[wire, 0])
-                | (values[wire] > self._command_limits[wire, 1])
-            ):
-                raise ValueError(f"{side} {group} command is outside the manifest/actuator limits")
-        return values
+        return self._physics.validate_joint_command(snapshot)
 
     def set_joint_command_hold(self, hold_mask: int) -> None:
-        """Update status only; retained targets remain untouched (physics thread)."""
-        self.hold_mask = int(hold_mask)
+        """Update status only; retained targets remain untouched."""
+        self._physics.set_hold(hold_mask)
 
     def submit_joint_command(self, snapshot: Any, *, hold_mask: int = 0) -> None:
-        """Apply validated targets atomically at the physics boundary."""
-        values = self.validate_joint_command(snapshot)
-        self._robot_state_inheritable = False
-        effective_hold = (VALID_READY_MASK ^ snapshot.ready_mask) | hold_mask
-        for _side, _group, bit, wire in self._command_groups:
-            if not effective_hold & bit:
-                self._command_targets[wire] = values[wire]
-        self.set_joint_command_hold(effective_hold)
+        """Apply validated targets atomically at the native physics boundary."""
+        self._physics.submit_joint_command(snapshot, hold_mask=hold_mask)
 
-    def _validate_checkpoint(self, snapshot: _PlantCheckpoint) -> None:
-        if not isinstance(snapshot, _PlantCheckpoint) or snapshot.plant is not self or snapshot.model is not self.model:
+    def capture_checkpoint(self) -> PhysicsCheckpoint:
+        """Copy full integration state and retained commands on the physics thread."""
+        return self._physics.capture_checkpoint()
+
+    def restore_checkpoint(self, snapshot: PhysicsCheckpoint) -> None:
+        """Restore exactly, without a forward pass or physics step."""
+        if not isinstance(snapshot, PhysicsCheckpoint):
             raise ValueError("checkpoint belongs to a different plant or model")
-        if (
-            type(snapshot.tick) is not int or snapshot.tick < 0
-            or type(snapshot.hold_mask) is not int
-            or snapshot.hold_mask < 0 or snapshot.hold_mask & ~VALID_READY_MASK
-            or not isinstance(snapshot.targets, np.ndarray)
-            or snapshot.targets.shape != self._command_targets.shape
-            or not np.all(np.isfinite(snapshot.targets))
-            or np.any(snapshot.targets < self._command_limits[:, 0])
-            or np.any(snapshot.targets > self._command_limits[:, 1])
-        ):
-            raise ValueError("checkpoint has invalid tick, targets or hold mask")
-        state_spec = self._mujoco.mjtState.mjSTATE_INTEGRATION
-        state = np.empty(self._mujoco.mj_stateSize(self.model, state_spec), dtype=np.float64)
-        self._mujoco.mj_getState(self.model, snapshot.data, state, state_spec)
-        if (
-            not np.all(np.isfinite(state))
-            or not np.all(np.isfinite(snapshot.data.qacc))
-            or snapshot.data.time < 0
-        ):
-            raise ValueError("checkpoint contains invalid physics state")
+        self._physics.restore_checkpoint(snapshot)
 
-    def capture_checkpoint(self) -> _PlantCheckpoint:
-        """Copy the full integration state and retained commands on the physics thread."""
-        if self._closed:
-            raise RuntimeError("plant is shut down")
-        data = self._mujoco.MjData(self.model)
-        self._mujoco.mj_copyData(data, self.model, self.data)
-        targets = self._command_targets.copy()
-        targets.flags.writeable = False
-        snapshot = _PlantCheckpoint(self, self.model, data, self.tick, targets, self.hold_mask)
-        self._validate_checkpoint(snapshot)
-        return snapshot
-
-    def restore_checkpoint(self, snapshot: _PlantCheckpoint) -> None:
-        """Restore exactly, without a forward pass or physics step; snapshots stay reusable."""
-        if self._closed:
-            raise RuntimeError("plant is shut down")
-        self._validate_checkpoint(snapshot)
-        self._robot_state_inheritable = False
-        self._mujoco.mj_copyData(self.data, self.model, snapshot.data)
-        self.tick = snapshot.tick
-        self._command_targets[:] = snapshot.targets
-        self.hold_mask = snapshot.hold_mask
-
-    def physics_tick(self) -> PlantStep:
-        if self._closed:
-            raise RuntimeError("plant is shut down")
-        self._robot_state_inheritable = False
-        self.data.ctrl[self._command_actuators] = self._command_targets
-        self._mujoco.mj_step(self.model, self.data)
-        self.tick += 1
-        finite = bool(
-            np.all(np.isfinite(self.data.qpos))
-            and np.all(np.isfinite(self.data.qvel))
-            and np.all(np.isfinite(self.data.ctrl))
-            and np.isfinite(self.data.time)
-        )
-        return PlantStep(self.tick, self.sim_time_ns, finite)
+    def physics_tick(self) -> PhysicsStep:
+        return self._physics.physics_tick()
 
     def close(self) -> None:
         self._closed = True
+        self._physics.close()
         if self._scene_temp is not None:
             self._scene_temp.cleanup()
             self._scene_temp = None
 
 
-__all__ = ["PHYSICS_HZ", "PlantController", "PlantStep", "RENDER_HZ"]
+__all__ = ["PHYSICS_HZ", "PlantController", "RENDER_HZ"]

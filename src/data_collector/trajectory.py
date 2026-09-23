@@ -1,7 +1,6 @@
 """Portable, state-only whole-scene snapshots; binary models require exact MuJoCo versions."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -211,11 +210,6 @@ def _provenance(plant: Any, task_manifest: dict[str, Any]) -> tuple[dict[str, An
     return {"sources": sources, "artifact_hash": getattr(plant, "artifact_hash", None)}, camera_config
 
 
-@dataclass(frozen=True, slots=True)
-class _ContactState:
-    source: Any
-    contacts: np.ndarray
-
 
 class TrajectorySource:
     """Capture owned snapshots on the physics thread without changing live data."""
@@ -253,69 +247,29 @@ class TrajectorySource:
         self._qvel_indices = np.asarray(mapping["robot_qvel_indices"], dtype=np.intp)
         self._object_ids = np.asarray(mapping["object_body_ids"], dtype=np.intp)
         self._pose_data = mujoco.MjData(self._model)
-        self._geom_hand = np.full(self._model.ngeom, -1, dtype=np.intp)
-        self._geom_object = np.full(self._model.ngeom, -1, dtype=np.intp)
-        for index, geoms in enumerate(mapping["hand_geom_ids"]):
-            self._geom_hand[geoms] = index
-        for index, geoms in enumerate(mapping["object_geom_ids"]):
-            self._geom_object[geoms] = index
-        self._contacts = np.zeros((2, len(self._object_ids)), dtype=np.bool_)
+        from _spd_native import ContactCollector
+
+        self._contact_collector = ContactCollector(
+            self._model, plant.data, mapping["hand_geom_ids"], mapping["object_geom_ids"],
+        )
 
     def reset_contacts(self) -> None:
-        self._contacts.fill(False)
+        self._contact_collector.reset()
 
-    def capture_contact_state(self) -> _ContactState:
-        """Copy the unfinished recording interval independently of future captures."""
-        contacts = self._contacts.copy()
-        contacts.flags.writeable = False
-        return _ContactState(self, contacts)
+    def capture_contact_state(self) -> Any:
+        """Copy the unfinished recording interval with native source identity."""
+        return self._contact_collector.capture_state()
 
-    def restore_contact_state(self, snapshot: _ContactState) -> None:
-        """Restore an interval only to the source whose geometry mapping produced it."""
-        if (
-            not isinstance(snapshot, _ContactState) or snapshot.source is not self
-            or not isinstance(snapshot.contacts, np.ndarray)
-            or snapshot.contacts.shape != self._contacts.shape
-            or snapshot.contacts.dtype != self._contacts.dtype
-        ):
-            raise TrajectoryError("invalid contact interval checkpoint")
-        self._contacts[:] = snapshot.contacts
+    def restore_contact_state(self, snapshot: Any) -> None:
+        self._contact_collector.restore_state(snapshot)
 
     def has_hand_object_contact(self) -> bool:
         """Check current contacts, not the previous step or accumulated recording interval."""
-        if not len(self._object_ids):
-            return False
-        # mj_step leaves contacts at the pre-integration pose. Recompute on scratch
-        # data so checking a checkpoint never alters live solver/integrator history.
-        data = self._pose_data
-        mujoco.mj_copyData(data, self._model, self._plant.data)
-        mujoco.mj_fwdPosition(self._model, data)
-        for index in range(data.ncon):
-            contact = data.contact[index]
-            first, second = int(contact.geom1), int(contact.geom2)
-            if first < 0 or second < 0 or contact.efc_address < 0:
-                continue
-            if (
-                (self._geom_hand[first] >= 0 and self._geom_object[second] >= 0)
-                or (self._geom_hand[second] >= 0 and self._geom_object[first] >= 0)
-            ):
-                return True
-        return False
+        return self._contact_collector.current()
 
     def observe_contacts(self) -> None:
         """Accumulate solver-active contacts immediately after each recorded mj_step."""
-        data = self._plant.data
-        for index in range(data.ncon):
-            contact = data.contact[index]
-            first, second = int(contact.geom1), int(contact.geom2)
-            if first < 0 or second < 0 or contact.efc_address < 0:
-                continue
-            hand, obj = self._geom_hand[first], self._geom_object[second]
-            if hand >= 0 and obj >= 0:
-                self._contacts[hand, obj] = True
-            hand, obj = self._geom_hand[second], self._geom_object[first]
-            if hand >= 0 and obj >= 0:
-                self._contacts[hand, obj] = True
+        self._contact_collector.observe()
 
     def capture(self, tick: int, monotonic_ns: int) -> dict[str, Any]:
         data = self._plant.data
@@ -323,7 +277,7 @@ class TrajectorySource:
             "tick": np.int64(tick), "monotonic_ns": np.int64(monotonic_ns),
             "sim_time": np.float64(data.time), "qpos": data.qpos.copy(), "qvel": data.qvel.copy(),
             "robot_qpos": data.qpos[self._qpos_indices], "robot_qvel": data.qvel[self._qvel_indices],
-            "hand_contact": np.any(self._contacts, axis=1),
+            "hand_contact": self._contact_collector.hand_contact(),
         }
         for key in ("act", "mocap_pos", "mocap_quat", "eq_active"):
             if key in self.metadata["fields"]:
@@ -339,7 +293,7 @@ class TrajectorySource:
             frame["object_pose"] = np.concatenate(
                 (self._pose_data.xpos[self._object_ids], self._pose_data.xquat[self._object_ids]), axis=1,
             )
-            frame["hand_object"] = self._contacts.copy()
+            frame["hand_object"] = self._contact_collector.contacts()
         self.reset_contacts()
         return frame
 

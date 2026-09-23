@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>spd_native</name>
+  <version>0.1.0</version>
+  <description>Native ROS 2 command executor and MuJoCo control runtime.</description>
+  <maintainer email="spd@example.com">SPD</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tianji_spd_interfaces</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

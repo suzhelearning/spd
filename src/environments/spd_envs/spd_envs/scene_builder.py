@@ -230,7 +230,8 @@ class SceneBuildResult:
     def xml_string(self) -> str:
         """Return standalone MJCF including the local visual and collision assets."""
         root = ET.Element("mujoco", model=f"{self.scene}_{self.task}")
-        ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast")
+        ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast",
+                      cone="elliptic", noslip_iterations="1")
         ET.SubElement(root, "size", nuser_geom="2")
         root.extend((deepcopy(self.assets), deepcopy(self.worldbody)))
         return ET.tostring(root, encoding="unicode")
@@ -565,7 +566,8 @@ class ProceduralSceneBuilder:
                 # Test the actual contact geometry, including hollow interiors.
                 # Bounding boxes cannot distinguish valid nesting from overlap.
                 root = ET.Element("mujoco")
-                ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast")
+                ET.SubElement(root, "option", timestep=str(1 / 480), integrator="implicitfast",
+                              cone="elliptic", noslip_iterations="1")
                 ET.SubElement(root, "size", nuser_geom="2")
                 root.append(assets)
                 root.append(worldbody)

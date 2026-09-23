@@ -121,8 +121,6 @@ class SceneRobotContinuityTests(unittest.TestCase):
             (self.previous.data.qpos, 0, np.nan),
             (self.previous.data.qvel, 0, np.inf),
             (self.previous.data.ctrl, 0, np.inf),
-            (self.previous._command_targets, 0, np.nan),
-            (self.previous._command_targets, 0, self.previous._command_limits[0, 1] + 1),
             (self.current.data.qpos, -1, np.nan),
         )
         for array, index, value in mutations:
