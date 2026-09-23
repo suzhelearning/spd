@@ -1,5 +1,61 @@
 # 简介 cmd
 
+## Quest 3S 裸手 teleop → 本项目仿真
+
+Quest 交付文件已移入本项目：
+
+- `apps/quest/quest3s_hand_tracking.apk`：头显安装包。
+- `tools/hand_tracking/quest_hand_tracking_receiver.py`：原始 TCP 接收、JSONL 记录和可视化工具。
+- `tools/hand_tracking/requirements-visualize.txt`：独立诊断可视化依赖，仿真遥操不需要安装。
+
+Quest 接收协议与现有上游裸手解码器一致：TCP `10002`，小端
+`<BBqI>` 帧头，magic `0xAB`、type `0x40`、version `1`，载荷 `1968` 字节，
+双手各 26 个 OpenXR 关节；坐标为 FLU（前、左、上），四元数为 `xyzw`。
+不做额外轴翻转或左右手交换。`bash/run_quest_hand_sim.sh` 复用上游
+`tianji_teleop-ros2` 的标定、DLS/Ruckig、Hand2 和 ROS 发布，不在 SPD 内复制 IK。
+上游日志仍可能显示 PICO，这是共用输入实现的名称。
+
+```bash
+# 在本项目根目录执行；先在 Quest 开启开发者模式并授权 USB 调试
+adb devices -l
+adb install -r apps/quest/quest3s_hand_tracking.apk
+# 在头显中打开已安装应用，开启手部跟踪并授予应用所需权限
+
+# 可选诊断：确认头、双腕位置和 hands=L1/R1；结束后 Ctrl+C 再启动遥操
+pixi run spd-quest-receive --print
+# 可选记录原始解码数据：
+# pixi run spd-quest-receive --print --save-jsonl /tmp/quest-frames.jsonl
+
+# 终端 A：首次使用先按下文构建上游 spd 环境
+pixi run spd-quest-teleop --height-m 1.75 --headless
+# 终端 B：
+pixi run spd-sim --table-distance 0.2
+```
+
+将身高替换为实测值。终端 A `r` 标定（双臂前伸、肩宽、掌心相对，稳定约一秒），
+成功后 `s` 开始跟随；终端 B 按下文 SPD 的 `r/s/d` 流程采集。
+不要同时运行独立接收诊断和遥操入口，也不要同时运行 PICO 和 Quest 发布器。
+默认查找本项目相邻的 `tianji_teleop-ros2`；其他位置设置
+`TIANJI_TELEOP_ROOT=/absolute/path/to/tianji_teleop-ros2`。
+多设备遥操使用 `ANDROID_SERIAL`；诊断可加 `--adb-serial SERIAL`。
+两者默认自动建立 ADB 转发；自定义遥操端口使用 `--port PORT`，
+并事先手动执行 `adb forward tcp:PORT tcp:10002`。
+
+诊断 GUI 可在独立 Python 环境安装
+`pip install -r tools/hand_tracking/requirements-visualize.txt` 后，
+运行 `python tools/hand_tracking/quest_hand_tracking_receiver.py --visualize`；
+这不是 MuJoCo 仿真窗口。APK SHA-256：
+`4206849228aa6be0c8c16c3ee48240afb142f053820dc970bcd47991687ac22c`。
+真实 Quest 跟踪精度、腕部朝向、失跟踪恢复及 USB 稳定性仍需连接头显现场验收；
+协议兼容不代表实机端到端验收完成。
+
+适配验证：已通过合成 Quest 帧的 TCP 分片接收、头／双腕／52 关节与上游解码结果逐项对比，
+以及右手失跟踪有效位检查。`pixi run --locked spd-quest-teleop --height-m 1.75
+--headless --self-test --duration-s 8` 已通过标定、跟随、重新标定和退出，
+使用隔离 DDS domain `121`；这不是连接 Quest 或 SPD 采集端的端到端测试，
+也未通过实时性认证。若出现 `No module named 'tianji_runtime.hand2'`，
+请在上游工作区重新执行 `pixi run --locked -e spd build` 更新安装产物。
+
 ## PICO 裸手 teleop → 本项目仿真
 
 准备：头显运行**裸手跟踪 APK（不是手柄 APK）**，USB 连接电脑并授权调试；停止旧 PICO／Manus／外骨骼会话。本流程仅控制仿真，张手、握拳、捏合等识别标签**不会自动启停遥操**。
