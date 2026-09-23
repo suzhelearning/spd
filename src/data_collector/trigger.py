@@ -16,7 +16,7 @@ STATUS_MAX_AGE = 2.0  # Collector heartbeat is at most 0.5 seconds apart.
 STATES = {"idle", "preparing", "recording", "paused", "reverting", "saving", "discarding", "aborting", "error"}
 STRING_FIELDS = (
     "collector_id", "operation_id", "operation", "state", "message", "error",
-    "episode_path", "last_saved_path",
+    "episode_path", "last_saved_path", "last_outcome",
 )
 COUNT_FIELDS = ("state_frames", "max_frames")
 FINAL_STATES = {
@@ -68,7 +68,8 @@ def json_object(payload: str) -> dict[str, Any]:
 
 def parse_status(payload: str) -> dict[str, Any]:
     status = json_object(payload)
-    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused", "checkpoint_frames", "skip_confirmation"}
+    fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused",
+              "checkpoint_frames", "auto_checkpoint_frames", "skip_confirmation"}
     if set(status) != fields:
         raise ClientError("Malformed collector status: unexpected or missing fields")
     if any(not isinstance(status[key], str) for key in STRING_FIELDS):
@@ -81,9 +82,12 @@ def parse_status(payload: str) -> dict[str, Any]:
         raise ClientError("Malformed collector status: physics_paused must be a boolean")
     if type(status["skip_confirmation"]) is not bool:
         raise ClientError("Malformed collector status: skip_confirmation must be a boolean")
-    checkpoint_frames = status["checkpoint_frames"]
-    if checkpoint_frames is not None and (type(checkpoint_frames) is not int or checkpoint_frames < 0):
-        raise ClientError("Malformed collector status: checkpoint_frames must be null or a nonnegative integer")
+    for field in ("checkpoint_frames", "auto_checkpoint_frames"):
+        count = status[field]
+        if count is not None and (type(count) is not int or count < 0):
+            raise ClientError(f"Malformed collector status: {field} must be null or a nonnegative integer")
+    if status["last_outcome"] not in {"", "saved", "discarded"}:
+        raise ClientError("Malformed collector status: invalid last_outcome")
     elapsed = status["elapsed_s"]
     try:
         valid_elapsed = type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0
@@ -102,7 +106,8 @@ def show_status(status: dict[str, Any]) -> None:
         f"operation_id={json.dumps(status['operation_id'])}\n"
         f"  state_frames={status['state_frames']} "
         f"elapsed_s={status['elapsed_s']:.3f} max_frames={status['max_frames']}\n"
-        f"  physics_paused={status['physics_paused']} checkpoint_frames={status['checkpoint_frames']}\n"
+        f"  physics_paused={status['physics_paused']} checkpoint_frames={status['checkpoint_frames']} "
+        f"auto_checkpoint_frames={status['auto_checkpoint_frames']} last_outcome={json.dumps(status['last_outcome'])}\n"
         f"  episode_path={json.dumps(status['episode_path'])} "
         f"last_saved_path={json.dumps(status['last_saved_path'])}\n"
         f"  message={json.dumps(status['message'])} error={json.dumps(status['error'])}",
@@ -231,7 +236,7 @@ class CollectionTrigger:
         raise ClientError(f"Collector unavailable: {problem}; no command sent.")
 
     def execute(self, command: str, timeout: float) -> None:
-        if command != "revert_skip":
+        if command != "discard":
             self.skip_confirmation = None
         deadline = time.monotonic() + timeout
         self.wait_ready(deadline)
@@ -246,26 +251,18 @@ class CollectionTrigger:
         self.require_fresh_status()
         if command == "pause_toggle":
             command = "resume" if self.status["state"] == "paused" else "pause"
-        elif command == "revert_skip":
-            if self.status["checkpoint_frames"] is not None:
+        elif command == "discard" and self.interactive:
+            if self.status["state"] not in {"recording", "paused"}:
                 self.skip_confirmation = None
-                command = "revert"
-            elif self.status["state"] not in {"recording", "paused"}:
-                self.skip_confirmation = None
-                print("d requires a recording or paused episode; no command sent.", flush=True)
+                print("x requires a recording or paused episode; no command sent.", flush=True)
                 return
-            else:
-                context = tuple(self.status[key] for key in CONFIRMATION_FIELDS)
-                if self.skip_confirmation != context:
-                    self.skip_confirmation = context
-                    print(
-                        "No checkpoint: tap d again to confirm skipping this episode; "
-                        "another key or collector state change cancels.",
-                        flush=True,
-                    )
-                    return
-                self.skip_confirmation = None
-                command = "skip"
+            context = tuple(self.status[key] for key in CONFIRMATION_FIELDS)
+            if self.skip_confirmation != context:
+                self.skip_confirmation = context
+                print("Tap x again to confirm discarding this episode; another key or state change cancels.",
+                      flush=True)
+                return
+            self.skip_confirmation = None
         collector_id = self.collector_id
         previous_saved_path = self.status["last_saved_path"]
         self.observed = {}
@@ -336,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "Low-level ROS collection client (no motion authorization)\n"
             "  Default spd-sim exposes status only: use --command status.\n"
-            "  With a separately enabled control service: r checkpoint, s pause/resume, d revert.\n"
+            "  With a separately enabled control service: r checkpoint, s save, d revert, Space pause/resume, x discard.\n"
             "  Normal operator controls belong in the SPD window/terminal, not this client.\n"
             "  q / Ctrl+C exits this client only; no save or discard on exit.\n"
             "Commands wait for collector completion; unknown outcomes are never retried.",
@@ -368,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                         raise ClientError(f"Collector unavailable: {problem}")
                     next_graph_check = time.monotonic() + 0.5
                 key = read_key()
-                if key and key != "d":
+                if key and key != "x":
                     client.skip_confirmation = None
                 if key == "q":
                     raise ClientExit

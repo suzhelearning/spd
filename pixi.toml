@@ -26,6 +26,7 @@ coacd = "==1.0.14"
 default = { features = ["sim"], solve-group = "default" }
 ros-jazzy = { features = ["sim", "ros-jazzy"], solve-group = "default" }
 render = { features = ["sim"], solve-group = "default" }
+teleop-native = { features = ["teleop-native"], no-default-feature = true, solve-group = "teleop-native" }
 
 [tasks]
 spd-envs-check = "validate_scenes"
@@ -35,6 +36,8 @@ spd-render = "python -m offline_rendering"
 spd-augment = "python -m training_data"
 spd-quest-receive = "python tools/hand_tracking/quest_hand_tracking_receiver.py"
 spd-quest-teleop = "bash bash/run_quest_hand_sim.sh"
+spd-pico-teleop = "bash bash/run_pico_hand_sim.sh"
+spd-teleop-build = "bash bash/build_teleop.sh"
 ros-build-interfaces = "pixi run -e ros-jazzy bash -lc 'colcon build --base-paths src/interfaces/tianji_spd_interfaces --build-base .ros/build --install-base .ros/install --merge-install'"
 spd-native-build = "pixi run -e ros-jazzy bash bash/build_native.sh"
 spd-test = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m unittest discover -s tests -v"
@@ -66,3 +69,15 @@ RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
 ROS_DOMAIN_ID = "120"
 ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
 ROS_STATIC_PEERS = ""
+
+# Arm workers keep their validated MuJoCo/Pinocchio ABI outside the simulator.
+[feature.teleop-native.dependencies]
+cmake = ">=3.24,<4"
+ninja = ">=1.11"
+cxx-compiler = ">=1.9"
+pkg-config = "*"
+eigen = ">=3.4,<4"
+libpinocchio = ">=3.8,<4"
+libmujoco = "==3.10.0"
+glfw = ">=3.4,<4"
+yaml-cpp = ">=0.8,<1"

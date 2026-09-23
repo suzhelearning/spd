@@ -28,6 +28,35 @@ class KeyboardControlTests(unittest.TestCase):
                 raise RuntimeError("operator failure")
         self.assertEqual(termios.tcgetattr(self.slave), self.previous)
 
+    def test_terminal_dispatches_unified_controls_without_newlines(self):
+        received = []
+        done = threading.Event()
+
+        def stop(key):
+            received.append(key)
+            done.set()
+
+        terminal = ControlTerminal(stop, received.append, fd=self.slave)
+        self.addCleanup(terminal.close)
+        terminal.start()
+        os.write(self.master, b"RsD xq")
+        self.assertTrue(done.wait(1))
+        terminal.close()
+        self.assertEqual(received, ["checkpoint", "save", "revert", "pause_toggle", "discard", "q"])
+        self.assertEqual(termios.tcgetattr(self.slave), self.previous)
+
+    def test_viewer_dispatches_space_names_and_native_keycodes(self):
+        from simulation.viewer_window import ViewerWindow
+
+        received = []
+        window = ViewerWindow(headless=True, recording_control=received.append,
+                              joint_control=received.append)
+        self.addCleanup(window.close)
+        for key in ("R", "s", ord("D"), " ", 32, "KEY_SPACE", "space", "x", "q", "q"):
+            window.on_key(key)
+        self.assertEqual(received, ["checkpoint", "save", "revert", "pause_toggle",
+                                    "pause_toggle", "pause_toggle", "pause_toggle", "discard", "q"])
+
 
     def test_close_restores_terminal_and_joins_idle_reader(self):
         terminal = ControlTerminal(lambda key: None, lambda operation: None, fd=self.slave)

@@ -1,0 +1,211 @@
+"""Local-pipe adapter to the SAME DLS/Ruckig controller as VR simulation.
+
+World-frame palm TCP targets with bounded single-owner pipe transport.
+Only this simulation owner may issue start/Home/hold. No hardware exports.
+"""
+import json
+import math
+import os
+import select
+import struct
+import subprocess
+import threading
+import time
+from pathlib import Path
+import tempfile
+
+import numpy as np
+import yaml
+from pico2_hands.resources import controller_profile, native_executable
+
+from .resources import display_model_path
+
+
+REQUEST = struct.Struct("<4sBBHQQ31d")
+HEADER = struct.Struct("<4sBBHQQ")
+SIDE = struct.Struct("<I17d64s")
+RESPONSE_SIZE = HEADER.size + 2 * SIDE.size
+
+
+class DlsWorker:
+    ready_kind = "pico2_dls_ready"
+
+    def __init__(self, *, timeout_s=1.0, continuous_follow=False, collection_session=False):
+        self.continuous_follow = continuous_follow
+        self.collection_session = collection_session
+        if collection_session:
+            self.ready_kind = "pico2_collection_dls_ready"
+        source = controller_profile("qp_ik_pico_shared_root_dls.yaml")
+        config = yaml.safe_load(source.read_text())
+        key = "pico_ee_dls_kinematics_urdf_path"
+        config["controller"][key] = str(display_model_path(Path(config["controller"][key]).name))
+        for key in ("input_contract_artifact", "robot_geometry_artifact"):
+            config["shared_root"][key] = str((source.parent / config["shared_root"][key]).resolve())
+        # Keep the selected installed profile's parameters; only relocate paths.
+        # The ready handshake confirms the native process has loaded the YAML.
+        with tempfile.TemporaryDirectory(prefix="pico2-dls-") as directory:
+            self._profile = Path(directory) / "runtime.yaml"
+            self._profile.write_text(yaml.safe_dump(config, sort_keys=False))
+            self._start(timeout_s=timeout_s)
+
+    def _command(self):
+        command = [str(native_executable("pico2_dls_worker")), str(self._profile),
+                   str(display_model_path("marvin_m6_wuji2_shared_root_ceres.xml"))]
+        if self.collection_session:
+            command.append("--collection-session")
+        elif self.continuous_follow:
+            command.append("--continuous-follow")
+        return command
+
+    def command(self, operation, joints, now):
+        return self._exchange(operation, joints, np.zeros((2, 7)), 0., now, now)
+
+    def _start(self, *, timeout_s):
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("finite positive timeout required")
+        self.timeout_s = timeout_s
+        self.epoch = self.sequence = 0
+        self.failed = self.closed = False
+        self.lock = threading.Lock()
+        self.errors = tempfile.TemporaryFile()
+        self.process = None
+        try:
+            self.process = subprocess.Popen(self._command(),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
+            os.set_blocking(self.process.stdin.fileno(), False)
+            os.set_blocking(self.process.stdout.fileno(), False)
+            deadline = time.monotonic() + 15
+            line = bytearray()
+            while len(line) < 4096:
+                line.extend(self._read(1, deadline))
+                if line[-1:] == b"\n":
+                    break
+            else:
+                raise RuntimeError("oversized IK handshake")
+            ready = json.loads(line)
+            if ready != dict(schema_version=1, kind=self.ready_kind, simulation_only=True):
+                raise RuntimeError("IK handshake mismatch")
+        except BaseException:
+            self.failed = True
+            self.close()
+            raise
+
+    def _read(self, count, deadline):
+        result = bytearray()
+        while len(result) < count:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.process.stdout], [], [], remaining)[0]:
+                raise TimeoutError("IK response timeout")
+            block = os.read(self.process.stdout.fileno(), count - len(result))
+            if not block:
+                raise RuntimeError("IK worker closed/truncated response")
+            result.extend(block)
+        return result
+
+    def _exchange(self, operation, seeds, targets, source, received, now):
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError("IK worker requires a single owner")
+        try:
+            if self.closed or self.failed:
+                raise RuntimeError("IK worker unavailable; explicit replacement required")
+            seeds, targets = np.asarray(seeds, dtype=float), np.asarray(targets, dtype=float)
+            if seeds.shape != (2, 7) or targets.shape != (2, 7):
+                raise ValueError("bilateral 2x7 seed/pose required")
+            if not np.isfinite(seeds).all() or not np.isfinite(targets).all():
+                raise ValueError("finite seed/pose required")
+            if not all(math.isfinite(v) and v >= 0 for v in (source, received, now)) or received > now:
+                raise ValueError("invalid IK timestamps")
+            if operation == 2:
+                if self.epoch == 0:
+                    raise ValueError("explicit numerical reset required before solve")
+                if np.any(np.linalg.norm(targets[:, 3:], axis=1) < 1e-12):
+                    raise ValueError("nonzero target quaternion required")
+            sequence = self.sequence + 1
+            epoch = self.epoch + (operation in (1, 9, 10))
+            message = REQUEST.pack(b"P2IQ", 1, operation, REQUEST.size, sequence, epoch,
+                                   source, received, now, *seeds.ravel(), *targets.ravel())
+            try:
+                deadline = time.monotonic() + self.timeout_s
+                pending = memoryview(message)
+                while pending:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0 or not select.select([], [self.process.stdin], [], remaining)[1]:
+                        raise TimeoutError("IK request timeout")
+                    written = os.write(self.process.stdin.fileno(), pending)
+                    if written <= 0:
+                        raise RuntimeError("IK request pipe closed")
+                    pending = pending[written:]
+                response = self._read(RESPONSE_SIZE, deadline)
+                if HEADER.unpack_from(response) != (b"P2IR", 1, operation, RESPONSE_SIZE, sequence, epoch):
+                    raise RuntimeError("IK response association mismatch")
+                result = {}
+                for i, side in enumerate(("left", "right")):
+                    row = SIDE.unpack_from(response, HEADER.size + SIDE.size * i)
+                    if row[0] & ~7 or not np.isfinite(row[1:18]).all():
+                        raise RuntimeError("invalid IK result flags/numerics")
+                    result[side] = dict(accepted=bool(row[0] & 1), converged=bool(row[0] & 2),
+                        model_state_only=bool(row[0] & 4), joints=np.array(row[1:8]),
+                        achieved_pose=np.array(row[8:15]), position_error_m=row[15],
+                        orientation_error_rad=row[16], solve_time_ms=row[17],
+                        status=row[18].split(b"\0", 1)[0].decode("ascii"))
+                self.sequence, self.epoch = sequence, epoch
+                return result
+            except BaseException:
+                self.failed = True
+                raise
+        finally:
+            self.lock.release()
+
+    def reset(self, seeds):
+        return self._exchange(1, seeds, np.zeros((2, 7)), 0., 0., 0.)
+
+    def forward(self, seeds):
+        return self._exchange(3, seeds, np.zeros((2, 7)), 0., 0., 0.)
+
+    def solve(self, seeds, targets, *, source_time, received_time, now):
+        return self._exchange(2, seeds, targets, source_time, received_time, now)
+
+    def bind_frozen(self, joints, now):
+        """Reseed from frozen-scene authority, never from running plant feedback."""
+        if not self.collection_session:
+            raise RuntimeError("frozen binding requires a collection owner")
+        return self._exchange(9, joints, np.zeros((2, 7)), 0., now, now)
+
+    def home_frozen(self, joints, home_joints, now):
+        """Reseed retained targets and run native bounded Home without tracking."""
+        if not self.collection_session:
+            raise RuntimeError("frozen Home requires a collection owner")
+        return self._exchange(10, joints, home_joints, 0., now, now)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        already_failed = self.failed
+        forced = False
+        try:
+            if self.process is not None:
+                self.process.stdin.close()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    forced = True
+                    self.process.terminate()
+                    try:
+                        self.process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.process.kill()
+                        self.process.wait(timeout=2)
+                self.process.stdout.close()
+        finally:
+            self.errors.close()
+        if self.process is not None and (forced or self.process.returncode != 0):
+            self.failed = True
+            if not already_failed:
+                raise RuntimeError(f"IK worker cleanup failed: exit={self.process.returncode}; forced={forced}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()

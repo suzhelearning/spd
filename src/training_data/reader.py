@@ -102,7 +102,7 @@ class SequenceSample:
     camera_names: tuple[str, ...]
     frames: dict[str, np.ndarray]         # Original source_index and clocks.
     state: dict[str, np.ndarray]          # Every recorded trajectory field.
-    collection_events: dict[str, np.ndarray]  # Selected recovery; full rewind log.
+    collection_events: dict[str, np.ndarray]  # Selected recovery/quality; full rewind log.
     camera_position: np.ndarray           # [T, C, 3]
     camera_rotation: np.ndarray           # [T, C, 3, 3]
     task: str
@@ -177,11 +177,31 @@ class RenderedSequence:
             for name, spec in fields.items():
                 _dataset(source, f"trajectory/{name}", (self.frame_count, *spec["shape"]), spec["dtype"])
             self._rewinds = np.empty(0, dtype=_REWIND_DTYPE)
+            recovery_boundaries = []
+            self.recovery_annotated = False
+            self.control_flags_annotated = False
             if "collection_events" in source:
                 events = source["collection_events"]
-                _require(set(events).issubset({"rewind", "recovery_transition"}) and not events.attrs, "unsupported collection events")
+                _require(isinstance(events, h5py.Group)
+                         and set(events).issubset({"rewind", "recovery_transition", "control_flags"})
+                         and not events.attrs, "unsupported collection events")
                 if "recovery_transition" in events:
-                    _dataset(events, "recovery_transition", (self.frame_count,), "uint8")
+                    recovery = _dataset(events, "recovery_transition", (self.frame_count,), "uint8")
+                    _require(not recovery.attrs, "unsupported recovery attributes")
+                    self.recovery_annotated = True
+                    previous = 0
+                    for start in range(0, self.frame_count, 256):
+                        labels = recovery[start:start + 256]
+                        _require(bool(np.all(labels <= 4)), "invalid recovery transition labels")
+                        preceding = np.concatenate((np.asarray([previous], dtype=np.uint8), labels[:-1]))
+                        recovery_boundaries.extend((start + np.flatnonzero((labels != 0) & (labels != preceding))).tolist())
+                        previous = int(labels[-1])
+                if "control_flags" in events:
+                    flags = _dataset(events, "control_flags", (self.frame_count,), "uint8")
+                    _require(not flags.attrs, "unsupported control flag attributes")
+                    for start in range(0, self.frame_count, 256):
+                        _require(bool(np.all(flags[start:start + 256] <= 31)), "control flags contain reserved bits")
+                    self.control_flags_annotated = True
                 if "rewind" in events:
                     rewinds = events["rewind"]
                     _require(rewinds.ndim == 1 and rewinds.dtype == _REWIND_DTYPE and not rewinds.attrs, "invalid rewind labels")
@@ -190,6 +210,9 @@ class RenderedSequence:
                     _require(bool(np.all((counts >= 0) & (counts <= self.frame_count)))
                              and bool(np.all(np.diff(counts) >= 0)) and bool(np.all(times >= 0))
                              and bool(np.all(np.diff(times) > 0)), "invalid rewind boundaries/timestamps")
+            self._boundaries = np.unique(np.concatenate((
+                self._rewinds["frame_count"], np.asarray(recovery_boundaries, dtype=np.int64),
+            )))
         _require(_signature(self.path) == render_signature and _signature(self.source_path) == source_signature, "render/source changed during reader construction")
         self._render_signature, self._source_signature = render_signature, source_signature
 
@@ -232,11 +255,12 @@ class RenderedSequence:
 
     def read(self, frame_indices: Iterable[int], *, cameras: Iterable[str] = CAMERA_NAMES,
              augmentation: VisualAugmenter | None = None, seed: int | None = None) -> SequenceSample:
-        """Load strictly increasing source rows without crossing a rewind boundary.
+        """Load strictly increasing rows within one retained/rebound segment.
 
         Explicit seed is required with augmentation and rejected without it.
         Non-contiguous rows keep their original clocks; they are not resampled.
-        Missing recovery annotations remain missing, never invented as normal.
+        Missing recovery stays absent; legacy quality flags are zero, with
+        ``control_flags_annotated=False`` explicitly identifying their provenance.
         """
         self._unchanged()
         indices = np.asarray([integer(value, "frame index", 0, self.frame_count - 1) for value in frame_indices], dtype=np.int64)
@@ -249,8 +273,9 @@ class RenderedSequence:
             seed = integer(seed, "seed")
         else:
             _require(seed is None, "seed requires an augmentation transform")
-        boundaries = self._rewinds["frame_count"]
-        _require(not np.any((boundaries > indices[0]) & (boundaries <= indices[-1])), "sequence crosses a recorded rewind boundary; choose rows within one retained segment")
+        boundaries = self._boundaries
+        _require(not np.any((boundaries > indices[0]) & (boundaries <= indices[-1])),
+                 "sequence crosses a recorded rewind/rebind boundary; choose rows within one retained segment")
         shape = (indices.size, len(camera_names), self.height, self.width)
         rgb = np.empty((*shape, 3), dtype=np.uint8)
         masks = np.empty(shape, dtype=np.int32)
@@ -271,12 +296,14 @@ class RenderedSequence:
                 _require(bool(np.all(frames[name] >= 0)) and bool(np.all(np.diff(frames[name]) > 0)), f"invalid source clock: {name}")
             _require(np.array_equal(np.diff(frames["tick"]), np.diff(indices) * 8), "source tick cadence mismatch")
             _require(bool(np.allclose(np.diff(frames["sim_time"]), np.diff(indices) / 60, rtol=0, atol=1e-7)), "source simulation cadence mismatch")
-            events = {}
+            events = {"control_flags": np.zeros(indices.size, dtype=np.uint8)}
             if "collection_events" in source:
                 group = source["collection_events"]
                 if "recovery_transition" in group:
                     events["recovery_transition"] = group["recovery_transition"][indices]
-                    _require(bool(np.all(events["recovery_transition"] <= 3)), "invalid recovery transition labels")
+                    _require(bool(np.all(events["recovery_transition"] <= 4)), "invalid recovery transition labels")
+                if "control_flags" in group:
+                    events["control_flags"] = group["control_flags"][indices]
                 if "rewind" in group:
                     events["rewind"] = self._rewinds.copy()
             for camera_index, name in enumerate(camera_names):

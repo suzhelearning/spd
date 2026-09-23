@@ -41,6 +41,7 @@ class CollectionSession:
         self.episode_path = ""
         self.last_saved_path = ""
         self.completed_episodes = 0
+        self.last_outcome = ""
         self.state_frames = 0
         self.on_transition: Callable[[], None] | None = None
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spd-record-control")
@@ -53,6 +54,9 @@ class CollectionSession:
         self._physics_paused = False
         self.control_paused = False  # Unified control gate, independent of episode lifecycle.
         self._checkpoint: dict[str, Any] | None = None
+        self._auto_checkpoint: dict[str, Any] | None = None
+        self._pending_recovery = 0
+        self._pending_control_flags = 0
         self._skip_confirmation = False
 
     @property
@@ -65,6 +69,15 @@ class CollectionSession:
         """Immutable canonical-54 retained targets, detached from checkpoint state."""
         return self._checkpoint["targets"].view() if self._checkpoint is not None else None
 
+    @property
+    def auto_checkpoint_targets(self) -> np.ndarray | None:
+        """Retained automatic-pause targets, independent of the manual checkpoint."""
+        return self._auto_checkpoint["targets"].view() if self._auto_checkpoint is not None else None
+
+    def capture_auto_checkpoint(self) -> None:
+        """Capture the exact frozen plant/contact interval on the physics thread."""
+        self._auto_checkpoint = self._capture_checkpoint()
+
     def _capture_checkpoint(self) -> dict[str, Any]:
         snapshot = self.plant.capture_checkpoint()
         return {
@@ -74,6 +87,7 @@ class CollectionSession:
             "contacts": self.source.capture_contact_state(),
             "frames": self.state_frames,
             "first_tick": self._first_tick, "last_tick": self._last_tick,
+            "recovery": self._pending_recovery, "control_flags": self._pending_control_flags,
         }
 
     def snapshot(self) -> dict:
@@ -87,6 +101,8 @@ class CollectionSession:
             "max_frames": self.config.max_frames,
             "physics_paused": self.physics_paused,
             "checkpoint_frames": self._checkpoint["frames"] if self._checkpoint else None,
+            "auto_checkpoint_frames": self._auto_checkpoint["frames"] if self._auto_checkpoint else None,
+            "last_outcome": self.last_outcome,
             "skip_confirmation": self._skip_confirmation,
         }
 
@@ -101,6 +117,8 @@ class CollectionSession:
         self.plant, self.executor = plant, executor
         self.task_manifest, self.source = manifest, source
         self._checkpoint = None
+        self._auto_checkpoint = None
+        self._pending_recovery = self._pending_control_flags = 0
         self.cancel_skip_confirmation()
 
     def _transition(self, state: str, message: str) -> None:
@@ -184,9 +202,6 @@ class CollectionSession:
             reason = "Episode is not paused" if self.state != "paused" else self._start_rejection()
         elif operation == "revert" and self._checkpoint is None:
             reason = "No checkpoint in this episode"
-        elif operation == "checkpoint":
-            if self.source.has_hand_object_contact():
-                reason = "Checkpoint rejected: a hand is in contact with a task object"
         elif operation == "save":
             if self.state == "recording" and not self.executor.mailbox.enabled:
                 reason = "Control disabled; episode must be preserved as partial, not saved"
@@ -205,10 +220,11 @@ class CollectionSession:
                 self._started_ns = self._ended_ns = 0
                 self.state_frames = 0
                 self._first_tick = self._last_tick = None
+                self._pending_recovery = self._pending_control_flags = 0
+                self._auto_checkpoint = None
                 self._physics_paused = True
                 self.source.reset_contacts()
-                # Capture before the first motion or asynchronous disk preparation.
-                # Automatic checkpoint zero intentionally bypasses the contact gate.
+                # Retain the initial physical state, including any active grasp.
                 self._checkpoint = self._capture_checkpoint()
                 self.error = ""
                 self._job = self._worker.submit(
@@ -223,7 +239,7 @@ class CollectionSession:
             elif operation == "pause":
                 self._physics_paused = True
                 self.executor.clear()
-                self._transition("paused", "Physics and recording paused; local s requests one-second recovery")
+                self._transition("paused", "Physics and recording paused; Space requests resume")
             elif operation == "resume":
                 self._physics_paused = False
                 self._transition("recording", "Resume completed")
@@ -246,8 +262,8 @@ class CollectionSession:
                       "message": f"{operation} accepted; completion is reported on status"}
 
     def _finish(self, *, success: bool) -> None:
-        if self.physics_paused:
-            self.executor.clear()
+        self._physics_paused = True
+        self.executor.clear()
         self._ended_ns = time.monotonic_ns()
         self._job = self._worker.submit(self.recorder.finish_episode, success=success)
         self._transition("saving", "Saving explicitly successful episode" if success else
@@ -255,6 +271,8 @@ class CollectionSession:
 
     def _abort(self, reason: str) -> None:
         self.error = reason
+        self._physics_paused = True
+        self.executor.clear()
         self._ended_ns = time.monotonic_ns()
         self._job = self._worker.submit(self._preserve_partial, reason, self.episode_path)
         self._transition("aborting", f"{reason}; preserving partial episode")
@@ -281,22 +299,31 @@ class CollectionSession:
                 elif previous == "saving":
                     self.episode_path = self.last_saved_path = str(result)
                     self._checkpoint = None
+                    self._auto_checkpoint = None
+                    self.last_outcome = "saved"
                     self._physics_paused = False
                     self.completed_episodes += 1
                     self._transition("idle", f"Saved episode: {result}")
                 elif previous == "discarding":
                     self.episode_path = ""
                     self._checkpoint = None
+                    self._auto_checkpoint = None
+                    self.last_outcome = "discarded"
                     self._physics_paused = False
                     self.completed_episodes += 1
                     self._transition("idle", "Episode discarded")
                 elif previous == "reverting":
                     checkpoint = self._checkpoint
+                    # Automatic recovery points on the removed branch must not
+                    # survive a manual rewind or appear as current HUD targets.
+                    self._auto_checkpoint = None
                     self.plant.restore_checkpoint(checkpoint["plant"])
                     self.source.restore_contact_state(checkpoint["contacts"])
                     self.state_frames = checkpoint["frames"]
                     self._first_tick = checkpoint["first_tick"]
                     self._last_tick = checkpoint["last_tick"]
+                    self._pending_recovery = checkpoint["recovery"]
+                    self._pending_control_flags = checkpoint["control_flags"]
                     self.executor.clear()
                     self._transition("paused", "Checkpoint restored; coordinator may begin automatic recovery")
                 elif previous == "aborting":
@@ -314,11 +341,20 @@ class CollectionSession:
             elif self.state == "recording" and not self.executor.mailbox.enabled:
                 self._abort("Control disabled")
 
-    def tick(self, step: Any, *, recovery: int = 0) -> None:
-        """Record actual state; recovery labels are 0=normal, 1=start, 2=resume, 3=rewind."""
+    def tick(self, step: Any, *, recovery: int = 0, control_flags: int = 0) -> None:
+        """Aggregate interval quality and recovery (4=automatic tracking resume)."""
         if self.state != "recording":
             return
         try:
+            if (isinstance(recovery, (bool, np.bool_))
+                    or not isinstance(recovery, (int, np.integer)) or not 0 <= recovery <= 4):
+                raise ValueError("recovery must be an integer in 0..4")
+            if (isinstance(control_flags, (bool, np.bool_))
+                    or not isinstance(control_flags, (int, np.integer)) or not 0 <= control_flags <= 31):
+                raise ValueError("control_flags must be an integer in 0..31")
+            if recovery:
+                self._pending_recovery = int(recovery)
+            self._pending_control_flags |= int(control_flags)
             if not step.finite:
                 raise ValueError("non-finite simulation state")
             if self._last_tick is not None and step.tick != self._last_tick + 1:
@@ -329,7 +365,11 @@ class CollectionSession:
                 self._first_tick = step.tick
             offset = step.tick - self._first_tick
             if offset % (PHYSICS_HZ // self.config.state_rate_hz) == 0:
-                self.recorder.append_frame(self.source.capture(step.tick, time.monotonic_ns()), recovery=recovery)
+                self.recorder.append_frame(
+                    self.source.capture(step.tick, time.monotonic_ns()),
+                    recovery=self._pending_recovery, control_flags=self._pending_control_flags,
+                )
+                self._pending_recovery = self._pending_control_flags = 0
                 self.state_frames += 1
             if offset == 0:
                 self._transition("recording", "Recording whole-scene state and hand-object contacts")

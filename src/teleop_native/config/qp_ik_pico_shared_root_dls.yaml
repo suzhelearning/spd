@@ -1,0 +1,130 @@
+# Franka DLS raw IK followed by online Ruckig with shared-root palm mapping.
+controller:
+  rate_hz: 200.0
+  pico_ee_dls_kinematics_urdf_path: ../description/models/marvin_m6_ceres_source.urdf
+  model_state_only: true
+  initial_posture_enabled: true
+  # User home (degrees): L [55,-65,-70,-60,60,0,0], R [-55,-65,70,-60,-60,0,0].
+  initial_left_q_rad: [0.9599310886, -1.1344640138, -1.2217304764, -1.0471975512, 1.0471975512, 0.0, 0.0]
+  initial_right_q_rad: [-0.9599310886, -1.1344640138, 1.2217304764, -1.0471975512, -1.0471975512, 0.0, 0.0]
+ik:
+  algorithm: pico_ee_franka_dls
+cartesian_servo:
+  kff_linear: 0.0
+  kff_angular: 0.0
+  feedforward_filter_cutoff_hz: 15.0
+  prediction_horizon_seconds: 0.015
+  target_timeout_seconds: 0.5
+iterative_dls:
+  max_iterations: 20
+  position_tolerance_m: 0.0005
+  orientation_tolerance_rad: 0.01
+  position_gain: 1.0
+  orientation_gain: 1.0
+  minimum_damping: 1.0e-06
+  maximum_damping: 0.3
+  singular_value_threshold: 0.05
+  maximum_step_norm_rad: 0.35
+  maximum_joint_step_rad: 0.2
+  minimum_merit_improvement: 1.0e-10
+  nominal_posture_gain: 0.5
+  arm_angle_gain: 0.0
+shared_root_shape:
+  maximum_joint_rotation_jump_rad: 0.75
+joint_limits:
+  margin_rad: 0.05
+  max_acceleration_rad_s2: [60.0, 60.0, 60.0, 90.0, 90.0, 90.0, 90.0]
+  max_jerk_rad_s3: [3000.0, 3000.0, 3000.0, 4500.0, 4500.0, 4500.0, 4500.0]
+safety:
+  bound_tolerance: 1.0e-8
+  max_target_position_step: 0.05
+  max_target_orientation_step: 0.20
+trajectories:
+  circle_radius: 0.06
+  figure_eight_width: 0.08
+  figure_eight_height: 0.05
+  angular_amplitude: 0.35
+  frequency_hz: 1.0
+pico_teleop:
+  max_position_jump_m: 0.15
+  max_orientation_jump_rad: 0.60
+
+# Frozen source and robot geometry contracts for shared-root mapping.
+shared_root:
+  enabled: false
+  input_contract_artifact: shared_root_tjvr_input_contract.yaml
+  robot_geometry_artifact: shared_root_robot_geometry_dls.yaml
+  input_mode: tjvr_bridge_shoulder_frame
+  control_point_semantic: reconstructed_palm
+  shape_proxy_semantic: reconstructed_palm_proxy
+  morphology:
+    window_frames: 31
+    minimum_unique_samples: 15
+    mad_ratio_max: 0.05
+    outlier_ratio: 0.15
+    provisional_timeout_s: 2.0
+    sustained_invalid_timeout_s: 0.25
+    shoulder_width_min_m: 0.10
+    shoulder_width_max_m: 0.60
+    upper_arm_range_m: [0.10, 0.50]
+    forearm_range_m: [0.10, 0.50]
+    wrist_palm_proxy_range_m: [0.005, 0.25]
+    reach_scale_range: [0.5, 2.0]
+    lateral_scale_range: [0.5, 2.0]
+  bridge_frame_filter:
+    center_time_constant_s: 0.03
+    relation_time_constant_s: 0.03
+    direction_time_constant_s: 0.03
+    orientation_time_constant_s: 0.03
+    scale_time_constant_s: 0.03
+  continuity:
+    maximum_hold_s: 0.10
+    freshness_s: 0.10
+    recovery_unique_frames: 5
+    recovery_min_receive_span_s: 0.02
+    recovery_max_receive_gap_s: 0.10
+    source_dt_max_s: 0.10
+    blend_seconds: 0.15
+  target_gate:
+    # No fixed bilateral palm-distance gate; joint limits remain enforced by IK/execution.
+    maximum_center_offset_from_robot_shoulders_m: 1.0
+    maximum_position_correction_m: 0.75
+    maximum_orientation_correction_rad: 3.141592653589793
+
+  reachable_projection:
+    enabled: true
+    maximum_translation_m: 0.03
+    maximum_speed_m_s: 0.5
+
+pico_ee_franka_dls:
+  enabled: true
+  post_smoothing:
+    mode: ruckig
+    max_velocity_rad_s: [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
+    max_acceleration_rad_s2: [60.0, 60.0, 60.0, 90.0, 90.0, 90.0, 90.0]
+    max_jerk_rad_s3: [3000.0, 3000.0, 3000.0, 4500.0, 4500.0, 4500.0, 4500.0]
+    validation_tolerance: 1.0e-8
+  home_left_rad:
+  - 0.9599310886
+  - -1.1344640138
+  - -1.2217304764
+  - -1.0471975512
+  - 1.0471975512
+  - 0.0
+  - 0.0
+  home_right_rad:
+  - -0.9599310886
+  - -1.1344640138
+  - 1.2217304764
+  - -1.0471975512
+  - -1.0471975512
+  - 0.0
+  - 0.0
+  max_velocity_rad_s:
+  - 4.0
+  - 4.0
+  - 4.0
+  - 4.0
+  - 4.0
+  - 4.0
+  - 4.0

@@ -128,7 +128,7 @@ class EpisodeRecorder:
     """Transfer owned scene snapshots through a strictly bounded writer queue.
 
     After append_frame succeeds the caller must not mutate its arrays. Each queue
-    event contains one entire state row and its recovery label; no command streams.
+    event contains one entire state row and its recovery/quality labels; no commands.
     """
 
     def __init__(self, output_root: str | Path, *, queue_size: int = 256) -> None:
@@ -234,6 +234,8 @@ class EpisodeRecorder:
                 events = handle.create_group("collection_events")
                 events.create_dataset("recovery_transition", shape=(0,), maxshape=(None,),
                                       dtype=np.uint8, chunks=(64,))
+                events.create_dataset("control_flags", shape=(0,), maxshape=(None,),
+                                      dtype=np.uint8, chunks=(64,))
             self._partial_path, self._final_path = partial, final
             self._queue = queue.Queue(maxsize=self._queue_size)
             self._previous = None
@@ -253,8 +255,8 @@ class EpisodeRecorder:
                 self._done.set()
                 raise
 
-    def append_frame(self, frame: dict[str, Any], *, recovery: int = 0) -> None:
-        """Enqueue one atomic state/label row: 0=normal, 1=start, 2=resume, 3=rewind."""
+    def append_frame(self, frame: dict[str, Any], *, recovery: int = 0, control_flags: int = 0) -> None:
+        """Enqueue one atomic state/label row; recovery 4 is tracking-loss resume."""
         with self._lock:
             if self._error is not None:
                 raise RecorderError(str(self._error)) from self._error
@@ -262,11 +264,14 @@ class EpisodeRecorder:
                 raise RuntimeError("no episode is recording")
             try:
                 if (isinstance(recovery, (bool, np.bool_))
-                        or not isinstance(recovery, (int, np.integer)) or not 0 <= recovery <= 3):
-                    raise ValueError("recovery must be an integer in 0..3")
+                        or not isinstance(recovery, (int, np.integer)) or not 0 <= recovery <= 4):
+                    raise ValueError("recovery must be an integer in 0..4")
+                if (isinstance(control_flags, (bool, np.bool_))
+                        or not isinstance(control_flags, (int, np.integer)) or not 0 <= control_flags <= 31):
+                    raise ValueError("control_flags must be an integer in 0..31")
                 previous = _check_frame(frame, self._specs, self._previous)
                 # Copy only the small mapping, never its owned snapshot arrays.
-                self._queue.put_nowait(_Event("frame", (dict(frame), int(recovery))))
+                self._queue.put_nowait(_Event("frame", (dict(frame), int(recovery), int(control_flags))))
                 self._previous = previous
             except (ValueError, TypeError, OverflowError, queue.Full) as exc:
                 error = RecorderQueueOverflow("schema-v2 writer queue overflow") if isinstance(exc, queue.Full) else exc
@@ -322,6 +327,7 @@ class EpisodeRecorder:
             with h5py.File(path, "r+") as handle:
                 datasets = dict(handle["trajectory"].items())
                 recovery = handle["collection_events/recovery_transition"]
+                control_flags = handle["collection_events/control_flags"]
                 index = 0
                 while True:
                     try:
@@ -331,7 +337,7 @@ class EpisodeRecorder:
                             break
                         continue
                     if event.kind == "frame":
-                        frame, label = event.payload
+                        frame, label, flags = event.payload
                         # Roll back every dataset extent if an individual write fails.
                         try:
                             for name, dataset in datasets.items():
@@ -339,10 +345,13 @@ class EpisodeRecorder:
                                 dataset[index] = frame[name]
                             recovery.resize(index + 1, axis=0)
                             recovery[index] = label
+                            control_flags.resize(index + 1, axis=0)
+                            control_flags[index] = flags
                         except BaseException:
                             for dataset in datasets.values():
                                 dataset.resize(index, axis=0)
                             recovery.resize(index, axis=0)
+                            control_flags.resize(index, axis=0)
                             raise
                         index += 1
                     elif event.kind == "truncate":
@@ -359,6 +368,7 @@ class EpisodeRecorder:
                             for dataset in datasets.values():
                                 dataset.resize(count, axis=0)
                             recovery.resize(count, axis=0)
+                            control_flags.resize(count, axis=0)
                             events = handle.require_group("collection_events")
                             if "rewind" not in events:
                                 events.create_dataset("rewind", shape=(0,), maxshape=(None,),
@@ -486,7 +496,9 @@ class EpisodeRecorder:
         try:
             self._wait_writer()
         except RecorderError:
-            pass  # Explicit discard/abort still joins and releases a failed writer.
+            if kind == "discard":
+                raise  # A failed close must preserve the partial, not report discard.
+            # Abort still joins and releases the failed writer without deleting it.
         with self._lock:
             partial = self._partial_path
             if kind == "discard" and partial is not None:
@@ -594,20 +606,30 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
             if not isinstance(dataset, h5py.Dataset) or dataset.dtype != dtype or dataset.shape != (frames, *shape):
                 raise ValueError(f"trajectory/{name} dtype, shape or row count mismatch")
         recovery_annotated = False
+        control_flags_annotated = False
         if "collection_events" in handle:
             events = handle["collection_events"]
             if (not isinstance(events, h5py.Group)
-                    or set(events) - {"rewind", "recovery_transition"} or events.attrs):
-                raise ValueError("collection_events permits only rewind and recovery_transition, with no attributes")
+                    or set(events) - {"rewind", "recovery_transition", "control_flags"} or events.attrs):
+                raise ValueError("collection_events permits only rewind, recovery_transition and control_flags, with no attributes")
             if "recovery_transition" in events:
                 recovery = events["recovery_transition"]
                 if (not isinstance(recovery, h5py.Dataset) or recovery.dtype != np.dtype("uint8")
                         or recovery.shape != (frames,) or recovery.attrs):
                     raise ValueError("collection_events/recovery_transition must be uint8[frames], with no attributes")
                 for start in range(0, frames, _VALIDATION_ROWS):
-                    if np.any(recovery[start:start + _VALIDATION_ROWS] > 3):
-                        raise ValueError("recovery_transition values must be 0=normal, 1=start, 2=resume, 3=rewind")
+                    if np.any(recovery[start:start + _VALIDATION_ROWS] > 4):
+                        raise ValueError("recovery_transition values must be 0=normal, 1=start, 2=resume, 3=rewind, 4=tracking resume")
                 recovery_annotated = True
+            if "control_flags" in events:
+                flags = events["control_flags"]
+                if (not isinstance(flags, h5py.Dataset) or flags.dtype != np.dtype("uint8")
+                        or flags.shape != (frames,) or flags.attrs):
+                    raise ValueError("collection_events/control_flags must be uint8[frames], with no attributes")
+                for start in range(0, frames, _VALIDATION_ROWS):
+                    if np.any(flags[start:start + _VALIDATION_ROWS] > 31):
+                        raise ValueError("control_flags contains reserved bits")
+                control_flags_annotated = True
             if "rewind" in events:
                 rewinds = events["rewind"]
                 if (not isinstance(rewinds, h5py.Dataset) or rewinds.ndim != 1
@@ -648,6 +670,7 @@ def validate_episode_path(path: str | Path, *, allow_partial: bool = False) -> d
         "episode_path": str(h5_path), "schema_version": SCHEMA_VERSION,
         "task": task, "success": success, "frames": frames, "complete": complete,
         "model_sha256": model_hash, "valid": True, "recovery_annotated": recovery_annotated,
+        "control_flags_annotated": control_flags_annotated,
     }
 
 

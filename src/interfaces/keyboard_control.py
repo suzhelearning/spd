@@ -13,8 +13,10 @@ from typing import Any, Callable, Iterator
 
 KEY_COMMANDS = {
     "r": "checkpoint",
-    "s": "pause_toggle",
+    "s": "save",
     "d": "revert",
+    " ": "pause_toggle",
+    "x": "discard",
 }
 
 

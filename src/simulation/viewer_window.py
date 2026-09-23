@@ -99,7 +99,10 @@ class ViewerWindow:
     @staticmethod
     def _key_name(key: Any) -> str:
         if isinstance(key, str):
-            return key.strip().lower().removeprefix("key_")
+            if key == " ":
+                return " "
+            name = key.strip().lower().removeprefix("key_")
+            return " " if name == "space" else name
         if isinstance(key, int):
             if key in (27, 256):
                 return "escape"
