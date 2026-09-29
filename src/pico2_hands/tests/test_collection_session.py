@@ -85,11 +85,85 @@ class FingerReentryTests(unittest.TestCase):
         gate.observe(np.full(20, 1.5), start, retained)
         gate.advance(retained, start + 60_000_000, .02)
         np.testing.assert_array_equal(retained, held)
-        # Recovery need not resemble the old grip or wait for three samples.
-        fresh = start + 100_000_000
+        gate.advance(retained, start + 120_000_000, .02)
+        self.assertEqual(gate.mode, "waiting")
+        # A persistent loss restarts the blend without changing the held grip.
+        fresh = start + 150_000_000
         gate.observe(np.full(20, -1.), fresh, retained)
         gate.advance(retained, fresh, .02)
         np.testing.assert_array_equal(retained, held)
         gate.advance(retained, fresh + 20_000_000, .02)
         self.assertTrue(np.all(retained < held))
         self.assertLessEqual(float(np.max(np.abs(retained - held))), .040000000001)
+
+    def test_short_invalid_and_stale_gaps_hold_then_resume_live_without_reentry(self):
+        retained = np.zeros(20)
+        gate = _FingerGate()
+        start = 1_000_000_000
+        for tick in range(20):
+            stamp = start + tick * 20_000_000
+            gate.observe(np.full(20, .2), stamp, retained)
+            gate.advance(retained, stamp, .02)
+        np.testing.assert_allclose(retained, .2)
+        gate.invalidate(retained, stamp + 10_000_000)
+        gate.advance(retained, stamp + 10_000_000, .02)
+        np.testing.assert_allclose(retained, .2)
+        self.assertFalse(gate.fresh(stamp + 10_000_000))
+        self.assertEqual(gate.mode, "live")
+        # One fresh frame resumes the live rate-limited path, not a new blend.
+        stamp += 40_000_000
+        gate.observe(np.full(20, .8), stamp, retained)
+        gate.advance(retained, stamp, .02)
+        np.testing.assert_allclose(retained, .24)
+        gate.advance(retained, stamp + 46_000_000, .02)
+        np.testing.assert_allclose(retained, .24)
+        self.assertEqual(gate.mode, "live")
+        gate.observe(np.full(20, .8), stamp + 80_000_000, retained)
+        gate.advance(retained, stamp + 80_000_000, .02)
+        np.testing.assert_allclose(retained, .28)
+
+    def test_short_gap_pauses_blend_progress_without_resetting_or_skipping_it(self):
+        retained = np.zeros(20)
+        uninterrupted = retained.copy()
+        gate, reference = _FingerGate(), _FingerGate()
+        start = 1_000_000_000
+        target = np.full(20, .1)
+        for tick in (0, 20):
+            stamp = start + tick * 1_000_000
+            for current, output in ((gate, retained), (reference, uninterrupted)):
+                current.observe(target, stamp, output)
+                current.advance(output, stamp, .02)
+        held = retained.copy()
+        gate.invalidate(retained, start + 30_000_000)
+        gate.advance(retained, start + 70_000_000, .02)
+        np.testing.assert_array_equal(retained, held)
+        gate.observe(target, start + 80_000_000, retained)
+        gate.advance(retained, start + 80_000_000, .02)
+        # 50 ms of invalid input is excluded from the 200 ms blend clock.
+        reference.observe(target, start + 30_000_000, uninterrupted)
+        reference.advance(uninterrupted, start + 30_000_000, .02)
+        np.testing.assert_allclose(retained, uninterrupted, atol=1e-12)
+        self.assertTrue(np.all(retained > held))
+
+    def test_repeated_invalid_frames_do_not_extend_persistent_loss_budget(self):
+        retained = np.full(20, .2)
+        gate = _FingerGate()
+        gate.reset(retained)
+        start = 1_000_000_000
+        for tick in range(12):
+            stamp = start + tick * 20_000_000
+            gate.observe(np.full(20, .2), stamp, retained)
+            gate.advance(retained, stamp, .02)
+        for offset in (10, 40, 80, 119):
+            gate.invalidate(retained, stamp + offset * 1_000_000)
+            gate.advance(retained, stamp + offset * 1_000_000, .02)
+            self.assertEqual(gate.mode, "live")
+        gate.invalidate(retained, stamp + 120_000_000)
+        self.assertEqual(gate.mode, "waiting")
+        np.testing.assert_array_equal(retained, np.full(20, .2))
+        gate.observe(np.full(20, .8), stamp + 130_000_000, retained)
+        gate.advance(retained, stamp + 130_000_000, .02)
+        np.testing.assert_array_equal(retained, np.full(20, .2))
+        gate.advance(retained, stamp + 150_000_000, .02)
+        self.assertTrue(np.all(retained > .2))
+        self.assertTrue(np.all(retained < .24))

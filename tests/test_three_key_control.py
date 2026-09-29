@@ -184,7 +184,7 @@ class CollectionControlTests(unittest.TestCase):
             return TeleopSnapshot(state.generation, state.sequence, tuple(state.targets),
                                   now, now if state.tracked else now - 200_000_000,
                                   state.tracked, state.tracked, not state.tracked,
-                                  0 if state.tracked else 1, state.mode, "")
+                                  0 if state.tracked else 1, ("live", "live"), state.mode, "")
 
         def pause():
             state.mode = "waiting"

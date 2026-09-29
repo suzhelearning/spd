@@ -289,13 +289,18 @@ class RosViewerApp:
             state = "已暂停"
         checkpoint = str(checkpoint_frames) if checkpoint_frames is not None else "无"
         flags = self.three_key.control_flags
+        local = self.teleop.snapshot() if self.teleop is not None else None
+        left_mode, right_mode = local.finger_modes if local is not None else ("live", "live")
+        finger_flags = local.control_flags if local is not None else flags
         auto_checkpoint = status["auto_checkpoint_frames"]
         values = {
             "状态": f"{state}    帧数：{self.collection.state_frames}    检查点：{checkpoint}",
             "提示": _notice_zh(self.three_key.notice),
-            "双手": (("右手：" + ("等待有效输入" if flags & 2 else "平滑接入" if flags & 8 else "就绪")
-                      + "；左手：" + ("等待有效输入" if flags & 4 else "平滑接入" if flags & 16 else "就绪"))
-                     if self.teleop is not None else "由外部源控制；本地无法判断手指输入有效性"),
+            "双手": (("右手：" + ("等待有效输入" if right_mode == "waiting" else "短时保持"
+                                if finger_flags & 2 else "平滑接入" if right_mode == "blend" else "就绪")
+                      + "；左手：" + ("等待有效输入" if left_mode == "waiting" else "短时保持"
+                                   if finger_flags & 4 else "平滑接入" if left_mode == "blend" else "就绪"))
+                     if local is not None else "由外部源控制；本地无法判断手指输入有效性"),
             "跟踪": ("双臂输入降级" if flags & 1 else "本地相对绑定"
                      if self.teleop is not None else "外部订阅；无本地绑定/手指重接入控制"),
         }
@@ -307,11 +312,8 @@ class RosViewerApp:
         if auto_checkpoint is not None:
             values["失跟踪现场"] = f"帧 {auto_checkpoint}；r 仅重新接手，不回退、不更新保存点"
         error = self.collection.error or mailbox.last_reject_reason
-        if self.teleop is not None:
-            local = self.teleop.snapshot()
+        if local is not None:
             error = error or local.fault
-        else:
-            local = None
         if error:
             values["异常"] = _notice_zh(error)
         ghost = None
@@ -322,7 +324,8 @@ class RosViewerApp:
         elif stage in {"paused", "reverting", "rewind_wait"}:
             ghost = self.collection.checkpoint_targets
             ghost_label = "当前保存点"
-        elif stage in {"binding", "rebinding"} or (stage == "recording" and flags & 30):
+        elif (stage in {"binding", "rebinding"}
+              or (stage == "recording" and local is not None and local.finger_modes != ("live", "live"))):
             if local is not None:
                 ghost = local.position_rad
             elif candidate is not None and 0 <= time.time_ns() - candidate.stamp_ns <= 100_000_000:

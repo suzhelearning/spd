@@ -50,6 +50,7 @@ class TeleopSnapshot:
     arms_valid: bool
     needs_rebind: bool
     control_flags: int
+    finger_modes: tuple[str, str]  # Left, right; independent of transient quality flags.
     mode: str
     fault: str
 
@@ -133,19 +134,35 @@ class _FingerGate:
         self.target = None
         self.stamp = 0
         self.blend_start = 0
+        self.hold_start = 0
+        self.valid = False
         self.mode = "waiting"
 
-    def invalidate(self, retained):
-        if self.mode != "waiting" or self.target is not None:
+    def fresh(self, now):
+        return self.valid and self.target is not None and 0 <= now - self.stamp <= _FRESH_NS
+
+    def _hold(self, retained, now):
+        if self.mode == "waiting":
+            return
+        if not 0 <= now - self.stamp < _DROPOUT_NS:
             self.reset(retained)
+        elif not self.hold_start:
+            self.hold_start = now if not self.valid else min(now, self.stamp + _FRESH_NS)
+
+    def invalidate(self, retained, now):
+        self.valid = False
+        self._hold(retained, now)
 
     def observe(self, target, stamp, retained):
         if target.shape != (20,) or not np.isfinite(target).all():
             raise RuntimeError("invalid Hand2 target")
         if stamp <= self.stamp:
             return
-        if self.stamp and stamp - self.stamp > _FRESH_NS:
+        if self.stamp and stamp - self.stamp >= _DROPOUT_NS:
             self.reset(retained)
+        elif self.stamp and stamp - self.stamp > _FRESH_NS and not self.hold_start:
+            self.hold_start = self.stamp + _FRESH_NS
+        self.valid = True
         self.target, self.stamp = target, stamp
         if self.mode != "waiting":
             return
@@ -154,9 +171,13 @@ class _FingerGate:
         self.mode = "blend"
 
     def advance(self, retained, now, dt):
-        if self.target is None or not 0 <= now - self.stamp <= _FRESH_NS:
-            self.invalidate(retained)
+        if not self.fresh(now):
+            self._hold(retained, now)
             return
+        if self.hold_start:
+            if self.blend_start:
+                self.blend_start += now - self.hold_start
+            self.hold_start = 0
         if self.mode == "waiting":
             return
         desired = self.target
@@ -254,7 +275,8 @@ class TeleopSession:
         self._intent = "waiting"
         self._closed = False
         self._startup_error = None
-        self._snapshot = TeleopSnapshot(0, 0, (0.,) * 54, 0, 0, False, False, True, 7, "waiting", "")
+        self._snapshot = TeleopSnapshot(0, 0, (0.,) * 54, 0, 0, False, False, True, 7,
+                                        ("waiting", "waiting"), "waiting", "")
         self._thread = threading.Thread(target=self._run, name="collection-teleop", daemon=False)
         self._thread.start()
         self._ready.wait()
@@ -339,7 +361,7 @@ class TeleopSession:
         self._geometry = None
         self._arms_valid = False
         for side in _SIDES:
-            self._fingers[side].invalidate(self._q[_REGIONS[side]])
+            self._fingers[side].reset(self._q[_REGIONS[side]])
 
     def _observe(self, frame, now):
         identity = (frame.receiver_instance_id, frame.connection_generation)
@@ -412,7 +434,7 @@ class TeleopSession:
                               self._hand_sequence, frame.received_timestamp_ns)
                 pending.append((side, worker))
             else:
-                self._fingers[side].invalidate(self._q[_REGIONS[side]])
+                self._fingers[side].invalidate(self._q[_REGIONS[side]], frame.received_timestamp_ns)
         results = [(side, worker.receive()) for side, worker in pending]
         for side, result in results:
             self._fingers[side].observe(result, frame.received_timestamp_ns, self._q[_REGIONS[side]])
@@ -533,7 +555,7 @@ class TeleopSession:
         flags = 0 if fresh and not self._needs_rebind else 1
         for side, waiting, blending in (("right", 2, 8), ("left", 4, 16)):
             gate = self._fingers[side]
-            if gate.mode == "waiting" or not 0 <= now - gate.stamp <= _FRESH_NS:
+            if gate.mode == "waiting" or not gate.fresh(now):
                 flags |= waiting
             elif gate.mode == "blend":
                 flags |= blending
@@ -541,7 +563,9 @@ class TeleopSession:
             if fault or self._active_revision == self._revision:
                 self._snapshot = TeleopSnapshot(self._active_generation, self._snapshot.sequence + 1,
                     tuple(float(x) for x in self._q), now, self._input_ns, self._can_bind(now),
-                    fresh, self._needs_rebind, flags, "fault" if fault else self._mode, fault)
+                    fresh, self._needs_rebind, flags,
+                    (self._fingers["left"].mode, self._fingers["right"].mode),
+                    "fault" if fault else self._mode, fault)
 
     def _run(self):
         resources = ExitStack()
