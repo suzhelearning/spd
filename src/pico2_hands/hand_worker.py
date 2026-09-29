@@ -4,7 +4,9 @@ Each side owns a worker. A failed worker must be closed, not silently restarted:
 the session owner must invalidate input and explicitly reset its control epoch.
 
 Submit each side before receiving either result to overlap native solves. Each
-single-owner client permits one outstanding request with one absolute deadline.
+single-owner client permits one outstanding request with one absolute wait deadline.
+Buffered replies remain readable after caller delays; source freshness is checked
+by the session using the unchanged observation timestamp, not pipe-read time.
 """
 from __future__ import annotations
 
@@ -75,10 +77,15 @@ class NativeHandWorker:
     def _read(self, count, deadline):
         result = bytearray()
         while len(result) < count:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([self.process.stdout], [], [], remaining)[0]:
-                raise TimeoutError("native hand worker response timeout")
-            block = os.read(self.process.stdout.fileno(), count - len(result))
+            try:
+                block = os.read(self.process.stdout.fileno(), count - len(result))
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([self.process.stdout], [], [], remaining)[0]:
+                    raise TimeoutError(
+                        f"native hand worker response timeout ({self.side}: "
+                        f"{len(result)}/{count} bytes received)")
+                continue
             if not block:
                 raise RuntimeError("native hand worker response truncated/closed")
             result.extend(block)

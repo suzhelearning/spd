@@ -35,7 +35,6 @@ class CollectionControl:
         self._external_session = None
         self._home_started = 0
         self._home_settled = None
-        self._home_saved = False
         self._home_origin = None
         self._home_duration = 0.0
         self._home_sequence = 0
@@ -100,7 +99,7 @@ class CollectionControl:
         if self.collection.state not in {"recording", "paused"}:
             return
         if automatic:
-            self._stage("auto_paused", "跟踪失效：现场已冻结，稳定后自动重新接手；人工检查点保留")
+            self._stage("auto_paused", "跟踪丢失：保持当前姿态；摆好现实姿态后按 r 重新接手，s 保存")
         else:
             self._stage("paused", "人工暂停：空格重新接手；d 回退；s 保存；x 放弃")
 
@@ -192,6 +191,16 @@ class CollectionControl:
             self._halt()
             self.app.request_stop()
             return
+        if self.stage == "auto_paused":
+            if key == "r":
+                if not self.teleop.snapshot().can_bind:
+                    self.notice = "跟踪尚未稳定；保持头和双腕可见，摆好姿态后再按 r 重新接手"
+                    return
+                self._begin_bind(4)
+                return
+            if key in {"d", " "}:
+                self.notice = "失跟踪后请先按 r 重新接手；不回退、不更新保存点，接手后 r 存点、d 回退"
+                return
         if key != "x":
             self.cancel_confirmation()
         if key == " ":
@@ -221,10 +230,11 @@ class CollectionControl:
             if self.stage == "idle" and self.collection.state == "idle":
                 self._begin_bind(1)
             elif self.stage == "recording" and self._request("checkpoint"):
-                self.notice = f"人工检查点已更新：{self.collection.state_frames} 帧"
+                self.notice = f"当前保存点已更新：{self.collection.state_frames} 帧"
         elif key == "d" and self.collection.state in {"recording", "paused"}:
             self._halt()
             if self._request("revert"):
+                self._kind = 3
                 self._stage("reverting", "恢复完整检查点并裁掉失败分支；随后自动重新接手")
         elif key == "s" and self.collection.state in {"recording", "paused"}:
             if self.collection.state_frames == 0:
@@ -232,7 +242,7 @@ class CollectionControl:
                 return
             self._halt()
             if self._request("save"):
-                self._stage("saving", "保存成功示范；完成前不切场景")
+                self._stage("saving", "关闭并校验示范文件；成功后直接随机新任务，Home 等待 r")
         elif key == "x" and self.collection.state in {"recording", "paused"}:
             if self._discard_confirmation:
                 self._halt()
@@ -244,12 +254,12 @@ class CollectionControl:
                 self.notice = "再次按 x 确认放弃整条；空格继续、d 回退、s 保存"
 
     def _start_home(self):
-        self._home_saved = self.collection.last_outcome == "saved"
+        """Discard only: return physically Home before rebuilding the same task."""
         self.freeze = True
         self.executor.clear()
         if self.teleop is not None:
             self.teleop.pause()
-        self.app.begin_home_return(saved=self._home_saved)
+        self.app.begin_home_return()
         self.freeze = True
         if self._manual_pause_pending:
             self._manual_pause_pending = False
@@ -371,7 +381,17 @@ class CollectionControl:
         if self.stage in {"saving", "discarding"}:
             self.freeze = True
             if self.collection.state == "idle":
-                self._start_home()
+                if self.stage == "saving":
+                    self._halt()
+                    self._generation = self._sequence = -1
+                    self._external_session = None
+                    self._kind = self._entry_until = 0
+                    self._manual_pause_pending = False
+                    self.app.next_task_after_save()
+                    self.control_flags = self.recovery = 0
+                    self._stage("idle", "文件已保存并校验；全新随机任务已在 Home，双手放在腰间，r 重新绑定开始")
+                else:
+                    self._start_home()
             return
         if self.stage == "reverting":
             if self.collection.state == "paused":
@@ -381,10 +401,10 @@ class CollectionControl:
                 else:
                     self._stage("rewind_wait", "检查点已恢复；等待稳定输入，自动重新接手")
             return
-        if self.stage in {"auto_paused", "rewind_wait"}:
+        if self.stage == "rewind_wait":
             if snapshot is not None and snapshot.can_bind:
-                self._begin_bind(4 if self.stage == "auto_paused" else 3)
-            elif snapshot is None and self.stage == "rewind_wait" and self._external_ready():
+                self._begin_bind(self._kind)
+            elif snapshot is None and self._external_ready():
                 self._begin_bind(3)
             return
         if self.stage in {"binding", "rebinding"}:

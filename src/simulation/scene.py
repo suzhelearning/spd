@@ -15,22 +15,28 @@ from typing import Any
 
 
 class EpisodeTasks:
-    """Choose a task and scene seed per episode, or retain an explicit task."""
+    """Honor startup selection once, then sample the full task catalog per save."""
 
     def __init__(self, scene: str | None, task: str | None, seed: int | None) -> None:
         from spd_envs.registry import TASKS
 
         self.randomized = task is None and scene != "hardware_free"
-        self._fixed = (scene, task, 0 if seed is None else seed)
+        self._initial = (scene, task, 0 if seed is None else seed)
         self._rng = random.Random(seed)
-        self._tasks = tuple(spec for spec in TASKS if scene is None or spec.scene == scene)
-        if self.randomized and not self._tasks:
+        self._tasks = tuple(TASKS)
+        self._initial_tasks = tuple(spec for spec in self._tasks if scene is None or spec.scene == scene)
+        if self.randomized and not self._initial_tasks:
             raise ValueError(f"unknown task scene: {scene}")
 
     def next(self) -> tuple[str | None, str | None, int]:
-        if not self.randomized:
-            return self._fixed
-        spec = self._rng.choice(self._tasks)
+        tasks = self._tasks
+        if self._initial is not None:
+            initial, self._initial = self._initial, None
+            if not self.randomized:
+                return initial
+            tasks = self._initial_tasks
+        self.randomized = True
+        spec = self._rng.choice(tasks)
         return spec.scene, spec.name, self._rng.randrange(2**31)
 
 

@@ -107,21 +107,25 @@ class CollectionControlTests(unittest.TestCase):
         self.assertTrue(self.collection.physics_paused)
         self.until(lambda: self.control.stage == "recording" and self.control.recovery == 3)
         self.until(lambda: self.collection.state_frames > checkpoint + 3)
+        previous = self.app.plant
         self.control.key("s")
         self.assertTrue(self.collection.physics_paused)
-        self.until(lambda: self.control.stage == "returning_home")
-        self.cycle()
-        self.control.key(" ")
-        frozen_home = self.app.plant.data.qpos.copy()
+        self.app.joint_control("r")  # Queued for the old scene: never start the new one.
+        self.until(lambda: self.control.stage == "idle")
+        self.app._process_actions()
+        self.assertIsNot(self.app.plant, previous)
+        self.assertFalse(self.app.preparation_scene)
+        self.assertEqual(self.collection.last_outcome, "saved")
+        np.testing.assert_array_equal(self.app.plant.joint_command_positions(), self.app.home_targets)
+        np.testing.assert_array_equal(self.app.plant.joint_command_targets(), self.app.home_targets)
+        np.testing.assert_array_equal(self.app.plant.data.qvel, 0)
+        self.assertTrue(self.collection.physics_paused)
+        self.assertFalse(self.app.executor.mailbox.enabled)
+        home = self.app.plant.data.qpos.copy()
         for _ in range(5):
             self.cycle()
-        np.testing.assert_array_equal(self.app.plant.data.qpos, frozen_home)
-        self.assertEqual(self.control.stage, "home_paused")
-        self.control.key(" ")
-        self.until(lambda: self.control.stage == "idle")
-        self.assertEqual(self.collection.last_outcome, "saved")
-        self.assertLess(np.max(np.abs(self.app.plant.joint_command_positions()[:14] - self.app.home_targets[:14])), .1)
-        self.assertLess(np.max(np.abs(self.app.plant.joint_command_velocities()[:14])), .05)
+        np.testing.assert_array_equal(self.app.plant.data.qpos, home)
+        self.assertEqual(self.collection.state, "idle")
         result = validate_episode_path(self.collection.last_saved_path)
         self.assertTrue(result["success"])
         with h5py.File(self.collection.last_saved_path) as handle:
@@ -129,6 +133,8 @@ class CollectionControlTests(unittest.TestCase):
             self.assertEqual(int(handle["collection_events/rewind"][-1]["frame_count"]), checkpoint)
             self.assertEqual(handle["collection_events/control_flags"].shape,
                              handle["collection_events/recovery_transition"].shape)
+        self.targets = self.app.home_targets.copy()
+        self.start()  # Only a fresh r may authorize and create the next episode.
 
     def test_manual_pause_stays_frozen_until_space_and_discard_requires_confirmation(self):
         self.start()
@@ -146,9 +152,129 @@ class CollectionControlTests(unittest.TestCase):
         self.assertEqual(self.collection.state, "paused")
         self.assertEqual(self.collection.completed_episodes, 0)
         self.control.key("x")
+        self.until(lambda: self.control.stage == "returning_home")
+        self.cycle()
+        self.control.key(" ")
+        frozen_home = self.app.plant.data.qpos.copy()
+        for _ in range(5):
+            self.cycle()
+        np.testing.assert_array_equal(self.app.plant.data.qpos, frozen_home)
+        self.assertEqual(self.control.stage, "home_paused")
+        self.control.key(" ")
         self.until(lambda: self.control.stage == "idle")
         self.assertEqual(self.collection.last_outcome, "discarded")
         self.assertFalse(tuple(self.root.glob("*/*.h5")))
+
+    def test_each_tracking_loss_rebinds_without_replacing_manual_checkpoint(self):
+        from pico2_hands.collection_session import TeleopSnapshot
+        from data_collector.recorder import validate_episode_path
+        import h5py
+
+        self.start()
+        self.control.key("r")
+        manual_frames = self.collection.state_frames
+        self.until(lambda: self.collection.state_frames > manual_frames + 2)
+        self.online = False
+        state = SimpleNamespace(tracked=False, generation=0, sequence=0, mode="follow",
+                                targets=self.app.plant.joint_command_targets().copy())
+
+        def snapshot():
+            state.sequence += 1
+            now = time.monotonic_ns() - 1_000_000
+            return TeleopSnapshot(state.generation, state.sequence, tuple(state.targets),
+                                  now, now if state.tracked else now - 200_000_000,
+                                  state.tracked, state.tracked, not state.tracked,
+                                  0 if state.tracked else 1, state.mode, "")
+
+        def pause():
+            state.mode = "waiting"
+
+        def rebind(targets):
+            state.generation += 1
+            state.targets = targets.copy()
+            state.mode = "bound"
+            return state.generation
+
+        def follow(generation):
+            state.mode = "follow"
+
+        self.app.teleop = SimpleNamespace(snapshot=snapshot, pause=pause, rebind=rebind,
+                                         follow=follow, close=lambda: None)
+        for _ in range(2):
+            state.tracked = False
+            self.until(lambda: self.control.stage == "auto_paused")
+            saved_frames = self.collection.state_frames
+            saved_tick = self.app.plant.tick
+            saved_qpos = self.app.plant.data.qpos.copy()
+            saved_qvel = self.app.plant.data.qvel.copy()
+            saved_targets = self.app.plant.joint_command_targets().copy()
+            for key in ("r", "d", " "):
+                self.control.key(key)
+                self.cycle()
+                self.assertEqual(self.control.stage, "auto_paused")
+            state.tracked = True
+            for _ in range(20):
+                self.cycle()
+            self.assertEqual(self.control.stage, "auto_paused")
+            self.control.key("r")
+            self.assertEqual(self.control.stage, "rebinding")
+            self.assertEqual(self.collection.state_frames, saved_frames)
+            self.assertEqual(self.app.plant.tick, saved_tick)
+            np.testing.assert_array_equal(self.app.plant.data.qpos, saved_qpos)
+            np.testing.assert_array_equal(self.app.plant.data.qvel, saved_qvel)
+            np.testing.assert_array_equal(self.app.plant.joint_command_targets(), saved_targets)
+            self.assertEqual(self.collection.snapshot()["checkpoint_frames"], manual_frames)
+            self.until(lambda: self.control.stage == "recording" and self.control.recovery == 4)
+            self.assertIsNone(self.collection.snapshot()["auto_checkpoint_frames"])
+            self.until(lambda: self.collection.state_frames > saved_frames + 2)
+        # First r after either loss does not overwrite the original manual point.
+        self.control.key("d")
+        self.until(lambda: self.control.stage == "rewind_wait")
+        self.assertEqual(self.collection.state_frames, manual_frames)
+        self.until(lambda: self.control.stage == "recording" and self.control.recovery == 3)
+        self.until(lambda: self.collection.state_frames > manual_frames + 2)
+        self.control.key("r")
+        updated_frames = self.collection.state_frames
+        self.assertEqual(self.collection.snapshot()["checkpoint_frames"], updated_frames)
+        self.until(lambda: self.collection.state_frames > updated_frames + 2)
+        self.control.key("d")
+        self.until(lambda: self.control.stage == "rewind_wait")
+        self.assertEqual(self.collection.state_frames, updated_frames)
+        self.until(lambda: self.control.stage == "recording")
+        self.until(lambda: self.collection.state_frames > updated_frames + 2)
+        state.tracked = False
+        self.until(lambda: self.control.stage == "auto_paused")
+        final_frames = self.collection.state_frames
+        teleop = self.app.teleop
+        stale_snapshot = snapshot()
+        self.control.key("s")
+        self.collection._job.result(timeout=10)
+        self.collection.poll()
+        result = validate_episode_path(self.collection.last_saved_path)
+        self.assertEqual(result["frames"], final_frames)
+        with h5py.File(self.collection.last_saved_path) as handle:
+            self.assertIn(3, handle["collection_events/recovery_transition"][:])
+            self.assertEqual(int(handle["collection_events/rewind"][-1]["frame_count"]), updated_frames)
+        self.control.poll()
+        self.assertIs(self.app.teleop, teleop)
+        self.assertEqual(self.control.stage, "idle")
+        self.assertTrue(self.collection.physics_paused)
+        self.assertFalse(self.app.executor.mailbox.enabled)
+        np.testing.assert_array_equal(self.app.plant.joint_command_positions(), self.app.home_targets)
+        np.testing.assert_array_equal(self.app.plant.data.qvel, 0)
+        with patch.object(teleop, "snapshot", return_value=stale_snapshot):
+            for _ in range(5):
+                self.control.poll()
+            state.tracked = True
+            self.control.key("r")
+            for _ in range(5):
+                self.control.poll()
+            self.assertEqual(self.control.stage, "binding")
+            self.assertTrue(self.collection.physics_paused)
+            self.assertIsNone(self.app.executor.mailbox.latest)
+        self.assertFalse(self.app.executor.mailbox.enabled)
+        self.until(lambda: self.control.stage == "recording" and self.collection.state_frames > 2)
+        self.assertGreater(state.generation, stale_snapshot.generation)
 
     def test_preparation_freezes_and_disk_failure_preserves_partial_and_scene(self):
         import threading

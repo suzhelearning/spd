@@ -100,25 +100,37 @@ class HandTransportTests(unittest.TestCase):
         np.testing.assert_array_equal(worker.receive(), np.arange(20))
         self.assertFalse(worker.failed)
 
-    def test_response_deadline_includes_submit_write_and_is_not_renewed(self):
+    def test_buffered_response_survives_delayed_reader_without_refreshing_source_time(self):
         worker, _, reply = self.transport()
         now = [10.]
-        real_write = os.write
-
-        def slow_write(fd, payload):
-            result = real_write(fd, payload)
-            now[0] += .75
-            return result
-
         with patch("pico2_hands.hand_worker.time.monotonic", side_effect=lambda: now[0]):
-            with patch("pico2_hands.hand_worker.os.write", side_effect=slow_write):
-                worker.submit(points(), 1, 1_000_000)
+            worker.submit(points(), 1, 1_000_000)
             reply.write(self.response())
             now[0] = 11.01
-            # Even a buffered response is too late; receive gets no fresh budget.
-            with self.assertRaises(TimeoutError):
-                worker.receive()
-        self.assert_failed(worker)
+            np.testing.assert_array_equal(worker.receive(), np.arange(20, 40))
+        self.assertFalse(worker.failed)
+        self.assertEqual(worker.timestamp, 1_000_000)
+
+    def test_missing_response_bytes_get_no_new_budget_after_slow_submit(self):
+        for prefix in (b"", self.response()[:10]):
+            with self.subTest(buffered_bytes=len(prefix)):
+                worker, _, reply = self.transport()
+                now = [10.]
+                real_write = os.write
+
+                def slow_write(fd, payload):
+                    result = real_write(fd, payload)
+                    now[0] += .75
+                    return result
+
+                with patch("pico2_hands.hand_worker.time.monotonic", side_effect=lambda: now[0]):
+                    with patch("pico2_hands.hand_worker.os.write", side_effect=slow_write):
+                        worker.submit(points(), 1, 1_000_000)
+                    reply.write(prefix)
+                    now[0] = 11.01
+                    with self.assertRaises(TimeoutError):
+                        worker.receive()
+                self.assert_failed(worker)
 
     def test_association_mismatch_latches_without_publishing(self):
         for field, replacement in ((0, b"FAIL"), (1, 2), (2, 1),

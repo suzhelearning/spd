@@ -305,7 +305,7 @@ public:
             return false;
         }
         try {
-            validate_locked(*latest_, now_ns ? *now_ns : clock_time(clock_));
+            latest_->validate(now_ns ? *now_ns : clock_time(clock_));
             if (latest_->ready_mask == 0) {
                 throw CommandError("candidate has no ready groups");
             }
@@ -375,19 +375,20 @@ public:
 private:
     friend class RosJointCommandExecutor;
 
-    void validate_locked(const JointCommandSnapshot &snapshot, std::int64_t now,
-                         std::optional<std::uint64_t> previous_sequence = {},
-                         std::optional<std::int64_t> previous_stamp_ns = {}) const {
-        snapshot.validate(now, previous_sequence, previous_stamp_ns);
-        if (physics_) {
-            physics_->validate_values(snapshot.position_rad, snapshot.ready_mask);
-        }
-    }
-
     bool receive_locked(SnapshotPtr snapshot, std::int64_t now) {
         const bool same_session = last_session_ && *last_session_ == snapshot->session_id;
-        validate_locked(*snapshot, now, same_session ? last_sequence_ : std::nullopt,
-                        same_session ? last_stamp_ns_ : std::nullopt);
+        snapshot->validate(now, same_session ? last_sequence_ : std::nullopt,
+                           same_session ? last_stamp_ns_ : std::nullopt);
+        if (physics_) {
+            const auto targets = physics_->validate_values(snapshot->position_rad, snapshot->ready_mask);
+            if (targets != snapshot->position_rad) {
+                // A Python caller may retain this immutable source snapshot.
+                if (!snapshot.unique()) {
+                    snapshot = std::make_shared<JointCommandSnapshot>(*snapshot);
+                }
+                snapshot->position_rad = targets;
+            }
+        }
         if (authorized_session_ && snapshot->session_id != *authorized_session_) {
             disable_locked();
             last_reject_reason_ = "session changed; explicit authorization required";
@@ -702,7 +703,7 @@ private:
                 snapshot->session_id != *mailbox_->authorized_session_) {
                 throw CommandError("transition lost its authorized session");
             }
-            mailbox_->validate_locked(*snapshot, utc_now);
+            snapshot->validate(utc_now);
             if (snapshot->ready_mask != mailbox_->transition_ready_mask_) {
                 throw CommandError("ready groups changed during transition");
             }

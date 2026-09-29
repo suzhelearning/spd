@@ -242,12 +242,14 @@ class CollectionSession:
                 self._transition("paused", "Physics and recording paused; Space requests resume")
             elif operation == "resume":
                 self._physics_paused = False
+                self._auto_checkpoint = None
                 self._transition("recording", "Resume completed")
             elif operation == "revert":
+                checkpoint = self._checkpoint
                 self._physics_paused = True
                 self.executor.clear()
-                self._job = self._worker.submit(self.recorder.truncate_frames, self._checkpoint["frames"])
-                self._transition("reverting", "Removing failed suffix; physics and command application frozen")
+                self._job = self._worker.submit(self.recorder.truncate_frames, checkpoint["frames"])
+                self._transition("reverting", "Restoring checkpoint; physics and command application paused")
             elif operation == "save":
                 self._finish(success=True)
             else:
@@ -314,9 +316,6 @@ class CollectionSession:
                     self._transition("idle", "Episode discarded")
                 elif previous == "reverting":
                     checkpoint = self._checkpoint
-                    # Automatic recovery points on the removed branch must not
-                    # survive a manual rewind or appear as current HUD targets.
-                    self._auto_checkpoint = None
                     self.plant.restore_checkpoint(checkpoint["plant"])
                     self.source.restore_contact_state(checkpoint["contacts"])
                     self.state_frames = checkpoint["frames"]
@@ -324,6 +323,7 @@ class CollectionSession:
                     self._last_tick = checkpoint["last_tick"]
                     self._pending_recovery = checkpoint["recovery"]
                     self._pending_control_flags = checkpoint["control_flags"]
+                    self._auto_checkpoint = None
                     self.executor.clear()
                     self._transition("paused", "Checkpoint restored; coordinator may begin automatic recovery")
                 elif previous == "aborting":
@@ -342,7 +342,7 @@ class CollectionSession:
                 self._abort("Control disabled")
 
     def tick(self, step: Any, *, recovery: int = 0, control_flags: int = 0) -> None:
-        """Aggregate interval quality and recovery (4=automatic tracking resume)."""
+        """Aggregate interval quality and recovery (4=tracking-loss rebind)."""
         if self.state != "recording":
             return
         try:

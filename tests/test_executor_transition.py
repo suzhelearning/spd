@@ -33,6 +33,7 @@ class ExecutorTransitionTests(unittest.TestCase):
         self.origin = self.plant.joint_command_positions().copy()
         entries = {entry.joint: entry for entry in self.plant.joints}
         limits = np.asarray([entries[name].range for name in JOINT_NAME_TUPLE])
+        self.limits = self.plant._command_limits.copy()
         self.target = limits[:, 0] + .35 * (limits[:, 1] - limits[:, 0])
         self.moving_target = limits[:, 0] + .65 * (limits[:, 1] - limits[:, 0])
 
@@ -174,13 +175,89 @@ class ExecutorTransitionTests(unittest.TestCase):
                 self.assertIsNone(self.apply())
                 self.assert_held(reference)
 
+    def test_out_of_range_endpoint_saturates_before_blending_and_keeps_following(self):
+        oversized = np.full(54, np.finfo(np.float64).max)
+        oversized[::2] *= -1
+        bounded = np.clip(oversized, self.limits[:, 0], self.limits[:, 1])
+        self.assertTrue(self.receive(oversized))
+        self.assertTrue(self.executor.authorize_transition())
+        np.testing.assert_array_equal(self.apply().position_rad, self.origin)
+        self.now += 500_000_000
+        self.assertTrue(self.receive(oversized))
+        halfway = self.apply()
+        np.testing.assert_allclose(halfway.position_rad, (self.origin + bounded) / 2)
+        self.assertTrue(self.executor.transition_active)
+        self.now += 500_000_000
+        self.assertTrue(self.receive(oversized))
+        endpoint = self.apply()
+        np.testing.assert_array_equal(endpoint.position_rad, bounded)
+        self.assertEqual(endpoint.hold_mask, 0)
+        self.assertFalse(self.executor.transition_active)
+        self.assertTrue(self.executor.mailbox.enabled)
+        self.assertEqual(self.executor.mailbox.rejected, 0)
+        self.assertTrue(self.plant.physics_tick().finite)
+        self.assertTrue(self.receive(self.target))
+        np.testing.assert_array_equal(self.apply().position_rad, self.target)
+        self.assertTrue(self.executor.mailbox.enabled)
+
+    def test_enable_delta_compares_saturated_target_without_mutating_source(self):
+        boundary = self.origin.copy()
+        boundary[14] = self.limits[14, 1]
+        self.plant._physics.submit_values(boundary, 7)
+        self.executor.clear()
+        oversized = boundary.copy()
+        oversized[14] += 100
+        source = JointCommandSnapshot.from_values(
+            session_id=self.session, sequence=1, ready_mask=7,
+            position_rad=oversized, stamp_ns=self.utc,
+        )
+        self.assertTrue(self.executor.mailbox.receive(source, now_ns=self.utc))
+        np.testing.assert_array_equal(source.position_rad, oversized)
+        self.assertTrue(self.executor.authorize(True))
+        np.testing.assert_array_equal(self.apply().position_rad, boundary)
+        self.assertEqual(self.executor.hold_mask, 0)
+
+    def test_saturation_preserves_ready_hold_and_checkpoint_targets(self):
+        oversized = self.limits[:, 1] + 100
+        oversized[::2] = self.limits[::2, 0] - 100
+        bounded = np.clip(oversized, self.limits[:, 0], self.limits[:, 1])
+        source = JointCommandSnapshot.from_values(
+            session_id=self.session, sequence=1, ready_mask=5,
+            position_rad=oversized, stamp_ns=self.utc,
+        )
+        np.testing.assert_array_equal(self.plant.validate_joint_command(source), bounded)
+        np.testing.assert_array_equal(self.plant.joint_command_targets(), self.origin)
+        # Arms are ready; the ready left hand is explicitly held and the right
+        # hand is not ready. Neither hand may take the new saturated command.
+        self.plant.submit_joint_command(source, hold_mask=4)
+        expected = self.origin.copy()
+        expected[:14] = bounded[:14]
+        np.testing.assert_array_equal(self.plant.joint_command_targets(), expected)
+        self.assertEqual(self.plant.hold_mask, 6)
+        checkpoint = self.plant.capture_checkpoint()
+        self.plant._physics.submit_values(oversized, 0)
+        np.testing.assert_array_equal(self.plant.joint_command_targets(), expected)
+        self.assertEqual(self.plant.hold_mask, 7)
+        for invalid in (np.nan, np.inf, -np.inf):
+            with self.subTest(invalid=invalid):
+                rejected = oversized.copy()
+                rejected[34] = invalid
+                with self.assertRaises(ValueError):
+                    self.plant._physics.submit_values(rejected, 0)
+                np.testing.assert_array_equal(self.plant.joint_command_targets(), expected)
+                self.assertEqual(self.plant.hold_mask, 7)
+        self.plant._physics.submit_values(self.target, 7)
+        self.plant.restore_checkpoint(checkpoint)
+        np.testing.assert_array_equal(self.plant.joint_command_targets(), expected)
+        self.assertEqual(self.plant.hold_mask, 6)
+
     def test_invalid_candidate_cancels_instead_of_reusing_previous_endpoint(self):
         self.assertTrue(self.receive())
         self.assertTrue(self.executor.authorize_transition())
         self.apply()
         reference = self.plant.joint_command_targets()
         invalid = self.target.copy()
-        invalid[14] = 100.0
+        invalid[14] = np.nan
         self.assertFalse(self.receive(invalid))
         self.assertTrue(self.receive())
         self.assertIsNone(self.apply())

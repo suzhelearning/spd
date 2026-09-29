@@ -132,9 +132,6 @@ class _FingerGate:
         self.held = np.asarray(retained).copy()
         self.target = None
         self.stamp = 0
-        self.first_match = 0
-        self.matches = 0
-        self.previous = None
         self.blend_start = 0
         self.mode = "waiting"
 
@@ -152,19 +149,9 @@ class _FingerGate:
         self.target, self.stamp = target, stamp
         if self.mode != "waiting":
             return
-        matched = np.max(np.abs(target - retained)) <= .15
-        stable = self.previous is None or np.max(np.abs(target - self.previous)) <= .10
-        if not matched or not stable:
-            self.first_match = self.matches = 0
-        else:
-            if not self.matches:
-                self.first_match = stamp
-            self.matches += 1
-            if self.matches >= 3 and stamp - self.first_match >= 30_000_000:
-                self.held = retained.copy()
-                self.blend_start = 0
-                self.mode = "blend"
-        self.previous = target
+        self.held = retained.copy()
+        self.blend_start = 0
+        self.mode = "blend"
 
     def advance(self, retained, now, dt):
         if self.target is None or not 0 <= now - self.stamp <= _FRESH_NS:
@@ -472,7 +459,7 @@ class TeleopSession:
             self._home = destination
             self._home_origin = self._q[14:].copy()
             # Quintic finger Home has bounded speed/acceleration and starts at
-            # retained grip; no tracking or finger-match authorization required.
+            # retained grip; no tracking authorization required.
             distance = float(np.max(np.abs(self._home[14:] - self._home_origin)))
             self._home_duration = max(.4, 1.875 * distance / 1.5, math.sqrt(5.774 * distance / 6.))
             self._home_elapsed = 0.
@@ -587,7 +574,7 @@ class TeleopSession:
                 tcp = _TcpInput(self._host, self._port, connected)
                 resources.callback(tcp.close)
             self._ik = resources.enter_context(DlsWorker(timeout_s=.1, collection_session=True))
-            self._hands = {side: resources.enter_context(NativeHandWorker(side, timeout_s=.1)) for side in _SIDES}
+            self._hands = {side: resources.enter_context(NativeHandWorker(side, timeout_s=.3)) for side in _SIDES}
             self._ready.set()
             while not self._stop.is_set():
                 started = time.monotonic_ns()

@@ -286,7 +286,7 @@ class PlantController:
         return self._physics.targets()
 
     def validate_joint_command(self, snapshot: Any) -> np.ndarray:
-        """Validate every ready group before any target or freshness mutation."""
+        """Validate the command and return bounded targets without mutating state."""
         return self._physics.validate_joint_command(snapshot)
 
     def set_joint_command_hold(self, hold_mask: int) -> None:
@@ -294,7 +294,7 @@ class PlantController:
         self._physics.set_hold(hold_mask)
 
     def submit_joint_command(self, snapshot: Any, *, hold_mask: int = 0) -> None:
-        """Apply validated targets atomically at the native physics boundary."""
+        """Saturate finite targets and apply unheld ready groups atomically."""
         self._physics.submit_joint_command(snapshot, hold_mask=hold_mask)
 
     def capture_checkpoint(self) -> PhysicsCheckpoint:

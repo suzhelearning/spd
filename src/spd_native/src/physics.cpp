@@ -4,7 +4,6 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-#include <string>
 #include <utility>
 
 #include <pybind11/stl.h>
@@ -45,12 +44,6 @@ void validate_mask(int mask) {
 
 int group_bit(std::size_t index) {
   return index < 14 ? 1 : (index < 34 ? 4 : 2);
-}
-
-const char* group_name(std::size_t index) {
-  if (index < 7) return "left arm";
-  if (index < 14) return "right arm";
-  return index < 34 ? "left hand" : "right hand";
 }
 
 template <typename T>
@@ -133,7 +126,9 @@ Physics::Physics(py::object model, py::object data, IndexArray qpos_indices,
       throw py::value_error("joint limits must be finite nonempty intervals");
     }
   }
-  validate_values(home_, kReadyMask);
+  if (validate_values(home_, kReadyMask) != home_) {
+    throw py::value_error("home is outside the manifest/actuator limits");
+  }
   state_buffer_.resize(mj_stateSize(model_, mjSTATE_INTEGRATION));
   initialize_home();
 }
@@ -180,27 +175,25 @@ JointValues Physics::start_positions() const {
   return result;
 }
 
-void Physics::validate_values(const JointValues& values, int ready_mask) const {
+JointValues Physics::validate_values(const JointValues& values, int ready_mask) const {
   validate_mask(ready_mask);
   if (!all_finite(values.data(), values.size())) {
     throw py::value_error("position_rad must contain 54 finite values");
   }
+  JointValues targets;
   for (std::size_t i = 0; i < kJointCount; ++i) {
-    if ((ready_mask & group_bit(i)) &&
-        (values[i] < limits_[i][0] || values[i] > limits_[i][1])) {
-      throw py::value_error(std::string(group_name(i)) +
-                            " command is outside the manifest/actuator limits");
-    }
+    targets[i] = std::clamp(values[i], limits_[i][0], limits_[i][1]);
   }
+  return targets;
 }
 
 void Physics::submit_values(const JointValues& values, int ready_mask, int hold_mask) {
   require_open();
-  validate_values(values, ready_mask);
+  const auto targets = validate_values(values, ready_mask);
   validate_mask(hold_mask);
   const int effective_hold = (kReadyMask ^ ready_mask) | hold_mask;
   for (std::size_t i = 0; i < kJointCount; ++i) {
-    if (!(effective_hold & group_bit(i))) targets_[i] = values[i];
+    if (!(effective_hold & group_bit(i))) targets_[i] = targets[i];
   }
   hold_mask_ = effective_hold;
   fresh_ = false;
@@ -244,7 +237,9 @@ void Physics::validate_checkpoint(const PhysicsCheckpoint& checkpoint) {
     throw py::value_error("checkpoint has invalid tick, targets or hold mask");
   }
   validate_mask(checkpoint.hold_mask);
-  validate_values(checkpoint.targets, kReadyMask);
+  if (validate_values(checkpoint.targets, kReadyMask) != checkpoint.targets) {
+    throw py::value_error("checkpoint targets are outside the manifest/actuator limits");
+  }
   require_model_data(checkpoint.model, checkpoint.data);
   const auto* data = address<mjData>(checkpoint.data);
   mj_getState(model_, data, state_buffer_.data(), mjSTATE_INTEGRATION);
@@ -288,7 +283,9 @@ void Physics::inherit_robot_state(const Physics& previous) {
   if (!fresh_ || tick_ != 0 || data_->time != 0) {
     throw py::value_error("robot state can only be inherited by a fresh plant");
   }
-  validate_values(previous.targets_, kReadyMask);
+  if (validate_values(previous.targets_, kReadyMask) != previous.targets_) {
+    throw py::value_error("retained targets are outside the manifest/actuator limits");
+  }
   for (std::size_t i = 0; i < kJointCount; ++i) {
     data_->qpos[qpos_indices_[i]] = previous.data_->qpos[previous.qpos_indices_[i]];
     data_->qvel[dof_indices_[i]] = previous.data_->qvel[previous.dof_indices_[i]];
@@ -451,8 +448,7 @@ void bind_physics(pybind11::module_& module) {
       .def_property_readonly("fresh", &Physics::fresh)
       .def("validate_joint_command", [](const Physics& self, py::handle snapshot) {
         const auto [values, ready_mask] = decode_joint_command(snapshot);
-        self.validate_values(values, ready_mask);
-        return joint_array(values);
+        return joint_array(self.validate_values(values, ready_mask));
       }, py::arg("snapshot"))
       .def("submit_joint_command", [](Physics& self, py::handle snapshot, int hold_mask) {
         const auto [values, ready_mask] = decode_joint_command(snapshot);
@@ -463,9 +459,7 @@ void bind_physics(pybind11::module_& module) {
       .def("targets", [](const Physics& self) { return joint_array(self.targets()); })
       .def("start_positions", [](const Physics& self) { return joint_array(self.start_positions()); })
       .def("validate_values", [](const Physics& self, const NumericArray& values, int ready_mask) {
-        const auto parsed = joint_values(values);
-        self.validate_values(parsed, ready_mask);
-        return joint_array(parsed);
+        return joint_array(self.validate_values(joint_values(values), ready_mask));
       }, py::arg("values"), py::arg("ready_mask"))
       .def("submit_values", [](Physics& self, const NumericArray& values, int ready_mask, int hold_mask) {
         self.submit_values(joint_values(values), ready_mask, hold_mask);

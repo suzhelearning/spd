@@ -39,7 +39,7 @@ class Physics {
   JointValues velocities() const;
   JointValues start_positions() const;
   const JointValues& targets() const noexcept { return targets_; }
-  void validate_values(const JointValues& values, int ready_mask) const;
+  JointValues validate_values(const JointValues& values, int ready_mask) const;
   void submit_values(const JointValues& values, int ready_mask, int hold_mask = 0);
   void set_hold(int hold_mask);
   PhysicsStep physics_tick();

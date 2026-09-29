@@ -51,46 +51,45 @@ class RelativeAnchorTests(unittest.TestCase):
 
 
 class FingerReentryTests(unittest.TestCase):
-    def test_unmatched_grip_is_held_while_other_side_blends_and_loss_rearms_gate(self):
+    def test_distant_targets_follow_independently_without_matching(self):
         retained = {"left": np.full(20, .5), "right": np.full(20, .5)}
+        targets = {"left": np.full(20, -1.), "right": np.full(20, 1.5)}
         gates = {side: _FingerGate() for side in retained}
         for side in gates:
             gates[side].reset(retained[side])
-        start = 1_000_000_000
-        for tick in range(20):
-            stamp = start + tick * 20_000_000
-            gates["left"].observe(np.full(20, .1), stamp, retained["left"])
-            gates["right"].observe(np.full(20, .6), stamp, retained["right"])
+        for tick in range(100):
+            stamp = 1_000_000_000 + tick * 20_000_000
             for side in gates:
+                before = retained[side].copy()
+                gates[side].observe(targets[side], stamp, retained[side])
                 gates[side].advance(retained[side], stamp, .02)
-        np.testing.assert_array_equal(retained["left"], np.full(20, .5))
-        np.testing.assert_allclose(retained["right"], np.full(20, .6), atol=1e-12)
-        self.assertEqual(gates["left"].mode, "waiting")
-        self.assertEqual(gates["right"].mode, "live")
-        gates["right"].advance(retained["right"], stamp + 46_000_000, .02)
-        held = retained["right"].copy()
-        for tick in range(4):
-            stamp += 60_000_000
-            gates["right"].observe(np.full(20, .9), stamp, retained["right"])
-            gates["right"].advance(retained["right"], stamp, .02)
-        np.testing.assert_array_equal(retained["right"], held)
-        self.assertEqual(gates["right"].mode, "waiting")
+                self.assertLessEqual(float(np.max(np.abs(retained[side] - before))), .040000000001)
+                if tick == 0:
+                    np.testing.assert_array_equal(retained[side], before)
+        for side in gates:
+            np.testing.assert_allclose(retained[side], targets[side], atol=1e-12)
 
-    def test_match_requires_distinct_stable_samples_and_starts_without_jump(self):
+    def test_loss_holds_and_first_fresh_target_reenters_without_jump(self):
         retained = np.full(20, .5)
         gate = _FingerGate()
         gate.reset(retained)
-        target = np.full(20, .6)
         start = 1_000_000_000
-        gate.observe(target, start, retained)
-        for _ in range(10):
-            gate.observe(target, start, retained)
-            gate.advance(retained, start + 10_000_000, .005)
-        np.testing.assert_array_equal(retained, np.full(20, .5))
-        gate.observe(target, start + 20_000_000, retained)
-        gate.observe(target, start + 40_000_000, retained)
-        gate.advance(retained, start + 40_000_000, .005)
-        np.testing.assert_array_equal(retained, np.full(20, .5))
-        gate.advance(retained, start + 60_000_000, .005)
+        gate.observe(np.full(20, 1.5), start, retained)
+        gate.advance(retained, start, .02)
+        gate.advance(retained, start + 20_000_000, .02)
         self.assertTrue(np.all(retained > .5))
-        self.assertTrue(np.all(retained < .51))
+        held = retained.copy()
+        gate.advance(retained, start + 46_000_000, .02)
+        np.testing.assert_array_equal(retained, held)
+        # A duplicate sample must not authorize stale motion.
+        gate.observe(np.full(20, 1.5), start, retained)
+        gate.advance(retained, start + 60_000_000, .02)
+        np.testing.assert_array_equal(retained, held)
+        # Recovery need not resemble the old grip or wait for three samples.
+        fresh = start + 100_000_000
+        gate.observe(np.full(20, -1.), fresh, retained)
+        gate.advance(retained, fresh, .02)
+        np.testing.assert_array_equal(retained, held)
+        gate.advance(retained, fresh + 20_000_000, .02)
+        self.assertTrue(np.all(retained < held))
+        self.assertLessEqual(float(np.max(np.abs(retained - held))), .040000000001)
