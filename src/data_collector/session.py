@@ -57,7 +57,6 @@ class CollectionSession:
         self._auto_checkpoint: dict[str, Any] | None = None
         self._pending_recovery = 0
         self._pending_control_flags = 0
-        self._skip_confirmation = False
 
     @property
     def physics_paused(self) -> bool:
@@ -103,7 +102,6 @@ class CollectionSession:
             "checkpoint_frames": self._checkpoint["frames"] if self._checkpoint else None,
             "auto_checkpoint_frames": self._auto_checkpoint["frames"] if self._auto_checkpoint else None,
             "last_outcome": self.last_outcome,
-            "skip_confirmation": self._skip_confirmation,
         }
 
     def replace_scene(self, plant: Any, executor: Any, task_manifest: dict) -> None:
@@ -119,10 +117,8 @@ class CollectionSession:
         self._checkpoint = None
         self._auto_checkpoint = None
         self._pending_recovery = self._pending_control_flags = 0
-        self.cancel_skip_confirmation()
 
     def _transition(self, state: str, message: str) -> None:
-        self.cancel_skip_confirmation()
         self.state, self.message = state, message
         print("SPD collection: " + json.dumps(self.snapshot(), ensure_ascii=False), flush=True)
         if self.on_transition is not None:
@@ -139,46 +135,8 @@ class CollectionSession:
             return "External command is stale; no currently ready command group"
         return ""
 
-    def cancel_skip_confirmation(self) -> None:
-        """Any other operator action or lifecycle transition cancels pending skip."""
-        if self._skip_confirmation:
-            self.message = "Skip confirmation cancelled"
-        self._skip_confirmation = False
-
-    def request_local(self, operation: str) -> tuple[bool, dict]:
-        """Local pause pedal is explicit authorization; ROS requests never use this gate."""
-        if operation == "revert_skip":
-            if self._closed or self._job is not None or self.state not in {"recording", "paused"}:
-                return self.request("revert")
-            if self._checkpoint is not None:
-                return self.request("revert")
-            if self._skip_confirmation:
-                return self.request("skip")
-            self._skip_confirmation = True
-            self.message = "No checkpoint: press d again to confirm skipping this episode; another control cancels"
-            if self.on_transition is not None:
-                self.on_transition()
-            return False, {"collector_id": self.collector_id, "operation_id": "", "message": self.message}
-        self.cancel_skip_confirmation()
-        if operation != "pause_toggle":
-            return self.request(operation)
-        if self.state != "paused":
-            return self.request("pause")
-        if self._closed or self._job is not None:
-            return self.request("resume")
-        # Recheck even if somebody enabled while paused: the latest candidate
-        # must still align with the retained/restored targets at this press.
-        if not self.executor.authorize(True):
-            reason = self.executor.mailbox.last_reject_reason or "No fresh aligned command candidate"
-            return False, {"collector_id": self.collector_id, "operation_id": "", "message": reason}
-        accepted, payload = self.request("resume")
-        if not accepted or self.state != "recording":
-            self.executor.authorize(False)
-        return accepted, payload
-
     def request(self, operation: str) -> tuple[bool, dict]:
         """Accept on the physics thread; disk mutations run on the control worker."""
-        self.cancel_skip_confirmation()
         reason = ""
         operations = {"start", "save", "discard", "checkpoint", "pause", "resume", "revert", "skip"}
         if self._closed:
@@ -239,7 +197,7 @@ class CollectionSession:
             elif operation == "pause":
                 self._physics_paused = True
                 self.executor.clear()
-                self._transition("paused", "Physics and recording paused; Space requests resume")
+                self._transition("paused", "Physics and recording paused; s requests rebind and resume")
             elif operation == "resume":
                 self._physics_paused = False
                 self._auto_checkpoint = None
@@ -325,7 +283,7 @@ class CollectionSession:
                     self._pending_control_flags = checkpoint["control_flags"]
                     self._auto_checkpoint = None
                     self.executor.clear()
-                    self._transition("paused", "Checkpoint restored; coordinator may begin automatic recovery")
+                    self._transition("paused", "Checkpoint restored; remain paused until s requests rebind and resume")
                 elif previous == "aborting":
                     self.episode_path = result
                     self._transition("error", f"{self.error}; partial episode preserved")

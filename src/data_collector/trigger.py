@@ -1,4 +1,4 @@
-"""Foreground ROS-only operator client for the existing SPD collector."""
+"""Read-only ROS status observer with optional explicit low-level commands."""
 from __future__ import annotations
 
 import argparse
@@ -9,7 +9,7 @@ import sys
 import time
 from typing import Any
 
-from interfaces.keyboard_control import KEY_COMMANDS, read_key, terminal_input
+from interfaces.keyboard_control import read_key, terminal_input
 
 
 STATUS_MAX_AGE = 2.0  # Collector heartbeat is at most 0.5 seconds apart.
@@ -24,10 +24,6 @@ FINAL_STATES = {
     "checkpoint": {"recording", "paused"}, "pause": {"paused"},
     "resume": {"recording"}, "revert": {"paused"}, "skip": {"idle"},
 }
-CONFIRMATION_FIELDS = (
-    "collector_id", "episode_path", "operation_id", "state", "checkpoint_frames",
-    "skip_confirmation", "message", "error",
-)
 
 
 class ClientError(RuntimeError):
@@ -69,7 +65,7 @@ def json_object(payload: str) -> dict[str, Any]:
 def parse_status(payload: str) -> dict[str, Any]:
     status = json_object(payload)
     fields = {*STRING_FIELDS, *COUNT_FIELDS, "elapsed_s", "physics_paused",
-              "checkpoint_frames", "auto_checkpoint_frames", "skip_confirmation"}
+              "checkpoint_frames", "auto_checkpoint_frames"}
     if set(status) != fields:
         raise ClientError("Malformed collector status: unexpected or missing fields")
     if any(not isinstance(status[key], str) for key in STRING_FIELDS):
@@ -80,8 +76,6 @@ def parse_status(payload: str) -> dict[str, Any]:
         raise ClientError("Malformed collector status: counts must be nonnegative integers")
     if type(status["physics_paused"]) is not bool:
         raise ClientError("Malformed collector status: physics_paused must be a boolean")
-    if type(status["skip_confirmation"]) is not bool:
-        raise ClientError("Malformed collector status: skip_confirmation must be a boolean")
     for field in ("checkpoint_frames", "auto_checkpoint_frames"):
         count = status[field]
         if count is not None and (type(count) is not int or count < 0):
@@ -138,7 +132,7 @@ class CollectionTrigger:
         self.collector_id = ""
         self.transition = None
         self.observed: dict[str, dict[str, Any]] | None = None
-        self.skip_confirmation: tuple[Any, ...] | None = None
+        self.command_services_required = False
         self.subscription = node.create_subscription(
             String, STATUS_TOPIC, self.on_status,
             QoSProfile(
@@ -154,11 +148,8 @@ class CollectionTrigger:
             if self.collector_id and status["collector_id"] != self.collector_id:
                 raise ClientError("Collector identity changed; outcome unknown. Reconnect explicitly.")
         except ClientError as exc:
-            self.skip_confirmation = None
             self.status_error = str(exc)
             return
-        if self.skip_confirmation != tuple(status[key] for key in CONFIRMATION_FIELDS):
-            self.skip_confirmation = None
         self.collector_id = status["collector_id"]
         self.status = status
         self.received_at = time.monotonic()
@@ -174,6 +165,13 @@ class CollectionTrigger:
         publishers = self.node.get_publishers_info_by_topic(self.status_topic)
         if len(publishers) > 1:
             raise ClientError("Ambiguous collector: multiple status publishers; no further commands sent.")
+        if not publishers:
+            return "status publisher missing"
+        publisher = publishers[0]
+        if publisher.topic_type != "std_msgs/msg/String":
+            raise ClientError("Unexpected collector status topic type")
+        if not self.command_services_required:
+            return ""
         providers: dict[str, list[tuple[str, str]]] = {name: [] for name in self.service_names}
         for node_name, namespace in self.node.get_node_names_and_namespaces():
             services = self.node.get_service_names_and_types_by_node(node_name, namespace)
@@ -186,11 +184,6 @@ class CollectionTrigger:
         for command, owners in providers.items():
             if len(owners) > 1:
                 raise ClientError(f"Ambiguous collector: multiple providers for {self.service_names[command]}")
-        if not publishers:
-            return "status publisher missing"
-        publisher = publishers[0]
-        if publisher.topic_type != "std_msgs/msg/String":
-            raise ClientError("Unexpected collector status topic type")
         owner = (publisher.node_name, publisher.node_namespace)
         for command, owners in providers.items():
             if not owners or not self.clients[command].service_is_ready():
@@ -207,12 +200,8 @@ class CollectionTrigger:
             raise ClientError(self.status_error)
         if waiting and self.interactive:
             key = read_key()
-            if key:
-                self.skip_confirmation = None
             if key == "q":
                 raise ClientExit
-            if key in KEY_COMMANDS:
-                print("Operation pending; key ignored. q exits this client only.", flush=True)
 
     def require_fresh_status(self) -> None:
         if self.status is None or time.monotonic() - self.received_at > STATUS_MAX_AGE:
@@ -236,8 +225,7 @@ class CollectionTrigger:
         raise ClientError(f"Collector unavailable: {problem}; no command sent.")
 
     def execute(self, command: str, timeout: float) -> None:
-        if command != "discard":
-            self.skip_confirmation = None
+        self.command_services_required = command != "status"
         deadline = time.monotonic() + timeout
         self.wait_ready(deadline)
         if command == "status":
@@ -249,20 +237,6 @@ class CollectionTrigger:
         if problem:
             raise ClientError(f"Collector unavailable: {problem}; no command sent.")
         self.require_fresh_status()
-        if command == "pause_toggle":
-            command = "resume" if self.status["state"] == "paused" else "pause"
-        elif command == "discard" and self.interactive:
-            if self.status["state"] not in {"recording", "paused"}:
-                self.skip_confirmation = None
-                print("x requires a recording or paused episode; no command sent.", flush=True)
-                return
-            context = tuple(self.status[key] for key in CONFIRMATION_FIELDS)
-            if self.skip_confirmation != context:
-                self.skip_confirmation = context
-                print("Tap x again to confirm discarding this episode; another key or state change cancels.",
-                      flush=True)
-                return
-            self.skip_confirmation = None
         collector_id = self.collector_id
         previous_saved_path = self.status["last_saved_path"]
         self.observed = {}
@@ -331,12 +305,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("interactive mode needs a terminal; use --command " + "|".join((*FINAL_STATES, "status")))
     if interactive:
         print(
-            "Low-level ROS collection client (no motion authorization)\n"
-            "  Default spd-sim exposes status only: use --command status.\n"
-            "  With a separately enabled control service: r checkpoint, s save, d revert, Space pause/resume, x discard.\n"
-            "  Normal operator controls belong in the SPD window/terminal, not this client.\n"
-            "  q / Ctrl+C exits this client only; no save or discard on exit.\n"
-            "Commands wait for collector completion; unknown outcomes are never retried.",
+            "Read-only ROS collection status observer\n"
+            "  r/s/d, Space and x do not operate the collector here.\n"
+            "  Normal operator controls belong in the SPD window/terminal.\n"
+            "  Use --command explicitly for low-level service operations.\n"
+            "  q / Ctrl+C exits this client only; no save or discard on exit.",
             flush=True,
         )
     node = None
@@ -365,13 +338,8 @@ def main(argv: list[str] | None = None) -> int:
                         raise ClientError(f"Collector unavailable: {problem}")
                     next_graph_check = time.monotonic() + 0.5
                 key = read_key()
-                if key and key != "x":
-                    client.skip_confirmation = None
                 if key == "q":
                     raise ClientExit
-                command = KEY_COMMANDS.get(key)
-                if command:
-                    client.execute(command, args.timeout)
     except (ClientExit, EOFError, KeyboardInterrupt):
         print("Client exiting only. Already submitted operations may still complete; no exit operation sent.")
         return 130 if sys.exc_info()[0] is KeyboardInterrupt else 0

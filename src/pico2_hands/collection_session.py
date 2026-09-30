@@ -316,7 +316,7 @@ class TeleopSession:
             self._revision += 1
             self._intent = "rebind"
             self._follow = None
-            self._request = (self._revision, self._generation, "rebind", retained, None)
+            self._request = (self._revision, self._generation, "rebind", retained)
             return self._generation
 
     def follow(self, generation):
@@ -333,18 +333,7 @@ class TeleopSession:
             self._intent = "waiting"
             self._follow = None
             retained = np.asarray(self._snapshot.position_rad)
-            self._request = (self._revision, self._generation, "waiting", retained, None)
-
-    def home(self, joints, home_joints):
-        retained, destination = self._joints(joints), self._joints(home_joints)
-        with self._lock:
-            self._available()
-            self._generation += 1
-            self._revision += 1
-            self._intent = "home"
-            self._follow = None
-            self._request = (self._revision, self._generation, "home", retained, destination)
-            return self._generation
+            self._request = (self._revision, self._generation, "waiting", retained)
 
     def close(self):
         with self._lock:
@@ -422,8 +411,6 @@ class TeleopSession:
         else:
             self._stable_first = self._stable_count = 0
             self._stable_geometry = None
-        if self._mode in ("home", "home_done"):
-            return
         observations = pico_official_hand_observations(frame)
         self._hand_sequence += 1
         pending = []
@@ -462,8 +449,8 @@ class TeleopSession:
     def _command(self, operation, now):
         return self._consume(self._ik.command(operation, self._q[:14].reshape(2, 7), now / 1e9))
 
-    def _apply_request(self, request, now):
-        self._active_revision, self._active_generation, action, retained, destination = request
+    def _apply_request(self, request):
+        self._active_revision, self._active_generation, action, retained = request
         self._mode = "waiting"
         self._bind_pending = action == "rebind"
         self._anchor.bound = False
@@ -474,18 +461,6 @@ class TeleopSession:
             self._q[:] = retained
         for side in _SIDES:
             self._fingers[side].reset(self._q[_REGIONS[side]])
-        if action == "home":
-            result = self._ik.home_frozen(self._q[:14].reshape(2, 7), destination[:14].reshape(2, 7), now / 1e9)
-            if not self._consume(result):
-                raise RuntimeError("native Home rejected")
-            self._home = destination
-            self._home_origin = self._q[14:].copy()
-            # Quintic finger Home has bounded speed/acceleration and starts at
-            # retained grip; no tracking authorization required.
-            distance = float(np.max(np.abs(self._home[14:] - self._home_origin)))
-            self._home_duration = max(.4, 1.875 * distance / 1.5, math.sqrt(5.774 * distance / 6.))
-            self._home_elapsed = 0.
-            self._mode = "home"
         # Pause does not advance the old trajectory. A later frozen rebind is
         # the only way to replace that suspended native numerical state.
 
@@ -540,15 +515,6 @@ class TeleopSession:
                     self._needs_rebind = True
             for side in _SIDES:
                 self._fingers[side].advance(self._q[_REGIONS[side]], now, _PERIOD)
-        elif self._mode == "home":
-            self._command(7, now)
-            self._home_elapsed += _PERIOD
-            u = min(1., self._home_elapsed / self._home_duration)
-            weight = u * u * u * (10. + u * (-15. + 6. * u))
-            self._q[14:] = self._home_origin + weight * (self._home[14:] - self._home_origin)
-            if self._phase == "HOME_REACHED" and u >= 1.:
-                self._q[14:] = self._home[14:]
-                self._mode = "home_done"
 
     def _publish(self, now, fault=""):
         fresh = self._fresh(now)
@@ -606,7 +572,7 @@ class TeleopSession:
                     request, self._request = self._request, None
                     frame, self._latest = self._latest, None
                 if request is not None:
-                    self._apply_request(request, started)
+                    self._apply_request(request)
                 if tcp is not None:
                     incoming, disconnected = tcp.poll(time.monotonic())
                     if disconnected:

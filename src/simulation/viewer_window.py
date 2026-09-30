@@ -10,7 +10,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from interfaces.keyboard_control import KEY_COMMANDS
+from interfaces.keyboard_control import CONTROL_KEYS
 
 
 class ViewerWindow:
@@ -21,7 +21,6 @@ class ViewerWindow:
         *,
         headless: bool = False,
         shutdown: Callable[[], None] | None = None,
-        recording_control: Callable[[str], None] | None = None,
         joint_control: Callable[[str], None] | None = None,
         split_view: bool = False,
     ) -> None:
@@ -30,7 +29,6 @@ class ViewerWindow:
         self.headless = bool(headless)
         self.split_view = bool(split_view)
         self._shutdown = shutdown
-        self._recording_control = recording_control
         self._joint_control = joint_control
         self._renderer: Any | None = None
         self._closed = False
@@ -111,20 +109,18 @@ class ViewerWindow:
         return str(key).strip().lower().removeprefix("key_")
 
     def on_key(self, key: Any) -> None:
-        """Handle one MuJoCo/GLFW key event without repeated shutdown calls."""
+        """Dispatch one logical PRESS without repeated shutdown calls."""
+        if self._closed or self._shutdown_sent:
+            return
         name = self._key_name(key)
         if name in {"q", "escape", "esc"}:
-            if self._shutdown_sent:
-                return
             self._shutdown_sent = True
             if self._joint_control is not None:
                 self._joint_control("q")
             elif self._shutdown is not None:
                 self._shutdown()
-        elif self._recording_control is not None:
-            operation = KEY_COMMANDS.get(name)
-            if operation is not None:
-                self._recording_control(operation)
+        elif name in CONTROL_KEYS and self._joint_control is not None:
+            self._joint_control(name)
 
     def set_task(self, title_zh: str, goal_zh: str) -> None:
         """Retain the Chinese episode header without performing rendering."""
@@ -302,11 +298,11 @@ class ViewerWindow:
     def close(self) -> None:
         if self._closed:
             return
+        self._closed = True
         try:
             if self._renderer is not None:
                 self._renderer.close()
         finally:
-            self._closed = True
             self._renderer = None
             self._hand_ghost_target = None
             self._hand_ghost_label = ""

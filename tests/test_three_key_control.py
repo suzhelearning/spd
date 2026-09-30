@@ -91,7 +91,7 @@ class CollectionControlTests(unittest.TestCase):
         self.control.key("r")
         self.until(lambda: self.control.stage == "recording" and self.collection.state_frames > 2)
 
-    def test_direct_save_and_rewind_keep_only_successful_prefix(self):
+    def test_moving_checkpoint_rewind_auto_resumes_and_paused_r_saves_prefix(self):
         import h5py
         from data_collector.recorder import validate_episode_path
 
@@ -100,21 +100,35 @@ class CollectionControlTests(unittest.TestCase):
         self.targets[0] += .2
         self.start()
         self.until(lambda: self.control.recovery == 0)
+        self.assertEqual(self.collection.snapshot()["checkpoint_frames"], 0)
         self.control.key("r")
         checkpoint = self.collection.snapshot()["checkpoint_frames"]
+        saved_qpos = self.app.plant.data.qpos.copy()
+        saved_qvel = self.app.plant.data.qvel.copy()
+        saved_targets = self.app.plant.joint_command_targets().copy()
         self.until(lambda: self.collection.state_frames > checkpoint + 3)
-        self.control.key("d")  # No preliminary pause or explicit re-enable.
+        self.control.key("d")
         self.assertTrue(self.collection.physics_paused)
+        for key in ("r", "s", "d"):
+            self.app.joint_control(key)  # Disk-stage keys must never be replayed.
+        self.until(lambda: self.control.stage == "rebinding")
+        self.app._process_actions()
+        self.assertEqual(self.collection.state_frames, checkpoint)
+        self.assertEqual(self.control.stage, "rebinding")
+        np.testing.assert_array_equal(self.app.plant.data.qpos, saved_qpos)
+        np.testing.assert_array_equal(self.app.plant.data.qvel, saved_qvel)
+        np.testing.assert_array_equal(self.app.plant.joint_command_targets(), saved_targets)
         self.until(lambda: self.control.stage == "recording" and self.control.recovery == 3)
         self.until(lambda: self.collection.state_frames > checkpoint + 3)
         previous = self.app.plant
+        final_frames = self.collection.state_frames
         self.control.key("s")
+        self.control.key("r")
         self.assertTrue(self.collection.physics_paused)
         self.app.joint_control("r")  # Queued for the old scene: never start the new one.
         self.until(lambda: self.control.stage == "idle")
         self.app._process_actions()
         self.assertIsNot(self.app.plant, previous)
-        self.assertFalse(self.app.preparation_scene)
         self.assertEqual(self.collection.last_outcome, "saved")
         np.testing.assert_array_equal(self.app.plant.joint_command_positions(), self.app.home_targets)
         np.testing.assert_array_equal(self.app.plant.joint_command_targets(), self.app.home_targets)
@@ -128,6 +142,7 @@ class CollectionControlTests(unittest.TestCase):
         self.assertEqual(self.collection.state, "idle")
         result = validate_episode_path(self.collection.last_saved_path)
         self.assertTrue(result["success"])
+        self.assertEqual(result["frames"], final_frames)
         with h5py.File(self.collection.last_saved_path) as handle:
             self.assertIn(3, handle["collection_events/recovery_transition"][:])
             self.assertEqual(int(handle["collection_events/rewind"][-1]["frame_count"]), checkpoint)
@@ -136,34 +151,47 @@ class CollectionControlTests(unittest.TestCase):
         self.targets = self.app.home_targets.copy()
         self.start()  # Only a fresh r may authorize and create the next episode.
 
-    def test_manual_pause_stays_frozen_until_space_and_discard_requires_confirmation(self):
+    def test_manual_pause_uses_s_and_paused_d_discards_without_confirmation(self):
+        for key in ("s", "d", " ", "x", "r+s", "s+d"):
+            self.control.key(key)
+        self.assertEqual(self.control.stage, "idle")
+        self.assertIsNone(self.collection.snapshot()["checkpoint_frames"])
+        self.control.key("r")
+        self.assertEqual(self.control.stage, "binding")
+        self.assertIsNone(self.collection.snapshot()["checkpoint_frames"])
+        self.control.key("s")  # Cancel an initial bind without opening a file.
+        self.assertEqual(self.control.stage, "idle")
         self.start()
-        self.control.key(" ")
+        for key in (" ", "x", "r+s", "s+d"):
+            self.control.key(key)
+        self.assertEqual(self.control.stage, "recording")
+        self.control.key("s")
         positions = self.app.plant.data.qpos.copy()
+        velocities = self.app.plant.data.qvel.copy()
         frames = self.collection.state_frames
         self.targets[0] += .3
         for _ in range(10):
             self.cycle()
         np.testing.assert_array_equal(self.app.plant.data.qpos, positions)
+        np.testing.assert_array_equal(self.app.plant.data.qvel, velocities)
         self.assertEqual(self.collection.state_frames, frames)
-        self.control.key(" ")
+        self.control.key("s")
+        self.until(lambda: self.control.stage == "recording" and self.control.recovery == 2)
         self.until(lambda: self.collection.state_frames > frames)
-        self.control.key("x")
-        self.assertEqual(self.collection.state, "paused")
-        self.assertEqual(self.collection.completed_episodes, 0)
-        self.control.key("x")
-        self.until(lambda: self.control.stage == "returning_home")
-        self.cycle()
-        self.control.key(" ")
-        frozen_home = self.app.plant.data.qpos.copy()
-        for _ in range(5):
-            self.cycle()
-        np.testing.assert_array_equal(self.app.plant.data.qpos, frozen_home)
-        self.assertEqual(self.control.stage, "home_paused")
-        self.control.key(" ")
+        previous = self.app.plant
+        partial = Path(self.collection.episode_path)
+        self.control.key("s")
+        self.control.key("d")
+        self.assertEqual(self.control.stage, "discarding")
         self.until(lambda: self.control.stage == "idle")
         self.assertEqual(self.collection.last_outcome, "discarded")
-        self.assertFalse(tuple(self.root.glob("*/*.h5")))
+        self.assertFalse(partial.exists())
+        self.assertEqual(self.collection.last_saved_path, "")
+        self.assertIsNot(self.app.plant, previous)
+        np.testing.assert_array_equal(self.app.plant.joint_command_positions(), self.app.home_targets)
+        np.testing.assert_array_equal(self.app.plant.data.qvel, 0)
+        self.assertFalse(self.app.executor.mailbox.enabled)
+        self.assertTrue(self.collection.physics_paused)
 
     def test_each_tracking_loss_rebinds_without_replacing_manual_checkpoint(self):
         from pico2_hands.collection_session import TeleopSnapshot
@@ -208,13 +236,16 @@ class CollectionControlTests(unittest.TestCase):
             saved_qpos = self.app.plant.data.qpos.copy()
             saved_qvel = self.app.plant.data.qvel.copy()
             saved_targets = self.app.plant.joint_command_targets().copy()
-            for key in ("r", "d", " "):
+            for key in ("r", "s", "d", " ", "x", "r+s", "s+d"):
                 self.control.key(key)
                 self.cycle()
                 self.assertEqual(self.control.stage, "auto_paused")
             state.tracked = True
             for _ in range(20):
                 self.cycle()
+            self.assertEqual(self.control.stage, "auto_paused")
+            self.control.key("s")
+            self.control.key("d")
             self.assertEqual(self.control.stage, "auto_paused")
             self.control.key("r")
             self.assertEqual(self.control.stage, "rebinding")
@@ -228,9 +259,15 @@ class CollectionControlTests(unittest.TestCase):
             self.assertIsNone(self.collection.snapshot()["auto_checkpoint_frames"])
             self.until(lambda: self.collection.state_frames > saved_frames + 2)
         # First r after either loss does not overwrite the original manual point.
+        state.tracked = False
         self.control.key("d")
-        self.until(lambda: self.control.stage == "rewind_wait")
+        self.until(lambda: self.control.stage == "rebinding")
         self.assertEqual(self.collection.state_frames, manual_frames)
+        for _ in range(5):
+            self.cycle()
+        self.assertEqual(self.control.stage, "rebinding")
+        self.assertTrue(self.collection.physics_paused)
+        state.tracked = True
         self.until(lambda: self.control.stage == "recording" and self.control.recovery == 3)
         self.until(lambda: self.collection.state_frames > manual_frames + 2)
         self.control.key("r")
@@ -238,16 +275,26 @@ class CollectionControlTests(unittest.TestCase):
         self.assertEqual(self.collection.snapshot()["checkpoint_frames"], updated_frames)
         self.until(lambda: self.collection.state_frames > updated_frames + 2)
         self.control.key("d")
-        self.until(lambda: self.control.stage == "rewind_wait")
+        self.until(lambda: self.control.stage == "rebinding")
         self.assertEqual(self.collection.state_frames, updated_frames)
         self.until(lambda: self.control.stage == "recording")
         self.until(lambda: self.collection.state_frames > updated_frames + 2)
+        self.control.key("s")
+        paused_frames = self.collection.state_frames
         state.tracked = False
-        self.until(lambda: self.control.stage == "auto_paused")
+        self.control.key("s")
+        for _ in range(5):
+            self.cycle()
+        self.assertEqual(self.control.stage, "rebinding")
+        self.assertEqual(self.collection.state_frames, paused_frames)
+        state.tracked = True
+        self.until(lambda: self.control.stage == "recording" and self.control.recovery == 2)
+        self.until(lambda: self.collection.state_frames > paused_frames + 2)
         final_frames = self.collection.state_frames
         teleop = self.app.teleop
         stale_snapshot = snapshot()
         self.control.key("s")
+        self.control.key("r")
         self.collection._job.result(timeout=10)
         self.collection.poll()
         result = validate_episode_path(self.collection.last_saved_path)
@@ -292,7 +339,7 @@ class CollectionControlTests(unittest.TestCase):
             self.control.key("r")
             try:
                 self.until(entered.is_set)
-                self.control.key(" ")  # Safety pause during asynchronous file open.
+                self.control.key("s")  # Safety pause during asynchronous file open.
                 for _ in range(4):
                     self.cycle()
                 self.assertEqual(self.app.plant.tick, before)
@@ -300,11 +347,12 @@ class CollectionControlTests(unittest.TestCase):
                 release.set()
             self.until(lambda: self.control.stage == "paused")
         self.assertEqual(self.collection.state_frames, 0)
-        self.control.key(" ")
+        self.control.key("s")
         self.until(lambda: self.collection.state_frames > 2)
         plant = self.app.plant
+        self.control.key("s")
         with patch.object(self.collection.recorder, "finish_episode", side_effect=OSError("disk unavailable")):
-            self.control.key("s")
+            self.control.key("r")
             self.until(lambda: self.control.stage == "error")
         self.assertTrue(self.collection.physics_paused)
         self.assertIs(self.app.plant, plant)
@@ -319,7 +367,7 @@ class CollectionControlTests(unittest.TestCase):
         master, slave = pty.openpty()
         self.addCleanup(os.close, slave)
         self.addCleanup(os.close, master)
-        terminal = ControlTerminal(self.app.joint_control, self.app.recording_control, fd=slave)
+        terminal = ControlTerminal(self.app.joint_control, fd=slave)
         self.addCleanup(terminal.close)
         terminal.start()
 
@@ -330,9 +378,9 @@ class CollectionControlTests(unittest.TestCase):
 
         key("r")
         self.until(lambda: self.collection.state_frames > 2)
-        key(" ")
+        key("s")
         self.assertTrue(self.collection.physics_paused)
-        key(" ")
+        key("s")
         self.until(lambda: self.control.stage == "recording")
         key("q")
         self.assertTrue(self.app.stop)

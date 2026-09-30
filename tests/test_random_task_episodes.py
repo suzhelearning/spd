@@ -1,4 +1,4 @@
-"""Validated saves start fresh random Home scenes; discards retain Home motion."""
+"""Completed saves and discards both start fresh random Home scenes."""
 import argparse
 import importlib.util
 from pathlib import Path
@@ -78,62 +78,44 @@ class RandomTaskEpisodeTests(unittest.TestCase):
 
     def start(self):
         self.publish()
-        self.assertTrue(self.app.executor.authorize(True))
-        self.assertTrue(self.app.collection.request("start")[0])
-        self.wait_state("recording")
+        self.app.three_key.key("r")
+        end = time.monotonic() + 10
+        while self.app.three_key.stage != "recording":
+            self.assertLess(time.monotonic(), end, self.app.collection.snapshot())
+            self.publish()
+            self.app.three_key.poll()
+            self.app.collection.poll()
+            time.sleep(.002)
         for _ in range(16):
             self.app.collection.tick(self.app.plant.physics_tick())
 
-    def assert_discard_home_boundary(self):
-        app = self.app
-        old = app.plant
-        coordinator = app.three_key
-        robot = old.joint_command_positions().copy(), old.joint_command_velocities().copy()
-        targets = old.joint_command_targets().copy()
-        app.begin_home_return()
-        prep = app.plant
-        self.assertIsNot(prep, old)
-        self.assertIsNone(prep.scene_manifest)
-        self.assertTrue(app.preparation_scene)
-        np.testing.assert_array_equal(prep.joint_command_positions(), robot[0])
-        np.testing.assert_array_equal(prep.joint_command_velocities(), robot[1])
-        np.testing.assert_array_equal(prep.joint_command_targets(), targets)
-        self.assertTrue(old._closed)
-        app.recording_control("checkpoint")  # Never authorize a newly replaced scene.
-        app.complete_home_return()
-        self.assertIsNot(app.plant, prep)
-        self.assertIs(app.three_key, coordinator)
-        self.assertFalse(app.preparation_scene)
-        self.assertTrue(prep._closed)
-        np.testing.assert_array_equal(app.plant.joint_command_positions(), robot[0])
-        np.testing.assert_array_equal(app.plant.joint_command_velocities(), robot[1])
-        np.testing.assert_array_equal(app.plant.joint_command_targets(), targets)
-        app._process_actions()
-        self.assertFalse(app.executor.mailbox.enabled)
-        self.assertEqual(app.collection.state, "idle")
-        self.assertIsNone(app.collection.snapshot()["checkpoint_frames"])
-        self.assertIsNone(app.collection.snapshot()["auto_checkpoint_frames"])
-        self.assertFalse(app.collection.request("start")[0])
-        self.assertEqual(app.collection.task_manifest["seed"], app.args.seed)
-
-    def save_and_advance(self):
+    def finish_and_advance(self, key="r"):
         from data_collector.recorder import validate_episode_path
 
         app = self.app
         previous = app.plant
+        old_window = app.window
+        old_generation = app._scene_generation
+        partial = Path(app.collection.episode_path)
         app.three_key.key("s")
+        self.assertEqual(app.three_key.stage, "paused")
+        app.three_key.key(key)
         self.wait_state("idle")
         saved = app.collection.last_saved_path
-        self.assertTrue(validate_episode_path(saved)["success"])
-        self.assertIs(app.plant, previous)  # Disk completion precedes the coordinator switch.
-        app.recording_control("checkpoint")
+        if key == "r":
+            self.assertTrue(validate_episode_path(saved)["success"])
+        else:
+            self.assertFalse(partial.exists())
+        self.assertIs(app.plant, previous)
+        app.joint_control("r")  # Disk-stage input is not deferred into the new scene.
         app.three_key.poll()
         self.assertIsNot(app.plant, previous)
         self.assertTrue(previous._closed)
-        self.assertFalse(app.preparation_scene)
         np.testing.assert_array_equal(app.plant.joint_command_positions(), app.home_targets)
         np.testing.assert_array_equal(app.plant.joint_command_targets(), app.home_targets)
         np.testing.assert_array_equal(app.plant.data.qvel, 0)
+        app._actions.put((old_generation, "r"))
+        old_window.on_key("r")
         app._process_actions()
         self.assertEqual(app.three_key.stage, "idle")
         self.assertEqual(app.collection.state, "idle")
@@ -143,40 +125,56 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.assertIsNone(app.collection.snapshot()["checkpoint_frames"])
         self.assertIsNone(app.collection.snapshot()["auto_checkpoint_frames"])
         self.assertEqual(app.collection.task_manifest["seed"], app.args.seed)
+        with self.assertRaises(RuntimeError):
+            app.next_task_after_episode()  # Each completion advances exactly once.
         return saved
 
-    def test_save_advances_directly_and_discard_rebuilds_identical_seed(self):
+    def test_save_and_discard_each_advance_to_fresh_random_layout(self):
         from simulation.scene import EpisodeTasks, build_selected_scene
 
         expected = EpisodeTasks("cups", None, 7)
         expected.next()
         self.start()
-        saved = self.save_and_advance()
+        saved = self.finish_and_advance()
         self.assertEqual((self.app.args.scene, self.app.args.task, self.app.args.seed), expected.next())
         replay = build_selected_scene(self.app.args.scene, self.app.args.task, self.app.args.seed)
         self.assertEqual(self.app.plant.scene_manifest["table"], replay.manifest()["table"])
-        original_spec = self.app.args.scene, self.app.args.task, self.app.args.seed
-        original_scene = self.app.plant.scene_manifest
         self.start()
-        self.assertTrue(self.app.collection.request("discard")[0])
-        self.wait_state("idle")
-        self.assert_discard_home_boundary()
-        self.assertEqual((self.app.args.scene, self.app.args.task, self.app.args.seed), original_spec)
-        self.assertEqual(self.app.plant.scene_manifest, original_scene)
+        self.finish_and_advance("d")
+        self.assertEqual((self.app.args.scene, self.app.args.task, self.app.args.seed), expected.next())
+        replay = build_selected_scene(self.app.args.scene, self.app.args.task, self.app.args.seed)
+        self.assertEqual(self.app.plant.scene_manifest, replay.manifest())
         self.assertTrue(Path(saved).is_file())
         self.start()
-        self.save_and_advance()
+        self.finish_and_advance()
         self.assertEqual((self.app.args.scene, self.app.args.task, self.app.args.seed), expected.next())
 
     def test_failed_save_retains_scene_and_freezes(self):
         self.start()
         failed_plant = self.app.plant
+        self.app.three_key.key("s")
         with patch.object(self.app.collection.recorder, "finish_episode", side_effect=OSError("disk unavailable")):
-            self.app.three_key.key("s")
+            self.app.three_key.key("r")
             self.wait_state("error")
             self.app.three_key.poll()
         self.assertEqual(self.app.three_key.stage, "error")
         self.assertIs(self.app.plant, failed_plant)
+        self.assertTrue(self.app.collection.physics_paused)
+        self.assertFalse(self.app.executor.mailbox.enabled)
+
+    def test_failed_discard_preserves_scene_and_partial(self):
+        self.start()
+        previous = self.app.plant
+        partial = Path(self.app.collection.episode_path)
+        self.app.three_key.key("s")
+        with patch.object(self.app.collection.recorder, "discard_episode", side_effect=OSError("disk unavailable")):
+            self.app.three_key.key("d")
+            self.wait_state("error")
+            self.app.three_key.poll()
+        self.assertIs(self.app.plant, previous)
+        self.assertTrue(partial.is_file())
+        self.assertEqual(self.app.collection.completed_episodes, 0)
+        self.assertEqual(self.app.three_key.stage, "error")
         self.assertTrue(self.app.collection.physics_paused)
         self.assertFalse(self.app.executor.mailbox.enabled)
 
@@ -191,7 +189,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
                 expected = EpisodeTasks(scene, selected_task, 7)
                 expected.next()
                 self.start()
-                self.save_and_advance()
+                self.finish_and_advance()
                 spec = self.app.args.scene, self.app.args.task, self.app.args.seed
                 self.assertEqual(spec, expected.next())
                 replay = build_selected_scene(*spec)
@@ -204,9 +202,10 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         from data_collector.recorder import validate_episode_path
 
         self.start()
+        self.app.three_key.key("s")
         previous = self.app.plant
-        with self.assertRaisesRegex(RuntimeError, "newly saved"):
-            self.app.next_task_after_save()
+        with self.assertRaises(RuntimeError):
+            self.app.next_task_after_episode()
         entered, release = threading.Event(), threading.Event()
 
         def delayed_validation(*args, **kwargs):
@@ -216,7 +215,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
             return validate_episode_path(*args, **kwargs)
 
         with patch("data_collector.recorder.validate_episode_path", delayed_validation):
-            self.app.three_key.key("s")
+            self.app.three_key.key("r")
             try:
                 self.assertTrue(entered.wait(10))
                 for _ in range(5):
@@ -227,8 +226,8 @@ class RandomTaskEpisodeTests(unittest.TestCase):
                 self.assertEqual(self.app.collection.last_saved_path, "")
                 self.assertTrue(self.app.collection.physics_paused)
                 self.assertFalse(self.app.executor.mailbox.enabled)
-                with self.assertRaisesRegex(RuntimeError, "newly saved"):
-                    self.app.next_task_after_save()
+                with self.assertRaises(RuntimeError):
+                    self.app.next_task_after_episode()
             finally:
                 release.set()
             self.wait_state("idle")
@@ -240,8 +239,9 @@ class RandomTaskEpisodeTests(unittest.TestCase):
     def test_validation_failure_preserves_original_scene(self):
         self.start()
         previous = self.app.plant
+        self.app.three_key.key("s")
         with patch("data_collector.recorder.validate_episode_path", side_effect=ValueError("invalid trajectory")):
-            self.app.three_key.key("s")
+            self.app.three_key.key("r")
             self.wait_state("error")
             self.app.three_key.poll()
         self.assertIs(self.app.plant, previous)
@@ -253,6 +253,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
     def test_failed_replacement_keeps_live_scene_and_closes_new_plant(self):
         self.start()
         self.app.three_key.key("s")
+        self.app.three_key.key("r")
         self.wait_state("idle")
         previous = self.app.plant
         replacement = self.app._create_plant(None)
@@ -260,7 +261,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
             "simulation.ros_viewer.RosJointCommandExecutor", side_effect=RuntimeError("executor startup failed")
         ):
             with self.assertRaisesRegex(RuntimeError, "executor startup failed"):
-                self.app.next_task_after_save()
+                self.app.next_task_after_episode()
         self.assertIs(self.app.plant, previous)
         self.assertFalse(previous._closed)
         self.assertTrue(replacement._closed)

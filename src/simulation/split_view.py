@@ -190,15 +190,18 @@ class SplitViewRenderer:
 
             def request_close(key: str = "q") -> None:
                 nonlocal close_notified
-                if not close_notified:
-                    close_notified = True
-                    self._on_key(key)
+                if close_notified or self._stop.is_set():
+                    return
+                close_notified = True
                 self._stop.set()
+                self._on_key(key)
                 glfw.set_window_should_close(window, True)
 
             def guarded(callback: Callable[..., None]) -> Callable[..., None]:
                 # ctypes callbacks otherwise print and swallow Python exceptions.
                 def invoke(*args: Any) -> None:
+                    if self._stop.is_set():
+                        return
                     try:
                         callback(*args)
                     except BaseException as exc:
@@ -228,6 +231,10 @@ class SplitViewRenderer:
                     request_close("escape" if key == glfw.KEY_ESCAPE else "q")
                 elif 0 <= key < 128:
                     self._on_key(chr(key).lower())
+
+            def focus_callback(_window: Any, focused: int) -> None:
+                if not focused:
+                    drag_buttons.clear()
 
             def button_callback(_window: Any, button: int, action: int, _mods: int) -> None:
                 nonlocal last_cursor
@@ -269,6 +276,7 @@ class SplitViewRenderer:
                     mj.mjv_moveCamera(model, mj.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * dy, left_camera)
 
             glfw.set_key_callback(window, guarded(key_callback))
+            glfw.set_window_focus_callback(window, guarded(focus_callback))
             glfw.set_mouse_button_callback(window, guarded(button_callback))
             glfw.set_cursor_pos_callback(window, guarded(cursor_callback))
             glfw.set_scroll_callback(window, guarded(scroll_callback))

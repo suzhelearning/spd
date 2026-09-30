@@ -1,4 +1,4 @@
-"""Shared, tap-only keyboard controls for focused terminals and viewers."""
+"""Shared keyboard controls for focused terminals and viewers."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -11,13 +11,7 @@ import tty
 from typing import Any, Callable, Iterator
 
 
-KEY_COMMANDS = {
-    "r": "checkpoint",
-    "s": "save",
-    "d": "revert",
-    " ": "pause_toggle",
-    "x": "discard",
-}
+CONTROL_KEYS = frozenset("rsd")
 
 
 @contextmanager
@@ -45,12 +39,10 @@ def read_key(fd: int | None = None) -> str:
 
 
 class ControlTerminal:
-    """Immediate stdin controls with a bounded, explicitly joined reader."""
+    """Immediate raw stdin controls with an explicitly joined reader."""
 
-    def __init__(self, joint_control: Callable[[str], None],
-                 recording_control: Callable[[str], None], *, fd: int | None = None) -> None:
-        self._joint_control = joint_control
-        self._recording_control = recording_control
+    def __init__(self, control_callback: Callable[[str], None], *, fd: int | None = None) -> None:
+        self._control_callback = control_callback
         self._fd = fd
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -74,6 +66,7 @@ class ControlTerminal:
             raise
 
     def _run(self, fd: int, context: Any) -> None:
+        escape = ""
         try:
             while not self._stop.is_set():
                 try:
@@ -84,11 +77,26 @@ class ControlTerminal:
                     return
                 if self._stop.is_set():
                     return
+                if not key:
+                    continue
+                if key == "\x1b":
+                    escape = "prefix"
+                    continue
+                if escape == "prefix":
+                    escape = ""
+                    if key in {"[", "o"}:  # CSI / SS3 cursor and function keys.
+                        escape = "sequence"
+                        continue
+                elif escape == "sequence":
+                    # Keep Linux console's ESC [[ function-key prefix intact.
+                    if "@" <= key <= "~" and key != "[":
+                        escape = ""
+                    continue
                 if key == "q":
-                    self._joint_control(key)
-                    return
-                elif key in KEY_COMMANDS:
-                    self._recording_control(KEY_COMMANDS[key])
+                    self._stop.set()
+                    self._control_callback("q")
+                elif key in CONTROL_KEYS:
+                    self._control_callback(key)
         finally:
             self._stop.set()
             context.__exit__(*sys.exc_info())

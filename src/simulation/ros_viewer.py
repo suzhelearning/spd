@@ -15,7 +15,7 @@ import time
 from data_collector.config import load_collection_config
 from data_collector.ros_control import CollectionRosControl
 from data_collector.session import CollectionSession
-from interfaces.keyboard_control import ControlTerminal, KEY_COMMANDS
+from interfaces.keyboard_control import ControlTerminal
 from interfaces.ros_joint_command import TOPIC
 from simulation.collection_control import CollectionControl
 from simulation.viewer import PlantController
@@ -23,16 +23,14 @@ from simulation.scene import EpisodeTasks, build_selected_scene
 from simulation.viewer_window import ViewerWindow
 from description.model_builder import config_root
 
-_COMMAND_KEYS = {operation: key for key, operation in KEY_COMMANDS.items()}
 
 _STATE_ZH = {
     "idle": "待开始", "preparing": "准备中", "preparation_failed": "准备失败",
     "recording": "录制中", "paused": "已暂停", "blending": "接入中",
-    "reverting": "回退中", "rewind_wait": "等待恢复目标", "saving": "保存中",
+    "reverting": "回退中", "saving": "保存中",
     "aborting": "保留未完成数据", "discarding": "结束中", "error": "异常",
     "binding": "等待稳定跟踪并绑定", "rebinding": "冻结重绑定",
-    "auto_paused": "跟踪丢失，等待 r 重新接手", "returning_home": "准备区安全回零",
-    "home_paused": "回 Home 已暂停",
+    "auto_paused": "跟踪丢失，等待 r 重新接手",
 }
 _NOTICE_ZH = {
     "No checkpoint in this episode": "本段还没有检查点",
@@ -57,7 +55,6 @@ def _notice_zh(text: str) -> str:
     if text in _NOTICE_ZH:
         return _NOTICE_ZH[text]
     for suffix, translated in (
-        ("; explicit space required after recovery", "；恢复后按空格重新接入"),
         ("; r starts the next episode", "；按 r 开始下一段"),
         ("; frozen, restart required", "；已冻结，请重启"),
         ("; partial episode preserved", "；未完成数据已保留"),
@@ -82,9 +79,9 @@ class RosViewerApp:
         self.args = args
         self.stop = False
         self.teleop = None
-        self.preparation_scene = False
         self._closed = False
-        self._actions: queue.SimpleQueue[tuple[str, str]] = queue.SimpleQueue()
+        self._scene_generation = 0
+        self._actions: queue.SimpleQueue[tuple[int, str]] = queue.SimpleQueue()
         collection_config = load_collection_config(
             args.collection_config, output=args.output, max_frames=args.max_frames,
         )
@@ -97,8 +94,6 @@ class RosViewerApp:
         args.task = scene_result.task if scene_result is not None else "external_joint_command"
         if scene_result is not None:
             args.table_distance = scene_result.table_near_edge_m
-        self._scene_spec = (args.scene, args.task, args.seed)
-        self._scene_table_distance = args.table_distance
         try:
             self.plant = self._create_plant(scene_result)
             self.home_targets = self.plant._command_home.copy()
@@ -116,7 +111,7 @@ class RosViewerApp:
                 self._task_manifest(self.plant, args.scene, args.task, args.seed),
             )
             self.collection_ros = CollectionRosControl(self.executor, self.collection)
-            self.control_terminal = ControlTerminal(self.joint_control, self.recording_control)
+            self.control_terminal = ControlTerminal(self.joint_control)
             self.three_key = CollectionControl(self)
         except BaseException:
             self.close()
@@ -148,11 +143,12 @@ class RosViewerApp:
             scene_result=result, scene_output_dir=self.args.output / "scenes",
         )
 
-    def _create_window(self, plant, task_text=None):
+    def _create_window(self, plant, task_text=None, *, generation=None):
+        generation = self._scene_generation if generation is None else generation
         window = ViewerWindow(
             plant.model, plant.data, headless=self.args.headless, split_view=True,
-            shutdown=self.request_stop, recording_control=self.recording_control,
-            joint_control=self.joint_control,
+            shutdown=self.request_stop,
+            joint_control=lambda key: self._queue_control(key, generation),
         )
         window.set_task(*(task_text or (self.task_title, self.task_goal)))
         return window
@@ -162,7 +158,7 @@ class RosViewerApp:
         self.window.frame(self.args.table_distance if self.plant.scene_manifest is not None else None)
 
     def _announce_task(self) -> None:
-        mode = "随机任务；保存后全目录重抽" if self._task_sequence.randomized else "首条指定任务；保存后全目录随机"
+        mode = "随机任务；结束后全目录重抽" if self._task_sequence.randomized else "首条指定任务；结束后全目录随机"
         print(f"任务：{self.task_title}；目标：{self.task_goal}", flush=True)
         print(f"Scene: {self.args.scene}/{self.args.task}; seed={self.args.seed}; {mode}", flush=True)
         if self.plant.scene_manifest is not None:
@@ -170,20 +166,16 @@ class RosViewerApp:
             print(f"桌高={table['top_z_m']:.3f} m；桌沿 X={table['near_edge_x_m']:.3f} m；本场景固定。", flush=True)
 
 
-    def _replace_scene(self, result, scene: str, task: str, seed: int, *,
-                       preparation: bool, retain_robot_state: bool) -> None:
+    def _replace_scene(self, result, scene: str, task: str, seed: int) -> None:
         self.collection.control_paused = True
         self.executor.clear()
-        title, goal = (("安全准备区", "任务物体已移除；双臂回零并张开手指，不录制。")
-                       if preparation else self._task_text(scene, task, result.manifest() if result else None))
+        title, goal = self._task_text(scene, task, result.manifest() if result else None)
         with ExitStack() as rollback:
             plant = self._create_plant(result)
             rollback.callback(plant.close)
-            if retain_robot_state:
-                plant.inherit_robot_state(self.plant)
-            executor = RosJointCommandExecutor(plant, subscribe=not preparation and self.teleop is None)
+            executor = RosJointCommandExecutor(plant, subscribe=self.teleop is None)
             rollback.callback(executor.close)
-            window = self._create_window(plant, (title, goal))
+            window = self._create_window(plant, (title, goal), generation=self._scene_generation + 1)
             rollback.callback(window.close)
             # GLFW initialization/termination is process-global. Join the old
             # renderer before creating the next window or its teardown destroys
@@ -198,7 +190,8 @@ class RosViewerApp:
             self.plant, self.executor, self.window = plant, executor, window
             self.collection_ros.executor = executor
             self.task_title, self.task_goal = title, goal
-            self.preparation_scene = preparation
+            self._scene_generation += 1
+            self.home_targets = plant._command_home.copy()
             rollback.pop_all()
         # Release renderer and command users before destroying their plant. Every
         # cleanup runs even if an earlier resource reports an error.
@@ -209,67 +202,56 @@ class RosViewerApp:
         self._discard_scene_actions()
         self.collection_ros.publish()
 
-    def begin_home_return(self) -> None:
-        """Retain physical robot state in a fresh, task-object-free preparation scene."""
-        if self.preparation_scene:
-            raise RuntimeError("Home return is already in progress")
-        self._replace_scene(None, "hardware_free", "external_joint_command", self.args.seed,
-                            preparation=True, retain_robot_state=True)
-
-    def complete_home_return(self) -> None:
-        """Rebuild the selected task only after the coordinator verifies Home arrival."""
-        if not self.preparation_scene:
-            raise RuntimeError("Home return has not started")
-        self._load_task(*self._scene_spec, self._scene_table_distance, retain_robot_state=True)
-
-    def next_task_after_save(self) -> None:
-        """Replace a closed, validated successful episode with a fresh Home task."""
-        if (self.collection.state != "idle" or self.collection.last_outcome != "saved"
+    def next_task_after_episode(self) -> None:
+        """Replace a completed save or discard with a fresh random Home task."""
+        if (self.collection.state != "idle" or self.collection.last_outcome not in {"saved", "discarded"}
                 or self.collection.completed_episodes <= self._scene_episode_count):
-            raise RuntimeError("next task requires a newly saved, closed episode")
-        self._load_task(*self._task_sequence.next(), None, retain_robot_state=False)
+            raise RuntimeError("next task requires a newly completed, closed episode")
+        self._load_task(*self._task_sequence.next(), None)
 
-    def _load_task(self, scene, task, seed, table_distance, *, retain_robot_state):
+    def _load_task(self, scene, task, seed, table_distance):
         result = build_selected_scene(scene, task, seed, table_distance)
         scene = result.scene if result is not None else "hardware_free"
         task = result.task if result is not None else "external_joint_command"
-        self._replace_scene(result, scene, task, seed, preparation=False,
-                            retain_robot_state=retain_robot_state)
+        self._replace_scene(result, scene, task, seed)
         self.args.scene, self.args.task, self.args.seed = scene, task, seed
         self.args.table_distance = result.table_near_edge_m if result is not None else table_distance
-        self._scene_spec = (scene, task, seed)
-        self._scene_table_distance = self.args.table_distance
         self._scene_episode_count = self.collection.completed_episodes
         if not self.stop:
             self._announce_task()
 
     def _discard_scene_actions(self) -> None:
         # Input queued against the previous scene cannot authorize this one.
-        while not self._actions.empty():
-            category, command = self._actions.get_nowait()
-            if category == "control" and command == "q":
+        while True:
+            try:
+                _, key = self._actions.get_nowait()
+            except queue.Empty:
+                return
+            if key == "q":
                 self.request_stop()
 
     def request_stop(self) -> None:
         self.stop = True
 
-    def recording_control(self, command: str) -> None:
-        # Viewer/stdin callbacks run off-thread; queue all model access.
-        # Safety pause must remain available during binding and recovery.
-        self._actions.put(("record", command))
+    def _queue_control(self, key: str, generation: int) -> None:
+        # Callbacks may race disk completion or scene replacement. Do not carry
+        # busy-state presses or an old window's authority into the next scene.
+        control = getattr(self, "three_key", None)
+        if key != "q" and (generation != self._scene_generation or
+                          (control is not None and control.stage in {"saving", "discarding", "reverting", "error"})):
+            return
+        self._actions.put((generation, key))
 
     def joint_control(self, key: str) -> None:
-        self._actions.put(("control", key))
+        self._queue_control(key, self._scene_generation)
 
     def _process_actions(self) -> None:
         while True:
             try:
-                category, command = self._actions.get_nowait()
+                generation, key = self._actions.get_nowait()
             except queue.Empty:
                 return
-            key = command if category == "control" else _COMMAND_KEYS.get(command)
-            if key is None:
-                self.three_key.cancel_confirmation()
+            if key != "q" and generation != self._scene_generation:
                 continue
             previous_stage, previous_notice = self.three_key.stage, self.three_key.notice
             self.three_key.key(key)
@@ -304,10 +286,7 @@ class RosViewerApp:
             "跟踪": ("双臂输入降级" if flags & 1 else "本地相对绑定"
                      if self.teleop is not None else "外部订阅；无本地绑定/手指重接入控制"),
         }
-        if self.preparation_scene:
-            values["双手"] = "自动回 Home；当前不依赖手指跟踪"
-            values["跟踪"] = "回 Home 不依赖头显输入；空格暂停／继续"
-        elif stage == "idle":
+        if stage == "idle":
             values["双手"] = "机器人停在 Home；双手放在腰间，按 r 重新绑定并开始"
         if auto_checkpoint is not None:
             values["失跟踪现场"] = f"帧 {auto_checkpoint}；r 仅重新接手，不回退、不更新保存点"
@@ -321,7 +300,7 @@ class RosViewerApp:
         if stage == "auto_paused":
             ghost = self.collection.auto_checkpoint_targets
             ghost_label = "停住的机器人姿态"
-        elif stage in {"paused", "reverting", "rewind_wait"}:
+        elif stage in {"paused", "reverting"}:
             ghost = self.collection.checkpoint_targets
             ghost_label = "当前保存点"
         elif (stage in {"binding", "rebinding"}
@@ -347,8 +326,10 @@ class RosViewerApp:
                 print(f"SPD subscriber ready: {TOPIC}; 外部源独立运行，不提供本地相对绑定保证。", flush=True)
             else:
                 print("SPD local collection ready: 本进程拥有 PICO 接收、双臂/双手求解与采集控制。", flush=True)
-            print("r 开始/更新检查点；s 保存；d 回退；空格暂停/继续；x 再按 x 确认丢弃；"
-                  "q/Ctrl+C 退出但不保存。保存校验成功后直接随机新任务、Home 等待 r；丢弃后回 Home 重做。", flush=True)
+            print("待开始/失跟踪：r 开始或重新接手；运动：s 暂停，r 存检查点，d 回退并自动续采；"
+                  "人工暂停：s 重新绑定继续，r 保存整条，d 丢弃整条。s 继续和 d 回退均无需额外按 r。"
+                  "单键按下立即生效；q/Esc/Ctrl+C 退出但不保存。"
+                  "保存或丢弃完成后直接随机新任务、Home 等待 r。", flush=True)
             self._announce_task()
             run_loop(self)
         finally:
