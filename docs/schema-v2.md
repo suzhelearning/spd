@@ -107,6 +107,7 @@ MJB 保存编译模型及其中的网格、纹理、相机和物理配置，不�
 - robot_joint_names、joint IDs、qpos／qvel 地址、完整 joint／body 映射。
 - 左右手根及几何映射，任务物体名称、body／geom IDs。
 - task_manifest、scene_manifest，实际采样的布局、物理参数、seed、任务和有效采集配置。
+- 新场景的 `scene_manifest.physical_materials` 与对象 `surface_materials` 保存批准的有效滑动摩擦矩阵、材料／区域标签、来源和表面近似边界，完整数值见 [README 材质说明](../README.md)。对象 `friction`／`friction_range` 仍为原 geom 系数及采样范围，不等于所有接触点的最终有效值。木—木 0.40 和 PE—PE 0.20 保留各自历史参考来源，其他新值为 `engineering_choice_not_measured`；这些工程取值不是厂商规格或实物测量。MJB 保存 custom numeric `spd_material_friction` 和 `geom_user`，不是显式 geom 配对。旧文件无策略时不推断新材料，不用当前规则重写旧 MJB。
 - 已编译的 camera 数组与相机配置文档；零相机模型也可记录，无须构造 Renderer。
 - 可访问的源模型／URDF／manifest／配置／网格／纹理路径与 SHA-256 溯源；这些路径仅用于溯源，不是恢复依赖。
 - object_pose_convention 和 contact_convention。
@@ -114,6 +115,10 @@ MJB 保存编译模型及其中的网格、纹理、相机和物理配置，不�
 元数据 JSON 使用排序键、紧凑分隔符、UTF-8、不转义非 ASCII 字符且拒绝 NaN。文件字节与元数据分别校验 SHA-256；哈希用于一致性检查，不是来源认证或安全签名。
 
 MJB 恢复严格要求记录时相同的 MuJoCo 版本，并重新核验字段、维度、关节／物体地址和相机配置。插件模型因未记录插件状态被明确拒绝。采集期间不得修改模型、物体物理参数、相机或资产；更改后重建会话，不能混用旧模型快照。
+
+材料策略 numeric 为 `[2, ...64 个 row-major 系数]`，材料顺序为未知、木、PE、釉面陶瓷、未上釉陶瓷、裸铁、涤纶织物、硅胶；对称矩阵的 `-1` 保留旧混合规则。`geom_user` 保留字段 0／1 的实例／类别，字段 2／3 增加材料／区域 ID（区域 0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶，掌面／指腹依 body 局部外法线左 `Y<0`、右 `Y>0` 分类；背侧和裸壳不赋硅胶。陶瓷底部区域只在外法线局部 `Z<-0.5` 时为未上釉，其余釉面。这不改变碰撞几何、惯量、过滤或法向接触参数，只修改批准接触的两个切向摩擦系数；未知材料、织物—织物、硅胶—硅胶仍保留旧值。
+
+**运行时约定：** 新快照的物理推进、续跑或材料求解力诊断需要匹配版本的 MuJoCo 和材料感知 `_spd_native`；调用 `material_step(model, data)` 推进、`material_forward(model, data)` 重建材料约束／计算力，原生 `Physics` 同样执行策略。带策略的刚体模型支持 Euler／implicit／implicitfast，RK4 或启用 EFM 的模型明确拒绝。MJB 自带矩阵与区域标签，无须源场景／资产，但裸 `mj_step/mj_forward` 不解释这些 custom numeric／`geom_user` 字段，不能等价推进新模型。只读回放／离线渲染仅恢复记录姿态，仍用普通 `mj_forward`、不推进物理、不引入 ROS 原生依赖，也不提供新策略的求解力。旧模型不含此策略时原生接口直接使用普通 MuJoCo step／forward，历史行为不变。
 
 ## 生命周期与错误
 
@@ -147,7 +152,7 @@ pixi run replay_episode /path/to/episode_<UUID>.h5
 pixi run replay_episode /path/to/episode_<UUID>.h5 --expected-model-sha256 <SHA256>
 ```
 
-replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用 mj_forward；不调用 mj_step，不恢复或下发命令，不创建相机渲染器。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。
+replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
 
 这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。后续离线渲染应从记录的实际状态逐帧渲染，而不是重跑目标控制来猜物体轨迹。
 

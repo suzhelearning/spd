@@ -142,7 +142,8 @@ def main(argv: list[str] | None = None) -> int:
                 if plant.tick % render_every == 0:
                     window.sync()
                 time.sleep(max(0.0, start + plant.tick * timestep - time.monotonic()))
-        mujoco.mj_forward(plant.model, plant.data)
+        from _spd_native import material_forward
+        material_forward(plant.model, plant.data)
         destination = plant.scene_model_path.parent
         screenshot = args.screenshot
         if screenshot is None and args.output is not None:

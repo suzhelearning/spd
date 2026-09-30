@@ -359,6 +359,8 @@ def restore_frame(model: Any, data: Any, frame: dict[str, Any], metadata: dict[s
     for key in ("act", "mocap_pos", "mocap_quat", "eq_active"):
         if key in fields:
             getattr(data, key)[:] = frame[key]
+    # Replay/render restore poses, not integrate forces; policy remains in the MJB.
+    # Live/resumed dynamics must use the material-aware native physics entrypoint.
     mujoco.mj_forward(model, data)
 
 

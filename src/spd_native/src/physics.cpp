@@ -93,6 +93,124 @@ py::array_t<bool> contact_array(const std::vector<unsigned char>& values,
   return result;
 }
 
+constexpr int kMaterialCount = 8;
+
+const mjtNum* material_friction(const mjModel* model) {
+  const int id = mj_name2id(model, mjOBJ_NUMERIC, "spd_material_friction");
+  if (id < 0) return nullptr;
+  const mjtNum* numeric = model->numeric_data + model->numeric_adr[id];
+  if (model->numeric_size[id] != 1 + kMaterialCount * kMaterialCount ||
+      numeric[0] != 2 || model->nuser_geom < 4) {
+    throw std::invalid_argument("invalid spd_material_friction version-2 policy");
+  }
+  for (int i = 1; i <= kMaterialCount * kMaterialCount; ++i) {
+    if (!std::isfinite(numeric[i]) || (numeric[i] < 0 && numeric[i] != -1)) {
+      throw std::invalid_argument("material friction must be finite, nonnegative or -1");
+    }
+  }
+  return numeric + 1;
+}
+
+int contact_material(const mjModel* model, const mjData* data,
+                     const mjContact& contact, int side) {
+  const int geom = contact.geom[side];
+  if (geom < 0 || geom >= model->ngeom) return 0;
+  const mjtNum* user = model->geom_user + geom * model->nuser_geom;
+  if (!(user[2] >= 0 && user[2] < kMaterialCount) ||
+      !(user[3] >= 0 && user[3] <= 3)) {
+    return 0;
+  }
+  const int material = static_cast<int>(user[2]);
+  const int region = static_cast<int>(user[3]);
+  if (user[2] != material || user[3] != region) return 0;
+  if (!region) return material;
+
+  // Contact normal points geom0 -> geom1. Rotate each outward normal into
+  // BODY (not geom or inertial) coordinates using a column of body xmat.
+  const mjtNum* rotation = data->xmat + 9 * model->geom_bodyid[geom];
+  const int axis = region == 1 ? 2 : 1;
+  const mjtNum component = (side == 0 ? 1 : -1) *
+      (rotation[axis] * contact.frame[0] +
+       rotation[3 + axis] * contact.frame[1] +
+       rotation[6 + axis] * contact.frame[2]);
+  if (region == 1) return component < -0.5 ? 4 : material;
+  if (region == 2) return component < 0 ? 7 : 0;
+  return component > 0 ? 7 : 0;
+}
+
+bool override_material_contacts(const mjModel* model, mjData* data,
+                                const mjtNum* friction) {
+  bool changed = false;
+  for (int i = 0; i < data->ncon; ++i) {
+    mjContact& contact = data->contact[i];
+    if (contact.geom[0] < 0 || contact.geom[1] < 0) continue;
+    int first = contact_material(model, data, contact, 0);
+    int second = contact_material(model, data, contact, 1);
+    if (!first || !second) continue;
+    if (first > second) std::swap(first, second);
+    const mjtNum mu = friction[first * kMaterialCount + second];
+    if (mu < 0) continue;
+    if (contact.friction[0] != mu || contact.friction[1] != mu) {
+      contact.friction[0] = contact.friction[1] = mu;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+bool rebuild_material_constraints(const mjModel* model, mjData* data,
+                                  const mjtNum* friction) {
+  if (data->efm_active) {
+    throw std::invalid_argument("material friction does not support an active flex effective metric");
+  }
+  if (!override_material_contacts(model, data, friction)) return false;
+  // MuJoCo 3.12 rewinds its arena to the end of the existing contacts here.
+  // Rebuild the cone Jacobian, regularization R/contact.mu, islands and
+  // projected inertia before reference velocities or the solver consume them.
+  // Actuator transmission/moments live in the main buffer in 3.12 and survive.
+  mj_makeConstraint(model, data);
+  mj_island(model, data);
+  mj_projectConstraint(model, data);
+  return true;
+}
+
+void step_with_material(const mjModel* model, mjData* data, const mjtNum* friction) {
+  if (!friction) {
+    mj_step(model, data);
+    return;
+  }
+  if (model->opt.integrator != mjINT_EULER &&
+      model->opt.integrator != mjINT_IMPLICIT &&
+      model->opt.integrator != mjINT_IMPLICITFAST) {
+    throw std::invalid_argument("material_step supports Euler, implicit and implicitfast");
+  }
+  mj_step1(model, data);
+  if (rebuild_material_constraints(model, data, friction)) {
+    mj_referenceConstraint(model, data);
+  }
+  mj_step2(model, data);
+}
+
+void forward_with_material(const mjModel* model, mjData* data, const mjtNum* friction) {
+  if (!friction) {
+    mj_forward(model, data);
+    return;
+  }
+  mj_fwdPosition(model, data);
+  rebuild_material_constraints(model, data, friction);
+  mj_sensorPos(model, data);
+  if (!data->flg_energypos) {
+    if (model->opt.enableflags & mjENBL_ENERGY) {
+      mj_energyPos(model, data);
+    } else {
+      data->energy[0] = data->energy[1] = 0;
+    }
+  }
+  // Recompute velocity references, actuation, acceleration, constraints and
+  // force sensors without another collision pass or advancing simulation time.
+  mj_forwardSkip(model, data, mjSTAGE_POS, 0);
+}
+
 }  // namespace
 
 class PhysicsCheckpoint {
@@ -105,6 +223,14 @@ class PhysicsCheckpoint {
   int hold_mask;
 };
 
+void material_step(const mjModel* model, mjData* data) {
+  step_with_material(model, data, material_friction(model));
+}
+
+void material_forward(const mjModel* model, mjData* data) {
+  forward_with_material(model, data, material_friction(model));
+}
+
 Physics::Physics(py::object model, py::object data, IndexArray qpos_indices,
                  IndexArray dof_indices, IndexArray actuator_indices,
                  NumericArray limits, NumericArray home)
@@ -112,6 +238,7 @@ Physics::Physics(py::object model, py::object data, IndexArray qpos_indices,
   require_model_data(model_owner_, data_owner_);
   model_ = address<mjModel>(model_owner_);
   data_ = address<mjData>(data_owner_);
+  material_friction_ = material_friction(model_);
   copy_indices(qpos_indices, qpos_indices_, model_->nq);
   copy_indices(dof_indices, dof_indices_, model_->nv);
   copy_indices(actuator_indices, actuator_indices_, model_->nu);
@@ -145,7 +272,7 @@ void Physics::initialize_home() {
     data_->ctrl[actuator_indices_[i]] = home_[i];
   }
   data_->time = 0;
-  mj_forward(model_, data_);
+  forward_with_material(model_, data_, material_friction_);
 }
 
 void Physics::require_open() const {
@@ -221,7 +348,7 @@ PhysicsStep Physics::physics_tick() {
   for (std::size_t i = 0; i < kJointCount; ++i) {
     data_->ctrl[actuator_indices_[i]] = targets_[i];
   }
-  mj_step(model_, data_);
+  step_with_material(model_, data_, material_friction_);
   ++tick_;
   const bool finite = all_finite(data_->qpos, model_->nq) &&
                       all_finite(data_->qvel, model_->nv) &&
@@ -294,7 +421,7 @@ void Physics::inherit_robot_state(const Physics& previous) {
   targets_ = previous.targets_;
   hold_mask_ = kReadyMask;
   fresh_ = false;
-  mj_forward(model_, data_);
+  forward_with_material(model_, data_, material_friction_);
 }
 
 
@@ -421,6 +548,20 @@ class ContactCollector {
 void bind_physics(pybind11::module_& module) {
   namespace py = pybind11;
   using namespace spd_native;
+  module.def("material_step", [](const py::object& model, const py::object& data) {
+    require_model_data(model, data);
+    const mjModel* native_model = address<mjModel>(model);
+    mjData* native_data = address<mjData>(data);
+    py::gil_scoped_release release;
+    material_step(native_model, native_data);
+  }, py::arg("model"), py::arg("data"));
+  module.def("material_forward", [](const py::object& model, const py::object& data) {
+    require_model_data(model, data);
+    const mjModel* native_model = address<mjModel>(model);
+    mjData* native_data = address<mjData>(data);
+    py::gil_scoped_release release;
+    material_forward(native_model, native_data);
+  }, py::arg("model"), py::arg("data"));
   py::class_<PhysicsStep>(module, "PhysicsStep")
       .def(py::init<std::int64_t, std::int64_t, bool>(), py::arg("tick"),
            py::arg("sim_time_ns"), py::arg("finite"))

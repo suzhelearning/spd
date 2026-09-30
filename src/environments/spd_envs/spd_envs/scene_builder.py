@@ -17,6 +17,7 @@ import numpy as np
 
 from .abc_assets import BOTTLE_VARIANTS, bottle_geometry
 from .visual_details import appearance_count, build_visual_details
+from .physical_materials import apply_material_policy, material_manifest, object_surface_materials
 
 GEOMETRY_REVISION = "paper-aligned-scenes-v2"
 
@@ -71,7 +72,7 @@ CLASS_IDS = {
     "cabinet": 11,
     "drawer": 12,
 }
-# Dry-contact engineering defaults, not measured material-pair coefficients.
+# Legacy appearance/fallback contact ranges. Physical surface labels are separate.
 # Wood mass uses 650 kg/m^3; nominal plate mass retains the reference disk estimate.
 # Empty-vessel masses are assigned to collision proxies; visuals contribute no mass.
 _MATERIALS = {
@@ -170,10 +171,12 @@ class ObjectSpec:
         values = asdict(self)
         values["collision_debug_rgb"] = values.pop("color_rgb")
         if self.class_name in _MATERIALS:
-            material, friction_range = _MATERIALS[self.class_name]
-            values.update(material=material, friction_range=list(friction_range),
+            _, friction_range = _MATERIALS[self.class_name]
+            surfaces = object_surface_materials(self)
+            values.update(material=surfaces["default"], surface_materials=surfaces,
+                          friction_range=list(friction_range),
                           reference_mass_kg=BASE_MASSES[self.class_name],
-                          material_parameter_source="engineering defaults; not calibrated")
+                          material_parameter_source="user-specified surface labels; legacy geom coefficients uncalibrated")
         return values
 
 
@@ -246,6 +249,7 @@ class SceneBuildResult:
             },
             "sampled_values": self.sampled_values,
             "objects": [item.manifest() for item in self.objects],
+            "physical_materials": material_manifest(),
         }
 
     def xml_string(self) -> str:
@@ -255,6 +259,7 @@ class SceneBuildResult:
                       cone="elliptic", noslip_iterations="1")
         ET.SubElement(root, "size", nuser_geom="2")
         root.extend((deepcopy(self.assets), deepcopy(self.worldbody)))
+        apply_material_policy(root, self.objects)
         return ET.tostring(root, encoding="unicode")
 
 
@@ -700,6 +705,7 @@ class ProceduralSceneBuilder:
                 ET.SubElement(root, "size", nuser_geom="2")
                 root.append(assets)
                 root.append(worldbody)
+                apply_material_policy(root, objects)
                 model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
                 data = mujoco.MjData(model)
                 contact_gate(model, data, {item.name for item in objects})
@@ -743,7 +749,8 @@ class ProceduralSceneBuilder:
                     values["task_goal_zh"] = "拉开抽屉，将其中的字母积木分类并取出放到桌上。"
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
-                result = SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values, worldbody, assets=assets)
+                result = SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values,
+                                          worldbody, assets=assets)
                 return result.with_table_near_edge(table_distance)
             except SceneResetError as exc:
                 last_error = exc

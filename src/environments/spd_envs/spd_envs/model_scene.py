@@ -7,6 +7,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .scene_builder import SceneBuildResult, SceneResetError, contact_gate
+from .physical_materials import apply_material_policy
 
 
 def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_model: str | Path) -> Path:
@@ -63,6 +64,7 @@ def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_m
         if child.tag == "geom" and any(existing.attrib.get("name") == child.attrib.get("name") for existing in worldbody.findall("geom")):
             raise SceneResetError(f"duplicate scene geom: {child.attrib.get('name')}")
         worldbody.append(deepcopy(child))
+    apply_material_policy(root, result.objects)
     output_model.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(output_model, encoding="utf-8", xml_declaration=True)
     try:

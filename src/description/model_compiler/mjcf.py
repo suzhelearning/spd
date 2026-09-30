@@ -16,31 +16,31 @@ from description.model_compiler.urdf_model import UrdfJoint, UrdfLink, UrdfModel
 TEMPORARY_WRIST_EXCLUDES = (("Link5_L", "Link7_L"), ("Link5_R", "Link7_R"))
 
 
-# Wuji Hand 2 beta2's official MuJoCo position-servo calibration.  Both hands
-# use the same gains; only the ``l_``/``r_`` joint prefix differs.  Keep these
-# values exact instead of replacing them with one generic hand gain.
-_WUJI2_HAND_GAINS: dict[str, tuple[float, float]] = {
-    "thumb_cmc_flex": (0.40844710645048043, 0.020882010257063675),
-    "thumb_cmc_abd": (0.6858601063643346, 0.030610939996373314),
-    "thumb_mcp": (0.2391112196099482, 0.010181475050560962),
-    "thumb_ip": (0.20736128319711747, 0.00909698844675045),
-    "index_finger_mcp_flex": (0.37352218155860073, 0.01882274330029718),
-    "index_finger_mcp_abd": (0.45592448909027794, 0.019798167597016643),
-    "index_finger_pip": (0.24368366649522863, 0.010477031953162727),
-    "index_finger_dip": (0.18026971340925335, 0.008240212147903584),
-    "middle_finger_mcp_flex": (0.3687093483646485, 0.01848622487024593),
-    "middle_finger_mcp_abd": (0.4164253443634641, 0.018032947229953678),
-    "middle_finger_pip": (0.22218607502059182, 0.009592200014076666),
-    "middle_finger_dip": (0.19427606072023446, 0.009152994605972402),
-    "ring_finger_mcp_flex": (0.35718151495111794, 0.018376606800780005),
-    "ring_finger_mcp_abd": (0.42977315313086895, 0.01867700966212433),
-    "ring_finger_pip": (0.24930151196247122, 0.01059512121009555),
-    "ring_finger_dip": (0.2285032688178066, 0.009917602877441107),
-    "pinky_mcp_flex": (0.3655325975433942, 0.018616960278988272),
-    "pinky_mcp_abd": (0.41393113081120425, 0.018732177029667153),
-    "pinky_pip": (0.22729367621965954, 0.00951005441616486),
-    "pinky_dip": (0.1964723550341816, 0.009017295241756363),
+# Simulation gains copied from tianji_teleop/src/simulation/simulation/physics.py.
+# Both hands use these baseline gains times five; torque limits remain URDF values.
+_HAND_GAINS: dict[str, tuple[float, float]] = {
+    "thumb_cmc_flex": (0.8, 0.025),
+    "thumb_cmc_abd": (0.25, 0.015),
+    "thumb_mcp": (0.4, 0.012),
+    "thumb_ip": (0.2, 0.008),
+    "index_finger_mcp_flex": (0.8, 0.025),
+    "index_finger_mcp_abd": (0.25, 0.015),
+    "index_finger_pip": (0.4, 0.012),
+    "index_finger_dip": (0.2, 0.008),
+    "middle_finger_mcp_flex": (0.8, 0.025),
+    "middle_finger_mcp_abd": (0.25, 0.015),
+    "middle_finger_pip": (0.4, 0.012),
+    "middle_finger_dip": (0.2, 0.008),
+    "ring_finger_mcp_flex": (0.8, 0.025),
+    "ring_finger_mcp_abd": (0.25, 0.015),
+    "ring_finger_pip": (0.4, 0.012),
+    "ring_finger_dip": (0.2, 0.008),
+    "pinky_mcp_flex": (0.8, 0.025),
+    "pinky_mcp_abd": (0.25, 0.015),
+    "pinky_pip": (0.4, 0.012),
+    "pinky_dip": (0.2, 0.008),
 }
+_HAND_GAIN_SCALE = 5.0
 
 
 def _fmt(values: Sequence[float]) -> str:
@@ -282,11 +282,13 @@ def render_mjcf(
         else:
             hand_joint_name = name[2:] if name.startswith(("l_", "r_")) else name
             try:
-                kp, kv = _WUJI2_HAND_GAINS[hand_joint_name]
+                kp, kv = _HAND_GAINS[hand_joint_name]
             except KeyError as exc:
                 raise ValueError(
-                    f"missing official Wuji Hand 2 gains for {name!r}"
+                    f"missing simulation hand gains for {name!r}"
                 ) from exc
+            kp *= _HAND_GAIN_SCALE
+            kv *= _HAND_GAIN_SCALE
         attributes = {
             "name": f"{name}_position",
             "joint": name,

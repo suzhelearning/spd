@@ -18,6 +18,10 @@ using JointValues = std::array<double, 54>;
 // Shared ROS/Python boundary decoder; physics applies the servo envelope afterwards.
 std::pair<JointValues, int> decode_joint_command(py::handle message);
 
+// Model-local material policy; absent policies retain ordinary MuJoCo dynamics.
+void material_step(const mjModel* model, mjData* data);
+void material_forward(const mjModel* model, mjData* data);
+
 struct PhysicsStep {
   std::int64_t tick;
   std::int64_t sim_time_ns;
@@ -62,6 +66,7 @@ class Physics {
   py::object data_owner_;
   mjModel* model_;
   mjData* data_;
+  const mjtNum* material_friction_ = nullptr;
   std::array<int, 54> qpos_indices_;
   std::array<int, 54> dof_indices_;
   std::array<int, 54> actuator_indices_;

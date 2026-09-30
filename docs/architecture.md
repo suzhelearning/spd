@@ -96,7 +96,7 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 
 先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。每次生成场景直接均匀采样桌高 0.70–0.80 m、近侧桌沿距离 0.10–0.30 m，生成后固定；物体和固定盘架、杯架、箱体、柜体同步定位，桌腿伸缩而脚垫仍落地。普通物体通过 free joints、重力、摩擦与真实接触运动，三个抽屉通过被动有界 slide joints 运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放，RGB 来自该状态渲染。
 
-精细场景采用 `SceneBuildResult.assets + worldbody`：`abc_assets.py` 读取环境包自带的六种 ABC 瓶子网格、贴图及分块碰撞，`visual_details.py` 生成其余物体的圆角／旋转曲面、材质和细节。局部资产路径从环境包位置解析，wheel 包含所需 OBJ／PNG／JSON，运行时不依赖原 ABC 目录。ABC 源资产与变换、导出文件哈希写入 provenance；公开再分发权利尚未确认。
+精细场景由 `SceneBuildResult` 组合外观资产、实体和物理材质策略：`abc_assets.py` 读取环境包自带的六种 ABC 瓶子网格、贴图及分块碰撞，`visual_details.py` 生成其余物体的圆角／旋转曲面、材质和细节；`physical_materials.py` 提供表面标签与批准的对称有效滑动摩擦矩阵，完整数值见 [README 材质说明](../README.md)。独立场景、初始化接触检查和机器人合并场景共用同一策略，不更改原 geom 摩擦、不增加显式 geom 配对、不改变碰撞过滤或机器人排除。局部资产路径从环境包位置解析，wheel 包含所需 OBJ／PNG／JSON，运行时不依赖原 ABC 目录。ABC 源资产与变换、导出文件哈希写入 provenance；公开再分发权利尚未确认。
 
 场景外观 geom 为 group 2、mass=0、contype=conaffinity=0；独立碰撞代理为 group 3，实际承担接触和质量分配。隐藏 group 3 不等于关闭碰撞。杯／杯柄／箱子的空腔通过真实分块碰撞保留，盘子使用中心浅盘和倾斜环状盘沿。桌腿和装饰仅为外观，不扩大可交互物理范围。木纹、釉面与 A–Z 贴图为原创程序生成，字母任务不再用大量小 box 拼字。
 
@@ -111,6 +111,14 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 带桌场景按 seed 随机生成桌高与桌距，不交互询问；在线 `--table-distance` 只覆盖首次场景，成功保存后的新任务不沿用覆盖值。独立 `spd-scene` 的显式桌距规则不变。距离沿 +X 从底座原点到近侧桌沿测量。实际高度、距离、工作区中心、采样范围和 seed 保存到 manifest。暂停／回退不重采样；丢弃后重做仍保持原任务、seed 和桌面。
 
 机器人保留 URDF 质量、质心和惯性；物体材质参数是工程默认值，不是实物标定结果。显示透明度不改变碰撞。模型保留 `Link5_L–Link7_L`、`Link5_R–Link7_R` 两对临时碰撞排除，记录在 `collision.temporary_excludes`；它们也会忽略真实碰撞。项目包含本地 IK／轨迹生成，但这些排除、限位和控制门均不提供实机避碰或安全认证。
+
+手部位置伺服以 `tianji_teleop/src/simulation/simulation/physics.py` 的四组仿真增益为基础，由 `description/model_compiler/mjcf.py` 的 `_HAND_GAINS` 与 `_HAND_GAIN_SCALE=5.0` 按关节名生成：每根手指实际 `Kp=(4.0,1.25,2.0,1.0)`、执行器 `kv/Kd=(0.125,0.075,0.060,0.040)`，左右手一致。Kp/Kd 均乘 5，不采用 sqrt(5) 阻尼缩放，不叠加之前已移除的逐关节倍率试调；运行时不依赖参考仓库。手指被动关节阻尼为 0，不叠加第二份阻尼；力矩限幅、双臂增益、几何／惯性／摩擦／法向接触不随该调整改变。完整模型、校准参数表与 manifest 哈希必须一起重建；场景合并沿用新执行器，机器人跨场景状态携带仍要求执行器语义一致。旧 episode 的 MJB 保留记录时增益，不应用当前倍率；仿真增益不是硬件 MIT 参数，增大刚度不会增大最大力矩，也不保证受接触约束的所有手指都能到达命令角度。
+
+物理材质策略不重算质量／惯量／几何或改变随机抽样；不改 `condim`、法向 `solref/solimp`、margin/gap、扭转／滚动摩擦、关节与执行器参数。未知或矩阵值为 `-1` 的材料对（包括硅胶—硅胶和织物—织物）保留原 geom 混合规则。全部有效系数为用户批准的工程近似，并非厂商硅胶数据或实测动摩擦；木—木 0.40 保留干滑动参考来源，PE—PE 0.20 保留干静摩擦参考来源，其他新值标记 `engineering_choice_not_measured`，不伪造文献依据。
+
+MJB 的 custom numeric `spd_material_friction` 保存版本 2 和 row-major 8×8 矩阵。材料 ID 为 0 未知、1 木、2 PE、3 釉面陶瓷、4 未上釉陶瓷、5 裸铁、6 涤纶织物、7 硅胶。`geom_user` 前两个实例／类别字段保留；字段 2 是材料 ID，字段 3 是表面区域（0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶；腕部掌面及 proximal／proximal_abd／middle 指腹只有左侧 body 局部外法线 `Y<0` 或右侧 `Y>0` 时为硅胶，背侧回退为未知材料旧摩擦。陶瓷底部区域默认釉面，仅外法线 body 局部 `Z<-0.5` 为未上釉底面，侧面不误赋底面材料。使用 body 坐标而非 geom 坐标；接触法线从 geom0 指向 geom1，第二个 geom 的外法线须反号。该近似使用既有接触，不改碰撞 mesh；旋转和 geom 顺序不改变结果。
+
+原生 `_spd_native.material_forward(model, data)`／`material_step(model, data)` 在求解前应用接触点材料系数，并重算受影响约束；仅替换 `contact.friction[0:2]`，不是求解后改显示数组。`Physics` 使用同一实现，不安装进程全局回调，也不逐步调用 Python。新模型的物理推进、续跑和材料求解力诊断必须使用该运行时；仅有 MJB 加裸 `mj_step/mj_forward` 不会应用数值／标签约定。带策略的刚体模型支持 Euler／implicit／implicitfast；RK4 和启用 EFM 的模型明确拒绝。只读回放／离线渲染仅恢复记录姿态，继续使用普通 `mj_forward`、不推进时间，也不要求 ROS 原生模块；这里的接触力不是新材料策略下的求解结果。没有此策略的旧模型完全保留普通 MuJoCo forward／step 路径，不改写历史 MJB。JSON manifest 与 MJB 同时保留材料策略和来源，源 XML／网格路径不是恢复依赖。
 
 ## 6. 完整场景轨迹采集与恢复
 
@@ -148,7 +156,7 @@ HDF5 仅保留选中前缀和其后续采，主机单调时钟不回退。schema
 
 相机位置由用户后续 URDF 定义，当前只固定逻辑名 top／left_wrist／right_wrist。渲染器不决定外参，只读模型中已有相机；缺失即报错。默认拒绝 provisional 或无 calibration_revision 的快照，显式诊断开关允许预览但输出标记 diagnostic_only。现有临时 YAML 的坐标不代表正式相机位置。URDF link/joint／相机扩展转换和历史轨迹换相机须在实际格式确定后单独接入，不隐式修改已记录模型。
 
-渲染对原始轨迹只读，不调用 mj_step；逐帧赋值并 mj_forward，复用机器人／物体位姿一致性检查。隐藏 group0／3 碰撞代理；MuJoCo 分割的 GEOM ID 通过物体子树映射成源 instance_id，同一物体的多个网格共用一个 ID。render schema 2 保留 0 天空、-1 机器人、-2 其他环境，并新增 -3 桌子；柜体、抽屉等任务物体仍用正 ID。相机世界位置、旋转矩阵及源 frame/tick/time 同行写出。
+渲染对原始轨迹只读，不推进物理；逐帧赋值并调用普通 `mj_forward` 恢复记录姿态，复用机器人／物体位姿一致性检查。此路径不依赖 ROS 原生模块，也不计算新材料策略的求解力；物理续跑或材料接触诊断须使用 `material_forward/material_step`。隐藏 group0／3 碰撞代理；MuJoCo 分割的 GEOM ID 通过物体子树映射成源 instance_id，同一物体的多个网格共用一个 ID。render schema 2 保留 0 天空、-1 机器人、-2 其他环境，并新增 -3 桌子；柜体、抽屉等任务物体仍用正 ID。相机世界位置、旋转矩阵及源 frame/tick/time 同行写出。
 
 结果独立为 .render.h5；独占锁、partial、完整内容校验和同目录原子无覆盖发布防止混写。源文件／模型／元数据／设置哈希决定复用，已完成输出仍须逐流校验；不匹配、损坏或残留 partial/lock 明确失败，不自动重试／覆盖。进程硬退出或启动超时清理其余自有进程，报告未确认任务；重跑可跳过校验通过的已完成段。输出格式详见 [schema-v2.md](schema-v2.md)。
 
