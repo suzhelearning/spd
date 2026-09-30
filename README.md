@@ -5,6 +5,10 @@
 ## 安装与头显准备
 
 ```bash
+# 首次克隆先安装 Git LFS，取回 PICO APK；工作区文件应是完整安装包而非指针
+git lfs install --local
+git lfs pull --include="apps/pico/pico_hand_tracking_adb.apk"
+
 # 首次使用，或依赖／原生源码更新后，在项目根目录执行
 pixi install --locked
 pixi run --locked spd-teleop-build
@@ -21,6 +25,8 @@ adb install -r apps/quest/quest3s_hand_tracking.apk
 Quest 与 PICO 共用 TCP `10002`：小端 `<BBqI>` 帧头，magic `0xAB`、type `0x40`、version `1`，载荷 `1968` 字节，双手各 26 个 OpenXR 关节；坐标 FLU（前、左、上），四元数 `xyzw`，不额外翻轴或交换左右手。日志中的 PICO 是共用输入实现名称。
 
 可选诊断 `pixi run spd-quest-receive --print`，或加 `--save-jsonl /tmp/quest-frames.jsonl`；诊断结束后 Ctrl+C，再启动采集。独立诊断 GUI 的依赖在 `tools/hand_tracking/requirements-visualize.txt`，入口为 `python tools/hand_tracking/quest_hand_tracking_receiver.py --visualize`，不是 MuJoCo 窗口。Quest APK SHA-256：`4206849228aa6be0c8c16c3ee48240afb142f053820dc970bcd47991687ac22c`。
+
+PICO APK 使用 Git LFS 管理，SHA-256：`f46519e1e94ec55f1ee55e51347af8564f4765a5dc80244def518030e8b08ef1`。这次迁移仅把当前版本改为 LFS 指针并上传原安装包，不改写历史；旧提交中的普通 Git 大对象仍保留。
 
 ## 一个命令开始
 
