@@ -41,7 +41,7 @@ pixi run spd-quest-teleop --height-m 1.75
 
 Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_sim.sh` → 原生 `spd_executor` → `simulation.ros_viewer --height-m ...`。也可直接 `pixi run spd-sim --height-m 1.75`。不再使用旧 `r` 前伸标定、`s` 跟随的独立发布入口，也不需要相邻源码工作区或 `TIANJI_TELEOP_ROOT`。
 
-首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed，重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`；随机抽样允许任务重复。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认 `/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
+首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed，重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`；随机抽样允许任务重复。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认项目根目录下的 `data/episodes/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
 
 ## 操作与恢复
 
@@ -143,7 +143,7 @@ pixi run spd-sim --height-m 1.75 --scene hardware_free
 
 `pixi run spd-scene` 自动进入原生运行环境并加载 overlay；模型编译、独立场景生成及离线恢复／渲染仍可使用各自 Python 环境。回归入口为 `pixi run spd-test`，需先完成原生构建。旧独立双进程控制入口、原生三键状态机和 `spd-viewer` console 入口已移除，不提供旧流程兼容入口。
 
-SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim/trajectories`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
+SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。已运行进程不自动切换目录；退出后重新启动，并移除旧 `--output` 或环境变量覆盖。
 
 主进程在当前终端前台运行，不使用 tmux。终端 `q`／`Ctrl+C` 或窗口 `q`／`Esc` 退出并关闭自有后端，不停止外部硬件控制器；未完成段保留 partial。一次只启动一个采集进程，不共享输出目录。暂停／回退冻结物理，输入监控继续以便稳定重绑定。
 
@@ -301,13 +301,13 @@ pixi run spd-envs-check
 
 ```yaml
 version: 2
-data_dir: /data/TianjiSim/trajectories
+data_dir: ../data/episodes
 state_rate_hz: 60
 writer_queue_size: 256
 max_frames: 0
 ```
 
-- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如 `/data/TianjiSim/trajectories/20260922/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
+- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如项目根目录下的 `data/episodes/20261007/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
 - 轨迹固定每 8 个 480 Hz 物理步采一帧，即仿真时间 60 Hz。记录物理步编号、仿真时间和主机单调时间；实际墙钟频率必须另行统计，不能以名义调度推断。旧配置中的 `camera_rate_hz` 已移除，配置版本改为 2。
 - `writer_queue_size` 限制后台写入队列；溢出报错并保留 partial，不静默丢帧。
 - `max_frames: 0` 表示不限；正数限制完整场景轨迹帧数，不按接收的命令数计数。可用 `--max-frames N` 覆盖。
@@ -326,12 +326,12 @@ max_frames: 0
 
 新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
-每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为 `/data/TianjiSim/trajectories`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不迁移、不删除。
+每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为项目根目录下的 `data/episodes`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不自动迁移、不删除。
 
 ```bash
 # 将路径替换为采集状态输出的实际文件路径
-pixi run validate_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
-pixi run replay_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
+pixi run validate_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
+pixi run replay_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
 ```
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
@@ -384,7 +384,7 @@ pixi run -e render spd-render --check-gpus
 
 # 最终相机已写入模型并确认标定后，正式批量渲染
 pixi run -e render spd-render \
-  --input /data/TianjiSim/trajectories \
+  --input data/episodes \
   --output /data/TianjiSim-rendered
 ```
 

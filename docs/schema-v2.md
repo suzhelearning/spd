@@ -4,7 +4,7 @@
 
 在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
 
-旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录 `/data/TianjiSim/trajectories`，采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
+旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
 
 ## 采样与时钟
 
