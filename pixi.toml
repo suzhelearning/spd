@@ -34,6 +34,7 @@ spd-model = "python -m description.model_compiler.cli --urdf src/tianji_wuji2/ti
 spd-scene = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m simulation.scene"
 spd-render = "python -m offline_rendering"
 spd-augment = "python -m training_data"
+spd-web = "python -m web_replay"
 spd-quest-receive = "python tools/hand_tracking/quest_hand_tracking_receiver.py"
 spd-quest-teleop = "bash bash/run_quest_hand_sim.sh"
 spd-pico-teleop = "bash bash/run_pico_hand_sim.sh"

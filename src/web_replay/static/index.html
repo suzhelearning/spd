@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SPD 轨迹回放</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="application-shell">
+    <header class="application-header">
+      <div>
+        <p class="product-kicker">SPD 数据回放</p>
+        <h1>三维轨迹回放</h1>
+      </div>
+      <p class="header-description">按源数据 60 Hz 时间轴查看已完成轨迹</p>
+    </header>
+
+    <main class="workspace">
+      <aside class="catalog-panel" aria-label="轨迹目录与列表">
+        <form id="directoryForm" class="directory-form">
+          <label for="directoryInput">服务端轨迹目录</label>
+          <div class="directory-row">
+            <input id="directoryInput" name="directory" type="text" autocomplete="off" spellcheck="false" placeholder="正在读取默认目录">
+            <button id="scanButton" type="submit">扫描目录</button>
+          </div>
+          <p class="field-hint">目录由服务端读取；浏览器不会上传本地文件。</p>
+          <p id="scanStatus" class="status-message" data-tone="neutral" role="status" aria-live="polite">正在读取服务端默认目录…</p>
+        </form>
+
+        <div class="catalog-toolbar">
+          <label class="search-label" for="searchInput">搜索轨迹</label>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="按名称、任务或路径筛选">
+        </div>
+
+        <div class="catalog-heading">
+          <h2>可回放轨迹</h2>
+          <span id="catalogCount" class="catalog-count">0 条</span>
+        </div>
+        <div id="catalogList" class="catalog-list" role="listbox" aria-label="可回放轨迹列表"></div>
+
+        <details id="skippedPanel" class="skipped-panel" hidden>
+          <summary id="skippedSummary">已跳过 0 个文件</summary>
+          <ul id="skippedList" class="skipped-list"></ul>
+        </details>
+      </aside>
+
+      <section class="viewer-panel" aria-label="三维回放">
+        <div class="viewer-heading">
+          <div class="selection-heading">
+            <p class="section-kicker">当前轨迹</p>
+            <h2 id="episodeTitle">尚未选择轨迹</h2>
+            <p id="episodePath" class="episode-path">请从左侧列表选择一条已完成轨迹。</p>
+          </div>
+          <p id="sceneStatus" class="scene-status" data-tone="neutral" role="status" aria-live="polite">等待选择</p>
+        </div>
+
+        <div id="canvasStage" class="canvas-stage" aria-busy="false">
+          <canvas id="replayCanvas" tabindex="0" aria-label="三维轨迹场景"></canvas>
+          <div id="stageMessage" class="stage-message" data-mode="empty">
+            <span id="stageSpinner" class="spinner" aria-hidden="true" hidden></span>
+            <p id="stageMessageText">选择一条轨迹后，将加载真实模型与源帧数据。</p>
+          </div>
+          <div id="bufferingIndicator" class="buffering-indicator" hidden role="status" aria-live="polite">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>正在缓冲源帧，时间轴已暂停</span>
+          </div>
+        </div>
+
+        <section class="replay-controls" aria-label="回放控制">
+          <dl class="telemetry-grid">
+            <div>
+              <dt>任务</dt>
+              <dd id="taskValue">—</dd>
+            </div>
+            <div>
+              <dt>帧</dt>
+              <dd id="frameValue">—</dd>
+            </div>
+            <div>
+              <dt>时间</dt>
+              <dd id="timeValue">—</dd>
+            </div>
+            <div>
+              <dt>源采样</dt>
+              <dd id="sampleRateValue">60 Hz</dd>
+            </div>
+            <div>
+              <dt>实际显示</dt>
+              <dd id="fpsValue">—</dd>
+            </div>
+          </dl>
+
+          <div class="timeline-row">
+            <label class="visually-hidden" for="timelineInput">回放位置</label>
+            <input id="timelineInput" type="range" min="0" max="0" value="0" step="1" disabled>
+            <div class="timeline-endpoints" aria-hidden="true">
+              <span id="timelineStart">0:00.000</span>
+              <span id="timelineEnd">0:00.000</span>
+            </div>
+          </div>
+
+          <div class="control-row">
+            <div class="transport-controls" aria-label="播放控制">
+              <button id="restartButton" type="button" disabled>重新开始</button>
+              <button id="previousButton" type="button" disabled>上一帧</button>
+              <button id="playButton" type="button" class="primary-control" disabled aria-pressed="false">播放</button>
+              <button id="nextButton" type="button" disabled>下一帧</button>
+              <button id="loopButton" type="button" disabled aria-pressed="false">循环：关</button>
+            </div>
+            <button id="resetCameraButton" type="button" class="secondary-control" disabled>重置视角</button>
+          </div>
+          <p class="keyboard-hint">空格播放或暂停；左右方向键逐帧。输入框获得焦点时不会拦截按键。</p>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
