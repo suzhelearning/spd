@@ -6,6 +6,7 @@ setup(
     description="External joint command driven simulation data collection",
     packages=find_packages("src"),
     package_dir={"": "src"},
+    package_data={"web_replay": ["static/*", "static/vendor/*"]},
     install_requires=[
         "numpy",
         "PyYAML",
@@ -28,6 +29,7 @@ setup(
             "spd-augment = training_data.cli:main",
             "validate_episode = data_collector.episode:validate_main",
             "replay_episode = data_collector.replay:main",
+            "spd-web = web_replay.cli:main",
         ],
     },
 )
