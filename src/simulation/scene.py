@@ -15,11 +15,18 @@ from typing import Any
 
 
 class EpisodeTasks:
-    """Honor startup selection once, then sample the full task catalog per save."""
+    """Select fresh episode seeds, optionally keeping the explicit task fixed."""
 
-    def __init__(self, scene: str | None, task: str | None, seed: int | None) -> None:
+    def __init__(
+        self, scene: str | None, task: str | None, seed: int | None,
+        *, repeat_task: bool = False,
+    ) -> None:
         from spd_envs.registry import TASKS
 
+        if repeat_task and task is None:
+            raise ValueError("--repeat-task requires an explicit --task")
+        self.repeat_task = repeat_task
+        self._repeated = (scene, task) if repeat_task else None
         self.randomized = task is None and scene != "hardware_free"
         self._initial = (scene, task, 0 if seed is None else seed)
         self._rng = random.Random(seed)
@@ -35,6 +42,8 @@ class EpisodeTasks:
             if not self.randomized:
                 return initial
             tasks = self._initial_tasks
+        if self._repeated is not None:
+            return *self._repeated, self._rng.randrange(2**31)
         self.randomized = True
         spec = self._rng.choice(tasks)
         return spec.scene, spec.name, self._rng.randrange(2**31)

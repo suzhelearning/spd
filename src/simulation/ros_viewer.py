@@ -86,7 +86,8 @@ class RosViewerApp:
             args.collection_config, output=args.output, max_frames=args.max_frames,
         )
         args.output = collection_config.data_dir
-        self._task_sequence = EpisodeTasks(args.scene, args.task, args.seed)
+        self._task_sequence = EpisodeTasks(
+            args.scene, args.task, args.seed, repeat_task=args.repeat_task)
         args.scene, args.task, args.seed = self._task_sequence.next()
         self._scene_episode_count = 0
         scene_result = build_selected_scene(args.scene, args.task, args.seed, args.table_distance)
@@ -158,7 +159,10 @@ class RosViewerApp:
         self.window.frame(self.args.table_distance if self.plant.scene_manifest is not None else None)
 
     def _announce_task(self) -> None:
-        mode = "随机任务；结束后全目录重抽" if self._task_sequence.randomized else "首条指定任务；结束后全目录随机"
+        if self._task_sequence.repeat_task:
+            mode = "固定任务；每条结束后重新随机布局"
+        else:
+            mode = "随机任务；结束后全目录重抽" if self._task_sequence.randomized else "首条指定任务；结束后全目录随机"
         print(f"任务：{self.task_title}；目标：{self.task_goal}", flush=True)
         print(f"Scene: {self.args.scene}/{self.args.task}; seed={self.args.seed}; {mode}", flush=True)
         if self.plant.scene_manifest is not None:
@@ -203,7 +207,7 @@ class RosViewerApp:
         self.collection_ros.publish()
 
     def next_task_after_episode(self) -> None:
-        """Replace a completed save or discard with a fresh random Home task."""
+        """Replace a completed save or discard with a fresh Home scene."""
         if (self.collection.state != "idle" or self.collection.last_outcome not in {"saved", "discarded"}
                 or self.collection.completed_episodes <= self._scene_episode_count):
             raise RuntimeError("next task requires a newly completed, closed episode")
@@ -329,7 +333,7 @@ class RosViewerApp:
             print("待开始/失跟踪：r 开始或重新接手；运动：s 暂停，r 存检查点，d 回退并自动续采；"
                   "人工暂停：s 重新绑定继续，r 保存整条，d 丢弃整条。s 继续和 d 回退均无需额外按 r。"
                   "单键按下立即生效；q/Esc/Ctrl+C 退出但不保存。"
-                  "保存或丢弃完成后直接随机新任务、Home 等待 r。", flush=True)
+                  "保存或丢弃完成后生成下一条场景、Home 等待 r。", flush=True)
             self._announce_task()
             run_loop(self)
         finally:
@@ -361,7 +365,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Override collection config data_dir")
     parser.add_argument("--max-frames", type=int, help="Override state sample limit (0: unlimited)")
     parser.add_argument("--scene", help="Select the first task's scene; later saves sample all scenes")
-    parser.add_argument("--task", help="Select the first task SCENE/TASK; later saves sample all tasks")
+    parser.add_argument("--task", help="Select SCENE/TASK; only the first episode unless --repeat-task is set")
+    parser.add_argument("--repeat-task", action="store_true",
+                        help="Keep --task for every episode after save or discard; randomize each new layout")
     parser.add_argument("--seed", type=int, help="Reproduce the task/scene sequence; explicit first tasks default to 0")
     parser.add_argument("--table-distance", type=float,
                         help="Override first task's near table edge distance; later tasks sample 0.10–0.30 m")

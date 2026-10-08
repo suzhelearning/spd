@@ -17,7 +17,7 @@ TEMPORARY_WRIST_EXCLUDES = (("Link5_L", "Link7_L"), ("Link5_R", "Link7_R"))
 
 
 # Simulation gains copied from tianji_teleop/src/simulation/simulation/physics.py.
-# Both hands use these baseline gains times five; torque limits remain URDF values.
+# Both hands use these baseline gains times twenty; torque limits remain URDF values.
 _HAND_GAINS: dict[str, tuple[float, float]] = {
     "thumb_cmc_flex": (0.8, 0.025),
     "thumb_cmc_abd": (0.25, 0.015),
@@ -40,7 +40,7 @@ _HAND_GAINS: dict[str, tuple[float, float]] = {
     "pinky_pip": (0.4, 0.012),
     "pinky_dip": (0.2, 0.008),
 }
-_HAND_GAIN_SCALE = 5.0
+_HAND_GAIN_SCALE = 20.0
 
 
 def _fmt(values: Sequence[float]) -> str:
