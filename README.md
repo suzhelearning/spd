@@ -57,6 +57,92 @@ Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_si
 
 首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。默认每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed；加 `--repeat-task` 则始终沿用显式 `--task`，不切换任务类型，此参数必须与 `--task` 同用。两种模式都重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`，不固定物体位置或桌面参数。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认项目根目录下的 `data/episodes/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
 
+## 全部固定场景任务命令
+
+当前共 **6 类场景、18 个任务**。以下命令在项目根目录执行，一次只运行一条；`1.75` 换成操作者实际身高（米）。每条命令完整复制，不要在 `--task` 后按回车。
+
+所有命令均使用 `--repeat-task`：保存或丢弃后继续同一任务类型，但新 seed、物体布局、桌高与桌距仍会重新随机。只控制 MuJoCo 仿真，不启动真机；未指定 `--output` 时保存到项目的 `data/episodes/YYYYMMDD/`。
+
+### 木质积木（7 个任务）
+
+```bash
+# 空心积木塔
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/hollow_tower --repeat-task
+
+# 搭建积木塔
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/tower --repeat-task
+
+# 多米诺骨牌
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/dominos --repeat-task
+
+# 交错积木塔
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/criss_cross --repeat-task
+
+# 左手交给右手
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/handover_lr --repeat-task
+
+# 右手交给左手
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/handover_rl --repeat-task
+
+# 抽取并叠放积木：抽出塔中间的一块积木，保持塔不倒，再放到塔顶
+pixi run --locked spd-quest-teleop --height-m 1.75 --task jenga/playing --repeat-task
+```
+
+### 字母积木（4 个任务）
+
+```bash
+# 字母拼词
+pixi run --locked spd-quest-teleop --height-m 1.75 --task spelling_blocks/spelling --repeat-task
+
+# 字母积木分拣：拉开抽屉，分类并取出字母积木
+pixi run --locked spd-quest-teleop --height-m 1.75 --task spelling_blocks/sort_and_unload --repeat-task
+
+# 字母积木金字塔
+pixi run --locked spd-quest-teleop --height-m 1.75 --task spelling_blocks/pyramid --repeat-task
+
+# 元音辅音分类
+pixi run --locked spd-quest-teleop --height-m 1.75 --task spelling_blocks/vowel_consonant_sort --repeat-task
+```
+
+### 马克杯（1 个任务）
+
+```bash
+# 悬挂马克杯
+pixi run --locked spd-quest-teleop --height-m 1.75 --task mugs/hang_mug --repeat-task
+```
+
+### 餐盘（2 个任务）
+
+```bash
+# 餐盘入架
+pixi run --locked spd-quest-teleop --height-m 1.75 --task dishes/rack_dishes --repeat-task
+
+# 叠放餐盘
+pixi run --locked spd-quest-teleop --height-m 1.75 --task dishes/plate_dishes --repeat-task
+```
+
+### 杯子（3 个任务）
+
+```bash
+# 杯子金字塔
+pixi run --locked spd-quest-teleop --height-m 1.75 --task cups/pyramid --repeat-task
+
+# 两组三杯叠放
+pixi run --locked spd-quest-teleop --height-m 1.75 --task cups/stack_two_threes --repeat-task
+
+# 拆分套叠杯
+pixi run --locked spd-quest-teleop --height-m 1.75 --task cups/unstack --repeat-task
+```
+
+### 瓶子（1 个任务）
+
+`bottles/toss_in_bin` 每条只生成 **1 个自由运动瓶子和 1 个收纳箱**。瓶子位置、朝向、6 种瓶型以及半径／高度仍按 seed 随机采样；`--repeat-task` 只固定任务类型，不固定这些参数。硅胶手部与 PE 瓶子的有效滑动摩擦系数为 **0.80**。
+
+```bash
+# 投瓶入箱
+pixi run --locked spd-quest-teleop --height-m 1.75 --task bottles/toss_in_bin --repeat-task
+```
+
 ## 操作与恢复
 
 操作者自行选择舒适、稳定的腰间准备姿势，面向前方并让头和双腕可跟踪，然后按 `r`。系统在冻结状态下将当前手腕位置／朝向绑定到机器人保留目标，**绑定本身不引起运动**，不要求双臂水平前伸。这里的“腰间”是操作者选择的姿势，**没有躯干或腰部跟踪器，也不估计腰部运动**。后续以绑定参考下的手腕相对运动控制双臂。
@@ -251,7 +337,7 @@ pixi run spd-scene --task cups/pyramid --seed 0 \
 | 马克杯 | 三种杯身几何、四种配色、开放椭圆杯柄；杯架切向挂杆穿过杯柄孔，避免径向支杆刺入杯沿 |
 | 餐盘 | 三种浅盘尺寸；盘架三条净宽 `50 mm` 槽位，保留真实插入和支撑空间 |
 | 杯子 | 三种可套叠几何，红／绿／蓝／黄四种鲜明配色全部可采样；中空杯壁和防卡支点与碰撞代理一致 |
-| 瓶子／箱子 | 6 种 ABC 瓶子网格及贴图；三种箱体内腔尺寸，保留真实开口、底板和侧壁 |
+| 瓶子／箱子 | 每条 1 个自由运动瓶子和 1 个收纳箱；瓶子随机位置／朝向、6 种 ABC 网格及贴图、半径／高度随机；三种箱体内腔尺寸，保留真实开口、底板和侧壁 |
 
 桌面增加木纹、边框、桌腿和统一双光源；桌腿／边饰／背景地面为外观元素，桌面仍使用原尺寸静态碰撞体。物体开口、杯柄和箱体内腔不是贴图伪造。物理代理与细小外观倒角并非逐三角面完全相同。
 
@@ -267,11 +353,13 @@ pixi run spd-scene --task cups/pyramid --seed 0 \
 
 机器人动力学保留 URDF 的质量、质心和惯性，不以外观网格体积重算装配惯性。瓶子仍按轻质空瓶配置名义质量，不能把品牌贴图当作真实材质或质量测量。刚体仿真不模拟材料屈服、破碎或柔性。机器人外观透明度只影响显示，不改变接触和动力学。
 
-**机械手伺服采用参考基础的二十倍增益。** `src/description/model_compiler/mjcf.py` 保留来自 `tianji_teleop/src/simulation/simulation/physics.py` 的 `_HAND_GAINS` 基础表，以 `_HAND_GAIN_SCALE=20.0` 同时缩放 `kp` 和执行器 `kv/Kd`，相对前一十五倍配置乘 `20/15`。实际每根手指 `Kp=(16.0, 5.0, 8.0, 4.0) N·m/rad`、`Kd=(0.50, 0.30, 0.24, 0.16) N·m·s/rad`，左右手相同；顺序为 CMC/MCP 屈伸、CMC/MCP 外展、MCP/PIP、IP/DIP。这是两者均乘 20，不是 Kd 乘 sqrt(20)，也不叠加逐关节倍率。倍率仅作用于左右手的 40 个关节，不作用于双臂的 14 个关节；双臂保持 `Kp=500.0`、`dampratio=1`，实际 Kd 由 MuJoCo 按参考构型的模型惯量生成，可在 `actuator_calibration.yaml` 查看各关节值。运行时不依赖参考仓库，这些不是实机 MIT 参数。手指被动 `joint damping=0`、力矩／控制限幅、双臂增益、摩擦、碰撞与惯量保持不变。
+**机械手伺服采用参考基础的十倍增益。** `src/description/model_compiler/mjcf.py` 保留来自 `tianji_teleop/src/simulation/simulation/physics.py` 的 `_HAND_GAINS` 基础表，以 `_HAND_GAIN_SCALE=10.0` 同时缩放 `kp` 和执行器 `kv/Kd`，相对前一二十倍配置减半。实际每根手指 `Kp=(8.0, 2.5, 4.0, 2.0) N·m/rad`、`Kd=(0.25, 0.15, 0.12, 0.08) N·m·s/rad`，左右手相同；顺序为 CMC/MCP 屈伸、CMC/MCP 外展、MCP/PIP、IP/DIP。这是两者均乘 10，不是 Kd 乘 sqrt(10)，也不叠加逐关节倍率。倍率仅作用于左右手的 40 个关节，不作用于双臂的 14 个关节；双臂使用下文的独立逐轴参数。运行时不依赖参考仓库，这些不是实机 MIT 参数。手指被动 `joint damping=0`，手指倍率调整不改变力矩／控制限幅、摩擦、碰撞与惯量。
 
-正式 `generated/unified_plant.xml`、`actuator_calibration.yaml`、`model_manifest.yaml` 已同步重建并校验；重启采集加载新增益，不热改运行中的模型，旧轨迹按内嵌 MJB 保留记录时增益。此前同参数二十倍模型的隔离重力／接触食指 DIP 验证中，外加 `0.03 N·m` 的静态偏转为 `0.00750 rad`，符合 `Kp=4.0` 的线性静态响应。同时缩放 Kp/Kd 不保持原阻尼比；刚度改变不代表最大力矩改变，达到原力矩上限后仍会限幅。
+**双臂采用显式逐轴 Kp/Kd。** `description/model_compiler/mjcf.py` 的 `_ARM_KP=(802,802,802,602,321,321,321)`、`_ARM_KD=(67,67,41,41,11,11,11)` 分别对应 `Joint1` 至 `Joint7`，左右臂相同。Kp 单位为 `N·m/rad`，Kd 单位为 `N·m·s/rad`；数值直接写入 MuJoCo 的 `kp`、`kv`，不做角度换算、不使用手指倍率，不再通过 `dampratio` 自动计算阻尼。双臂被动关节阻尼仍为 `0.1`；原力矩／控制限幅、机械手十倍增益、几何／惯量／摩擦／碰撞保持不变。
 
-恢复二十倍增益验证：左右手 40 个执行器的编译 Kp/Kd 均为前一十五倍模型的 `20/15`，双臂执行器和其他模型数组、双臂投影及碰撞产物不变，正式模型校验通过。隔离重力／接触的食指 DIP 以当前采集限速 `2 rad/s` 到达 `0.15 rad`，末态误差小于 `1e-5 rad`，无 MuJoCo 警告。元音／辅音分类场景加载新增益后推进 480 步，无非有限状态或 MuJoCo 警告，MJB 保存恢复保留增益。**保留已知风险：** 此前同参数二十倍模型的 DIP `0.15 rad` 瞬跳目标测试触及原 `±0.3 N·m` 限幅并出现明显振荡，3 秒后未收敛；不得将平滑目标验证推广为任意目标或接触负载均稳定。保留采集的混合与限速；上述为定向仿真验证，不是完整抓持成功或实机安全证明，未连接头显验证人工操作。
+正式 `generated/unified_plant.xml`、`arm_ik.xml`、`actuator_calibration.yaml`、`model_manifest.yaml` 已同步重建并校验；重启采集加载新增益，不热改运行中的模型，旧轨迹按内嵌 MJB 保留记录时增益。同时缩放 Kp/Kd 不保持原阻尼比；刚度改变不代表最大力矩改变，达到原力矩上限后仍会限幅。
+
+双臂增益验证：完整模型与双臂投影模型中的左右臂各 7 轴均匹配上述数组，除双臂执行器 Kp/Kd 外，其他编译模型数组与碰撞清单不变。两种模型均验证了 14 轴实际扭矩响应 `Kp×位置误差−Kd×速度`；隔离重力／接触后，以 `0.2 rad/s` 平滑增加各轴目标 `0.025 rad`，运行 3 秒后的最大位置误差约 `6.59e-17 rad`，无 MuJoCo 警告。MJB 保存恢复保留增益；元音／辅音分类场景已用实际 `spd-scene` 无图形入口运行 1 秒并正常退出。保留采集的混合与限速；上述为定向仿真验证，不保证任意瞬跳目标或接触负载均稳定，不是完整抓持成功或实机安全证明，未连接头显验证人工操作。
 
 **物理材质与外观分离。** 用户指定木质积木／字母块／多米诺／柜体／抽屉，PE 杯／瓶／箱，裸铁盘架／杯架支撑，以及木质杯架底座；盘和马克杯分为釉面与未上釉底面。桌面／地面标签为涤纶织物。标签不重算质量、惯量或碰撞几何，不改变配色和随机采样。
 
@@ -280,14 +368,16 @@ pixi run spd-scene --task cups/pyramid --seed 0 \
 | 材料 | 木 | PE | 釉面陶瓷 | 未上釉陶瓷 | 裸铁 | 涤纶织物 | 硅胶 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 木 | 0.40 | 0.30 | 0.30 | 0.40 | 0.40 | 0.50 | 0.80 |
-| PE | 0.30 | 0.20 | 0.20 | 0.25 | 0.20 | 0.30 | 0.60 |
+| PE | 0.30 | 0.20 | 0.20 | 0.25 | 0.20 | 0.30 | 0.80 |
 | 釉面陶瓷 | 0.30 | 0.20 | 0.25 | 0.35 | 0.25 | 0.35 | 0.70 |
 | 未上釉陶瓷 | 0.40 | 0.25 | 0.35 | 0.50 | 0.35 | 0.45 | 0.80 |
 | 裸铁 | 0.40 | 0.20 | 0.25 | 0.35 | 0.30 | 0.40 | 0.70 |
 | 涤纶织物 | 0.50 | 0.30 | 0.35 | 0.45 | 0.40 | — | 0.80 |
-| 硅胶 | 0.80 | 0.60 | 0.70 | 0.80 | 0.70 | 0.80 | — |
+| 硅胶 | 0.80 | 0.80 | 0.70 | 0.80 | 0.70 | 0.80 | — |
 
 以上是用户批准的工程有效系数，不是硅胶配方、厂商规格或实物测量，也不代表模型分别拟合了静／动摩擦。木—木保留 [NASA 表 IV 的橡木干滑动参考](https://ntrs.nasa.gov/api/citations/19900009424/downloads/19900009424.pdf)；PE—PE 保留 [0.20 的干静摩擦参考来源](https://www.engineeringtoolbox.com/friction-coefficients-d_778.html)，在模型中作为单一有效滑动近似。其余新取值标为 `engineering_choice_not_measured`，不为其虚构文献来源。
+
+硅胶—PE 的 `0.80` 是共享材质对系数，适用于瓶子、杯子与箱体的 PE 接触面，不只作用于投瓶入箱。改动在重新生成场景时加载，已运行的场景不热更新，旧录制的内嵌 MJB／材料策略不改写。
 
 Wuji Hand 2.1 Beta 的**整个 distal 指尖**使用硅胶；左右手指腹与掌面只在相应 body 局部坐标的掌侧生效（左侧外法线 `Y<0`，右侧 `Y>0`）。背侧、裸露外壳、安装件和手臂保留旧摩擦，不把整根手指当作硅胶。陶瓷底部 geom 仅在外法线投影到 body 局部 `Z<-0.5` 的朝下底面使用未上釉材质，侧面／顶面仍是釉面。这是利用现有碰撞法线的表面近似，不分割或替换碰撞 mesh，整体旋转和接触 geom 顺序不改变分类。
 

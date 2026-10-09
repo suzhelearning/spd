@@ -15,9 +15,14 @@ from description.model_compiler.urdf_model import UrdfJoint, UrdfLink, UrdfModel
 # collide; remove this exclusion after their collision geometry is repaired.
 TEMPORARY_WRIST_EXCLUDES = (("Link5_L", "Link7_L"), ("Link5_R", "Link7_R"))
 
+# Explicit simulation gains in N*m/rad and N*m*s/rad, Joint1 through Joint7.
+# Both arms use the same per-axis values; no degree conversion or hand scaling.
+_ARM_KP = (802.0, 802.0, 802.0, 602.0, 321.0, 321.0, 321.0)
+_ARM_KD = (67.0, 67.0, 41.0, 41.0, 11.0, 11.0, 11.0)
+
 
 # Simulation gains copied from tianji_teleop/src/simulation/simulation/physics.py.
-# Both hands use these baseline gains times twenty; torque limits remain URDF values.
+# Both hands use these baseline gains times ten; torque limits remain URDF values.
 _HAND_GAINS: dict[str, tuple[float, float]] = {
     "thumb_cmc_flex": (0.8, 0.025),
     "thumb_cmc_abd": (0.25, 0.015),
@@ -40,7 +45,7 @@ _HAND_GAINS: dict[str, tuple[float, float]] = {
     "pinky_pip": (0.4, 0.012),
     "pinky_dip": (0.2, 0.008),
 }
-_HAND_GAIN_SCALE = 20.0
+_HAND_GAIN_SCALE = 10.0
 
 
 def _fmt(values: Sequence[float]) -> str:
@@ -277,8 +282,8 @@ def render_mjcf(
         is_arm = name.startswith("Joint")
         effort = abs(float(joint.effort)) if joint.effort is not None and abs(float(joint.effort)) > 0 else 1.0
         if is_arm:
-            kp = 500.0
-            kv = None
+            axis = int(name.removeprefix("Joint").split("_", 1)[0]) - 1
+            kp, kv = _ARM_KP[axis], _ARM_KD[axis]
         else:
             hand_joint_name = name[2:] if name.startswith(("l_", "r_")) else name
             try:
@@ -293,14 +298,10 @@ def render_mjcf(
             "name": f"{name}_position",
             "joint": name,
             "kp": f"{kp:.17g}",
+            "kv": f"{kv:.17g}",
             "forcerange": f"{-effort:.17g} {effort:.17g}",
             "forcelimited": "true",
         }
-        if is_arm:
-            attributes["dampratio"] = "1"
-        else:
-            assert kv is not None
-            attributes["kv"] = f"{kv:.17g}"
         if joint.limit is not None:
             attributes.update(ctrlrange=_fmt(joint.limit), ctrllimited="true")
         ET.SubElement(actuator, "position", **attributes)

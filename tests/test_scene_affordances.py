@@ -40,5 +40,33 @@ class DrawerAffordanceTests(unittest.TestCase):
         )
 
 
+class BottleAffordanceTests(unittest.TestCase):
+    def test_single_free_bottle_keeps_seeded_position_and_shape_variation(self):
+        scenes = [build_selected_scene(None, 'bottles/toss_in_bin', seed)
+                  for seed in range(4)]
+        bottles = []
+        for scene in scenes:
+            selected = [obj for obj in scene.objects if obj.class_name == 'bottle']
+            self.assertEqual(len(selected), 1, f'seed={scene.seed}')
+            self.assertEqual(sum(obj.class_name == 'bin' for obj in scene.objects), 1)
+            bottle = selected[0]
+            bottles.append(bottle)
+            plant = PlantController(scene_result=scene)
+            try:
+                body = plant.model.body(bottle.name)
+                self.assertEqual(int(plant.model.body_jntnum[body.id]), 1)
+                joint_id = int(plant.model.body_jntadr[body.id])
+                self.assertEqual(int(plant.model.jnt_type[joint_id]), 0)  # MuJoCo free joint.
+                self.assertAlmostEqual(bottle.position[2], scene.manifest()['table']['top_z_m'])
+            finally:
+                plant.close()
+        self.assertNotEqual(bottles[0].position[:2], bottles[1].position[:2])
+        self.assertNotEqual(bottles[0].yaw_rad, bottles[1].yaw_rad)
+        self.assertNotEqual(bottles[0].size, bottles[1].size)
+        self.assertNotEqual({bottle.asset_id for bottle in bottles}, {bottles[0].asset_id})
+        repeated = build_selected_scene(None, 'bottles/toss_in_bin', 0)
+        self.assertEqual(repeated.manifest(), scenes[0].manifest())
+
+
 if __name__ == '__main__':
     unittest.main()

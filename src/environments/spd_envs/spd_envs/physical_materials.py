@@ -38,7 +38,7 @@ _PAIR_COEFFICIENTS = {
     ("polyester_woven_fabric", "unglazed_ceramic"): .45,
     ("polyester_woven_fabric", "bare_iron"): .40,
     ("silicone", "wood"): .80,
-    ("silicone", "polyethylene"): .60,
+    ("silicone", "polyethylene"): .80,
     ("silicone", "ceramic_glaze"): .70,
     ("silicone", "unglazed_ceramic"): .80,
     ("silicone", "bare_iron"): .70,

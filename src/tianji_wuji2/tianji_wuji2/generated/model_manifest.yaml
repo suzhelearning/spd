@@ -1245,7 +1245,7 @@ joints:
   - 1.57
   side: right
   velocity_limit: 13.5
-manifest_sha256: 8562b37adfb6f7ce8ee1658d6878b7d5034b45b42e2a3c3d04e7a783cc9b9b67
+manifest_sha256: 255a46d47669a7256eee0e0556ac1d96a45a40c03e9ae2de7c6bb2158fae92cd
 models:
   arm:
     njnt: 14
@@ -1258,10 +1258,10 @@ models:
     nu: 54
     nv: 54
 outputs:
-  actuator_calibration.yaml: 071968f247fcdff989b260348f662e8cdcb5e66be415002f3fb5ddefbd13814f
-  arm_ik.xml: dda18d5c555f87b3ba8521f67ca5d5d6e5a770ba919c631633ca6a4995eb5d2c
+  actuator_calibration.yaml: caf3e17209a7fc2fc6f6e9d6906962986ebb8263258b43f71d96879f6fec883a
+  arm_ik.xml: 18deba70b22a12c0ceec3cbba5af162e5f1c0dcf7bb2bd6c1f97c1087b7ecabc
   collision_manifest.yaml: 401ff34b5f38b430bd524465bfc95c708f1e51196e792aa9b1c7a1ef9cf8b415
-  unified_plant.xml: ae9079af44cb5e5c5516dafe5f1c16554b27821b4fdc4408dbcc805c2602017e
+  unified_plant.xml: d56f10b469da8d7b39dd32c2df4b2c593f215ed0422642554663f5a1f4dfb3e7
 source:
   meshes:
     meshes/Base_L.STL: f22c309ed8cacd2fc776e2f72a2fc5618d9da84315267377edd3205e91ebbcb5
