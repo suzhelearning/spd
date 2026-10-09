@@ -1,30 +1,32 @@
-# 仿真采集架构
+# WebXR 仿真采集架构
 
-## 1. 边界与数据流
+## 1. 目标与复现边界
 
-SPD 的生产流程是**一个仿真进程内的本地裸手后端、统一采集协调器和原生物理执行器**。Quest／PICO 入口 `pixi run spd-quest-teleop --height-m HEIGHT`／`spd-pico-teleop --height-m HEIGHT` 共用 `bash/run_pico_hand_sim.sh` → `bash/start_spd_sim.sh` → `spd_executor` → `simulation.ros_viewer`，透传相同任务／输出／headless 参数。`pico2_hands.collection_session.TeleopSession` 管理输入、相对绑定和 DLS/Ruckig＋Hand2；不启动独立 ROS 发布控制进程。省略 `--height-m` 可使用外部 DDS 订阅模式，但没有本地无运动重绑定和每手匹配保证。项目不控制实机。
+本分支依据论文 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、§3.3、附录 A.1，保留 Tianji 7×2 双臂与 Wuji Hand2 20×2 灵巧手。采用头显本地 WebXR 渲染、工作站唯一物理状态、人工示范、在线轨迹与离线处理的分工。
+
+论文机器人、原始场景资产和精确动作编码不在当前适配中。TaskSpec 的参考时长由 Table 2 平均时长计算，不是作者原配置。本分支聚焦仿真示范采集、轨迹恢复与原有 EGL 离线渲染，不提供训练准备、接触裁剪、30 Hz 重采样或训练文件导出。最终相机标定与 Quest 佩戴实测仍有未验收部分，不能宣称论文结果或吞吐复现。
+
+## 2. 数据流与所有权
 
 ```text
-PICO／Quest TCP → 本地 TeleopSession worker：输入／相对参考／DLS+Hand2
-                              ↓ 不可变快照 + generation
-唯一物理线程：CollectionControl → C++ executor 校验／邮箱／授权
-                              ↓
-SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理积分
-                              ↓
-              完整场景状态 / 任务物体 / 手–物接触
-                     ↙                    ↘
-       data_collector：60 Hz 轨迹     Viewer：任务、采集状态与双手虚影
-                     ↓
-       模型快照 + .partial.h5 → 校验 → .h5
-                     ↓
-       replay_episode：独立逐帧恢复（不推进物理、不渲染）
-                     ↓
-       offline_rendering：按 episode 分配到 EGL GPU，生成 RGB／稳定实例掩码
+Quest Browser：WebXR viewer/head/25-joint hands
+       │ tracking JSON（<=60 Hz；源时间、sequence、generation）
+       ▼
+WebXRBridge：网络线程，验证／最新输入槽／场景确认
+       │ PicoRawFrame（FLU，保留独立关节有效性）
+       ▼
+TeleopSession：单 worker，相对参考＋DLS/Ruckig＋Hand2（60 Hz）
+       │ 不可变参考快照，含 generation 与质量标志
+       ▼
+唯一物理 owner：CollectionControl → C++ executor → Physics（480 Hz）
+       ├── 60 Hz 状态／目标／接触 → HDF5 writer
+       ├── 60 Hz owned body poses → WebXRBridge → 二进制 SPDS → Quest
+       └── 可选桌面 SplitViewRenderer：私有模型副本，只显示不推进物理
 ```
 
-正式入口包括统一 Quest／PICO 裸手采集、`spd-sim --height-m HEIGHT`，以及模型、场景、数据检查命令。无第二套控制终端、旧双进程兼容入口、独立停止命令、HDF5 命令发布或 Zenoh 遥操入口。`replay_episode` 从内嵌模型恢复状态，不把历史观测作为合成发布目标。
+原生 `spd_executor` 嵌入 CPython。`run_loop` 调用协调器、处理本地输入、推进 MuJoCo；每8个物理步在与采集一致的相位应用最新关节目标。WebXR、状态写入、渲染线程不直接改变活的 MuJoCo 状态。没有第二个裸手 ROS 发布器。
 
-## 2. 源码与资源职责
+`TeleopSession` 在此入口用 `start_receiver=False`，由桥接 `feed()`，不读取旧 APK 的 TCP10002。采集用 DLS worker 的积分与 Home／制动步长为1/60秒，辅助非采集 worker 保留其原周期。480／60Hz 是目标调度，不提供硬实时保证；源码仍有 Python 回调／GIL 和接触开销。
 
 | 路径 | 职责 |
 |---|---|
@@ -46,25 +48,25 @@ SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理
 | `bash/` | 统一裸手／仿真前台启动与只读状态查询入口 |
 | `data/` | 采集产物和已有样本，不随代码清理删除 |
 
-运行时 Python 包直接位于 `src/`，按职责使用 `interfaces`、`simulation`、`cameras`、`data_collector`、`description`，不保留统一外层包或旧导入兼容层。根目录 `setup.py` 安装这些包，发行包名仍为 `spd`；依赖方向为 `spd → spd-envs`，独立环境包保持 `spd_envs`，只负责场景，不依赖 ROS 或遥操作算法，也不硬编码机器人路径。资源定位通过 `description/model_builder.py` 的 `workspace_root()`、`description_root()` 和 `config_root()`，不以调用者当前目录猜测资源位置。
+`pixi run spd-webxr --height-m HEIGHT` → `bash/run_webxr.sh` → `bash/start_spd_sim.sh` → `.ros/install/lib/spd_native/spd_executor` → `simulation.ros_viewer`。
 
-`pixi.toml` / `pixi.lock` 是受维护运行环境。`pixi run spd-native-build` 在 `ros-jazzy` 环境中构建 `tianji_spd_interfaces` 和 `spd_native` 到 `.ros/{build,install}`；`ros-build-interfaces` 仅供单独构建消息。`pixi run spd-teleop-build` 另将双臂／Viewer（`teleop-native`：MuJoCo 3.10、Pinocchio 3、Eigen 3）和独立 Hand2（`tools/wuji_hand_native`：Pinocchio 4）构建到 `.teleop/{build,install}`，最后复用前述 ROS 构建。不混用原生 ABI，不回退外部工作区。`config/input_provenance` 仅保存输入契约指纹校验用的冻结源文件，不参与 Python 导入或原生编译；模型指纹与数值检查仍保留。
+USB 使用 `adb reverse tcp:8080 tcp:8080`，头显访问 `http://localhost:8080`。默认绑定127.0.0.1，localhost满足WebXR可信上下文要求。多设备使用ANDROID_SERIAL；无设备桌面检查显式设置SPD_WEBXR_NO_ADB=1。`--headless`关闭工作站窗口，不影响WebXR。
 
-`spd_executor` 是内嵌 CPython 的 C++ 入口；`_spd_native` 暴露目标执行器、MuJoCo 状态操作与接触累计，保留原生 `run_loop`／`Physics`。`CollectionControl` 在唯一物理线程处理按键、绑定、冻结、恢复、采集和场景转换；旧原生三键状态机已删除。`TeleopSession` 的单个 worker 线程拥有 TCP 输入和 DLS／Hand2 原生 worker 交互，只产出不可变最新快照，不改 MuJoCo。generation／sequence 屏障拒绝重绑定前结果，无第二个键盘权威。
+不关闭浏览器安全策略，不开放通配绑定。非localhost远程地址需要独立的可信HTTPS/WSS部署；当前没有自动证书／远程代理。根Pixi安装aiohttp，Three.js0.180.0及MIT许可固定在`src/webxr/static/vendor/three`，不依赖运行时CDN。
 
-Python 还负责场景准备、Viewer、序列化和 HDF5 生命周期；原生循环调用这些回调，因此不宣称无 GIL、无 Python 热路径或硬实时。`mj_step` 期间释放 GIL。可选 ROS 回调只校验并更新邮箱；控制应用、物理步进、恢复和接触观察均由物理 owner 执行。MuJoCo 对象保持强引用，目标不提供可写视图；检查点与接触区间检查模型／创建者身份。
+旧Quest/PICO APK入口和包装任务已移除。本地WebXR只有一个控制socket；打开第二个页面得到明确冲突，避免双写。旧APK资源不作为当前运行依赖。未指定身高的spd-sim仍是可选外部DDS集成，不是论文头显采集入口。
 
-## 3. 本地绑定、恢复与外部订阅边界
+## 4. 场景传输协议
 
-操作者选择稳定舒适的腰间准备姿势并让头／双腕保持可见，按 `r` 开始。冻结世界后，当前腕部位置和完整朝向相对机器人保留目标 FK 绑定，初始输出等于保留目标；绑定本身不移动机器人、不写 qpos，也不要求前伸标定。身高用于映射尺度；没有躯干／腰部传感或腰姿估计，“腰间”不是自动测得的坐标。
+### 初始化／重建
 
 左右手独立跟随，不要求匹配握姿。`_FingerGate` 在输入无效或距最后有效目标超过 45 ms 时立即保持目标；距最后有效目标不足 120 ms 时保留 `live`／`blend` 状态，暂停混合时钟，不外推陈旧目标，恢复后继续原进度。达到 120 ms 才 reset 为 `waiting`，随后新鲜输入重新从保留目标进行 200 ms 混合，目标限速始终为 2 rad/s。重复无效样本不续期；显式重绑定／参考身份变更仍立即重置。`TeleopSnapshot.finger_modes`（左、右）供 HUD／虚影区分持续等待与短缺口；`control_flags` 仍即时记录实际保持，不能用显示去抖掩盖录制质量。短时头／腕缺口继续走有界制动，持续丢失超过初始 120 ms 预算则整段进入 `auto_paused`；首次 `r` 重建当前参考后续采，不回退、不裁剪、不更新保存点。正常 `r` 存点、`d` 回退不变。源／worker 故障、非有限命令仍 fail-closed；有限越限目标饱和，不触发异常冻结。时间预算不构成墙钟实时保证。
 
 `NativeHandWorker` 的会话请求等待预算为 300 ms，从 submit 起累计且不续期；DLS 等待预算未随之修改。stdout 为非阻塞管道，读取先消耗已缓存字节，只有遇到 `BlockingIOError` 才检查截止时间并 select 等待剩余时间。这样调用方调度迟到不等于 worker 故障；残缺响应仍受原截止时间限制。返回结果保持请求关联与源时间戳，session 仍按 45 ms 判断输入／手指目标新鲜度，不因响应读取成功而重新授予陈旧目标运动权限。真正超时报告左右手与已接收／预期字节数。
 
-以下 DDS wire 契约仅用于可选外部订阅模式；本地模式禁用 DDS 目标订阅，但复用原生目标校验／授权。
+`begin_scene_change()`在耗时模型构建前推进generation、撤销旧输入并发送`scene_loading`。新导出就绪发送`scene`及`/scene?generation=N`。客户端取消过时代次加载，隐藏旧场景；加载完成后`ready`，随后完成nonce时钟握手再允许输入。换场景不重置源sequence／时间递增要求。物理世界与场景绑定不会被重建期间的旧socket数据授权。
 
-接口类型 `tianji_spd_interfaces/msg/JointCommand`，话题 `/spd/tianji_wuji2/v1/joint_command`，`schema_version=1`，`robot_config=tianji_wuji2_v1`。54 维顺序是左臂 7、右臂 7、左手 20、右手 20，单位 rad。消息保留原 wire 字段，不因目录迁移改变。
+`/scene`返回版本1、generation、task、bodies、meshes、materials、textures、geoms、view；支持gzip，bootstrap上限256MiB，每纹理上限16M像素。几何相对自身body，body姿态是绝对世界坐标，无父子变换的二次叠加。天空盒和MuJoCo灯光未复制，浏览器用明确的显示光照；这不是离线训练渲染器。
 
 订阅回调校验名称顺序、维度、有限值、ready 掩码、session、递增 sequence 与 UTC 新鲜度，有限命令按 manifest／执行器限位交集饱和后原子替换最新候选。授权误差比较、过渡插值与实际执行均使用该饱和目标；调用方持有的输入快照不被修改。物理 tick 消费时再次校验年龄，未 ready／held 组保持。按 manifest 名称预计算 qpos/actuator 地址，场景自由度不改变机器人索引。已存 Home、检查点和继承目标仍要求合法，损坏状态不作为命令饱和处理。
 
@@ -74,45 +76,44 @@ Python 还负责场景准备、Viewer、序列化和 HDF5 生命周期；原生�
 
 外部 ready/hold 三组为双臂（bit 0）、右手（bit 1）、左手（bit 2）；未 ready 组保持目标，超过 100 ms 无新鲜 ready 目标锁存 hold。它不是本地每手平滑重接入逻辑。保持目标与冻结整个物理世界不同；协调器负责需要时的全世界冻结。
 
-Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚影说明，右侧状态／帧数／检查点摘要、当前操作提示及存在时的异常原因。顶部区域与下方场景视口互不遮挡；长文本独立换行，极长诊断用省略号截断以保留至少 60% 场景高度，完整信息仍保留在终端／采集状态。状态和常见控制提示在显示层中文化，未识别底层诊断原文保留，ROS／采集状态契约不变。
+## 5. 头手坐标与输入有效性
 
 图形采集使用一个 GLFW 窗口和 GL 上下文，下方两个真实 MuJoCo 透视视口：左侧自由旋转／平移／缩放，右侧固定头部观察。右视角位于双臂 Base_L／Base_R 中点上方 0.35m，沿 +X 前看并下倾 35°；不是垂直俯视，不改变采集相机标定。鼠标只控制左侧相机；`r/s/d/q/Esc` 作用于整个窗口，空格、`x` 和旧组合键不再操作采集。独立 spd-scene 保留单自由视口。
 
-`ViewerWindow` 只保存展示数据和投递输入；`SplitViewRenderer` 的渲染线程独占模型克隆、MjData、两组 MjvScene/MjvCamera 和 GLFW／GL 资源。物理 owner 捕获有所有权的完整状态快照，通过短锁交换单个待显示包，锁不跨 GPU 绘制；渲染线程只做状态恢复、运动学和绘制，从不 mj_step。两侧使用同一快照。暂停／接入的 HandGhost 分别追加在两个视口的物理几何后，不覆盖实体、不参与接触，正常采集隐藏。
+```text
+B: XR → FLU       (x,y,z) → (-z,-x,y)
+C = B^-1: FLU → Three (x,y,z) → (-y,z,-x)
+```
 
-旧的观察子进程、临时 MJB 和第二窗口已删除。退出／换场景先停止并回收渲染线程和 GL 资源；headless 不导入该渲染后端或创建窗口。渲染异常由 owner 观察并抛出，启动和关闭有界等待；不提供旧 passive viewer 回退路径。图像绘制前用顶部矩形初始化 2D 状态，再绘制连续 RGB 缓冲区，避免继承 3D 深度／光照状态。
+view是固定的XR跟踪原点到世界的刚体变换，初始由机器人肩部位置和操作者身高定位，不逐帧跟随头部重置。客户端世界根用C旋转；XR camera rig为`C*view`，双眼由WebXR驱动。返回位置为`view.position + view.rotation*pXR`；姿态为`Rview*RXR*C`，同时转换局部pose基。默认Rview=B时，中立头部返回单位旋转，forward为+X。
 
-## 4. 进程与网络边界
+每帧JSON含generation、sequence、浏览器time_ms、head pose或null，以及左右各25个pose或null。25点显式按WebXR joint名排序；桥接只在未被使用的palm槽补腕部，形成已有26点结构。缺失腕部、指尖或头部不伪造有效零姿态。
 
-`bash/start_spd_sim.sh` 在 ROS Pixi 环境以 `exec` 启动前台 `.ros/install/lib/spd_native/spd_executor`，不创建 tmux 或观察子进程。Quest 包装转到 PICO 共用启动器，必须指定 `--height-m`；全部任务、输出与 headless 参数透传。Ctrl+C／退出回收自有输入／求解和渲染资源，不停止外部硬件控制器。启动不代替绑定／运动授权，一次只运行一个采集进程，不共享输出目录。
+时钟nonce往返限制250ms，tracking按握手区间保守估计源年龄，上限150ms；不把晚到包的host接收时刻当成新采集时刻。控制层仍有45ms输入新鲜度与120ms持续失跟踪预算。原始源时间、主机接收时间分离。场景、socket和跟踪失效边沿改变参考身份；陈旧包、重复sequence、回退时间和不合法四元数拒绝。输入JSON48KiB上限、240消息/秒限额，网络发送／关闭有界。Host与Origin同源检查不替代远程用户认证，因此默认只用localhost＋USB。
 
-可选外部 DDS 模式采用 Jazzy/Fast DDS、默认 domain 120、`BEST_EFFORT / KEEP_LAST(1) / VOLATILE`。根 Pixi 的 `ros-jazzy` 激活环境提供 `ROS_DOMAIN_ID=120`、`ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST`、`ROS_STATIC_PEERS=''` 默认值；启动器加载本地 overlay 并使用 `rmw_fastrtps_cpp`，无桥接进程。本地模式不经 DDS 传输裸手目标。
+进入VR不自动开始录制。浏览器只在visible immersive session内发送真实头手数据；摘下、系统界面遮挡、结束、reference-space reset或WebGL错误立即发送失效边沿／停止输入。场景切换必须重新确认。开始／恢复的运动授权仍只属于CollectionControl，网络层不另建运动状态机。
 
-默认同机发现。跨主机需另外配置发现范围／静态 peers 或发现服务、网络接口、防火墙和 UTC 同步。domain 不是安全边界；DDS 直连也不是延迟、丢包或实时性能保证。
+## 6. 论文式采集控制
 
-## 5. 物理场景、随机化与模型限制
+统一采用远端的状态相关三键控制：`r`待开始时开段、录制中更新检查点、人工暂停时成功保存、失跟踪暂停后重新接手；`s`人工暂停／恢复；`d`录制中回退后自动重新接手、人工暂停时丢弃整段；`q`退出。开段自动建立完整0号检查点，检查点允许接触。终端、桌面窗口、WebXR页面经队列进入唯一物理线程。
+
+桌面摩擦面板由 `M` 打开／取消，方向键选择／调整，`Enter` 应用保存；GLFW 只投递逻辑键，`MaterialEditor` 在同一物理线程处理。面板按当前可碰撞 geom 的材质集合筛选已批准的组合，包含陶瓷朝下区域的未上釉材料及机器人硅胶，不依赖瞬时 contact。任务身份与档案路径从当前场景／采集 manifest 捕获，不引用场景切换时尚未更新的 args；导航和计数只使用当前子集，底层保留完整 26 项矩阵。面板显示任务、保存文件及当前真实系数，打开时隔离 `r/s/d`，`q/Esc` 仍可退出。只有控制 stage 和采集 state 均 idle、无异步任务且 recorder 未占用时可修改／应用，活动 episode（包括暂停）只读。应用原位更新 numeric，保留原生缓存指针，刷新接触后准备新的 `TrajectorySource`；当前任务档案原子保存成功才发布新 manifest 与 MJB 快照，失败恢复原 numeric、完整 MjData 与旧快照。不重新采样布局或推进物理。
 
 环境注册 18 个任务。首次选择遵守 `--task`／`--scene`，`--seed` 可复现序列。人工暂停中的保存／丢弃实际完成后，`next_task_after_episode` 从完整目录重抽任务与新 seed、布局及桌面；新模型直接 Home、零速度，不继承旧机器人状态，不经过准备区或 Home 运动。清空旧授权、检查点与排队输入，等待新的 `r` 开段。文件结束失败不切换，且每个完成事件只推进一次。GLFW 换场景先关闭并 join 旧 renderer，再打开新窗口，旧窗口回调由场景 generation 拒绝。
 
-先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。每次生成场景直接均匀采样桌高 0.70–0.80 m、近侧桌沿距离 0.10–0.30 m，生成后固定；物体和固定盘架、杯架、箱体、柜体同步定位，桌腿伸缩而脚垫仍落地。普通物体通过 free joints、重力、摩擦与真实接触运动，三个抽屉通过被动有界 slide joints 运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放，RGB 来自该状态渲染。
+任务注册六类18项；物体资产、位置、质量、摩擦、桌高和桌距随机结果记录在manifest。任务仅提示目标，成功由人工暂停后按`r`显式确认，没有自动任务策略或评分。桌高0.70–0.80m、桌距0.10–0.30m是本项目选择，不冒充作者参数。
 
-精细场景由 `SceneBuildResult` 组合外观资产、实体和物理材质策略：`abc_assets.py` 读取环境包自带的六种 ABC 瓶子网格、贴图及分块碰撞，`visual_details.py` 生成其余物体的圆角／旋转曲面、材质和细节；`physical_materials.py` 提供表面标签与批准的对称有效滑动摩擦矩阵，完整数值见 [README 材质说明](../README.md)。独立场景、初始化接触检查和机器人合并场景共用同一策略，不更改原 geom 摩擦、不增加显式 geom 配对、不改变碰撞过滤或机器人排除。局部资产路径从环境包位置解析，wheel 包含所需 OBJ／PNG／JSON，运行时不依赖原 ABC 目录。ABC 源资产与变换、导出文件哈希写入 provenance；公开再分发权利尚未确认。
+精细场景由 `SceneBuildResult` 组合外观资产、实体和物理材质策略：`abc_assets.py` 读取环境包自带的六种 ABC 瓶子网格、贴图及分块碰撞，`visual_details.py` 生成其余物体的圆角／旋转曲面、材质和细节；`physical_materials.py` 提供表面标签与已批准的对称有效滑动摩擦矩阵。新 build 按 `scene/task` 读取 `config/task_material_friction/<scene>/<task>.yaml`，仅档案不存在时从当前全局模板复制完整参数并原子首次建档；已有文件直接加载且不能被模板覆盖，文件损坏／读失败不回退。seed 不参与档案路径。`SPD_TASK_MATERIAL_FRICTION_DIR` 可覆盖档案根目录，`SPD_MATERIAL_FRICTION_CONFIG` 只覆盖初始化模板。构建持有独立系数及路径快照，manifest 的 `physical_materials.task_profile` 记录身份与路径，独立场景、初始化接触检查和机器人合并场景使用同一矩阵，不因后续文件／环境变量变化漂移。不更改原 geom 摩擦、碰撞过滤或机器人排除。wheel 包含所需 OBJ／PNG／JSON 与初始化 YAML；独立安装使用可写用户配置目录保存任务档案，不改安装包资源。ABC 源资产与变换、导出文件哈希写入 provenance；公开再分发权利尚未确认。
 
-场景外观 geom 为 group 2、mass=0、contype=conaffinity=0；独立碰撞代理为 group 3，实际承担接触和质量分配。隐藏 group 3 不等于关闭碰撞。杯／杯柄／箱子的空腔通过真实分块碰撞保留，盘子使用中心浅盘和倾斜环状盘沿。桌腿和装饰仅为外观，不扩大可交互物理范围。木纹、釉面与 A–Z 贴图为原创程序生成，字母任务不再用大量小 box 拼字。
-
-种子选择六种瓶子资产、三种杯／马克杯／盘／箱几何、完整配色和多种有效布局；`geometry_revision=paper-aligned-scenes-v2`、对象资产 ID、实际尺寸／质量、外观来源／哈希及字母分配进入 manifest。多米诺改为普通木块；字母使用八色字形／边框；塑料杯覆盖红绿蓝黄。拼词目标从八个词中选择，实际中英文目标进入 sampled_values 并驱动 Viewer／采集任务说明。碰撞调试色与真实外观色分开记录。桌距变化同步平移物体、桌面外观、灯光和相关元数据，不重新采样。
+在线仍为 schema-v2 的 60 Hz 完整场景轨迹；可选 robot_target 与 action_definition 保留实际已应用目标及其定义，兼容已有包含该字段的文件。目标来自真正应用的 plant 关节目标，记录在完成物理步后，与该步状态对应；不是未应用网络候选或未来实测 qpos。旧无目标文件仍可恢复。模型／metadata 有哈希，源文件只读，失败 partial 不冒充 complete。详见 [schema-v2.md](schema-v2.md)。
 
 `bottles/toss_in_bin` 每条生成一个自由运动瓶子与一个收纳箱，保留原瓶子的种子化位置／朝向、六种资产型号及半径／高度随机采样；改变瓶子数量不固定形状或摆放，也不改为焊接或轨迹播放。相同 seed 可重现新配置，`--repeat-task` 的新 seed 继续刷新瓶子与箱体布局。
 
 柜体及三个抽屉分别是独立实例根；抽屉是有真实底板、侧壁、前板和把手的开放托盘，沿柜体局部 -X 滑动 0–250mm，qpos 为相对关闭位置的实际开度。world-root 组织避免对象子树重叠，固定柜体保证导向基准不动；全量 qpos/qvel 和 MJB 已覆盖滑动 DOF，不扩展机器人命令。分拣任务从三层托盘内的 3／3／2 块字母开始。搁板与滑动底板保留 1mm 运行间隙，保留所有接触，避免受约束法向上的共面接触造成数值摩擦锁死。
 
-初始碰撞检查不豁免套杯／柜体等组件；桌面包围盒净空覆盖抽屉完整行程和把手。`sampled_values.affordances` 描述盘架 50mm 槽、杯柄与切向挂杆、箱内空间、套叠间隙和抽屉内部坐标，可用于物理探针。此为任务功能近似与受控验证，不宣称论文 CAD 精确复刻或完整机器人操作成功率。
-
-模型合并先解析原模型资源，再深拷贝场景资产和实体；重复资产名明确拒绝，不修改或消耗原 SceneBuildResult。重复合并输出一致。新模型的网格、纹理和相机继续由 schema-v2 的 MJB 快照完整携带，状态恢复与场景精细化解耦；离线渲染由独立模块消费这些快照。
-
 带桌场景按 seed 随机生成桌高与桌距，不交互询问；在线 `--table-distance` 只覆盖首次场景，保存或丢弃后的新场景不沿用覆盖值。`EpisodeTasks` 默认在后续每条从全目录抽任务；`--task SCENE/TASK --repeat-task` 保持指定任务类型，每条仍抽新 seed、重采样布局／桌高／桌距。独立 `spd-scene` 的显式桌距规则不变。距离沿 +X 从底座原点到近侧桌沿测量。实际高度、距离、工作区中心、采样范围和 seed 保存到 manifest。暂停／回退不重采样；保存和丢弃完成后都生成新场景、初始化 Home、清空授权并等待 `r`。
 
-机器人保留 URDF 质量、质心和惯性；物体材质参数是工程默认值，不是实物标定结果。显示透明度不改变碰撞。模型保留 `Link5_L–Link7_L`、`Link5_R–Link7_R` 两对临时碰撞排除，记录在 `collision.temporary_excludes`；它们也会忽略真实碰撞。项目包含本地 IK／轨迹生成，但这些排除、限位和控制门均不提供实机避碰或安全认证。
+## 8. 资源与物理边界
 
 手部位置伺服以 `tianji_teleop/src/simulation/simulation/physics.py` 的四组仿真增益为基础，由 `description/model_compiler/mjcf.py` 的 `_HAND_GAINS` 与 `_HAND_GAIN_SCALE=10.0` 按关节名生成：每根手指实际 `Kp=(8.0,2.5,4.0,2.0)`、执行器 `kv/Kd=(0.25,0.15,0.12,0.08)`，左右手一致。Kp/Kd 均乘 10，即前一二十倍配置的一半，不采用 sqrt(10) 阻尼缩放，不叠加逐关节倍率；运行时不依赖参考仓库。倍率仅作用于 40 个手指关节，不作用于双臂。手指被动关节阻尼为 0，不叠加第二份阻尼；手指倍率调整不改变力矩限幅、双臂增益、几何／惯性／摩擦／法向接触。十倍配置已通过隔离重力／接触的左右食指 DIP `2 rad/s` 平滑目标与静态外载验证。
 
@@ -120,9 +121,9 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 
 完整模型、双臂投影 XML、校准参数表与 manifest 哈希必须一起重建；场景合并沿用新执行器，机器人跨场景状态携带仍要求执行器语义一致。旧 episode 的 MJB 保留记录时增益，不应用当前参数；仿真增益不是硬件 MIT 参数。增益调整不会改变最大力矩，也不保证受接触约束的所有关节都能到达命令角度。定向物理验证不代表任意瞬跳目标或接触负载均稳定，保留采集的混合与限速。
 
-物理材质策略不重算质量／惯量／几何或改变随机抽样；不改 `condim`、法向 `solref/solimp`、margin/gap、扭转／滚动摩擦、关节与执行器参数。未知或矩阵值为 `-1` 的材料对（包括硅胶—硅胶和织物—织物）保留原 geom 混合规则。全部有效系数为用户批准的工程近似，并非厂商硅胶数据或实测动摩擦；木—木 0.40 保留干滑动参考来源，PE—PE 0.20 保留干静摩擦参考来源，其他新值标记 `engineering_choice_not_measured`，不伪造文献依据。
+物理材质策略不重算质量／惯量／几何或改变随机抽样；不改 `condim`、法向 `solref/solimp`、margin/gap、扭转／滚动摩擦、关节与执行器参数。未知或矩阵值为 `-1` 的材料对（包括硅胶—硅胶和织物—织物）保留原 geom 混合规则。26 个工程起始系数按用户确认表一次调整；各任务档案保留当前完整表，但面板只允许修改该任务涉及的项目，并统一标记 `engineering_choice_not_measured`。系数必须有限、非负，不设人为 1.0 上限；不是厂商硅胶数据或实测动摩擦。工程起始木—木为 0.60、PE—PE 为 0.40，用户已保存的不同值不被这些参考数覆盖。
 
-硅胶—PE 的单一有效滑动摩擦系数为 `0.80`，使用同一共享矩阵覆盖硅胶接触面与 PE 瓶子、杯子、箱体的真实接触，不新增任务专用覆盖分支。该值随新场景嵌入 numeric 与 manifest；已有运行模型不热更新，旧 episode 的 MJB 保留记录时系数。
+硅胶—PE 的工程起始值为 `0.90`，实际值按任务档案独立保存；同一任务内统一覆盖硅胶接触面与 PE 瓶子、杯子、箱体，不新增单物体专用分支。实际值随场景嵌入 numeric 与 manifest；任务文件修改只影响后续该任务场景，待开始的当前场景可由面板明确应用并同步快照，活动 episode 锁定策略，旧 episode 的 MJB 保留记录时系数。
 
 MJB 的 custom numeric `spd_material_friction` 保存版本 2 和 row-major 8×8 矩阵。材料 ID 为 0 未知、1 木、2 PE、3 釉面陶瓷、4 未上釉陶瓷、5 裸铁、6 涤纶织物、7 硅胶。`geom_user` 前两个实例／类别字段保留；字段 2 是材料 ID，字段 3 是表面区域（0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶；腕部掌面及 proximal／proximal_abd／middle 指腹只有左侧 body 局部外法线 `Y<0` 或右侧 `Y>0` 时为硅胶，背侧回退为未知材料旧摩擦。陶瓷底部区域默认釉面，仅外法线 body 局部 `Z<-0.5` 为未上釉底面，侧面不误赋底面材料。使用 body 坐标而非 geom 坐标；接触法线从 geom0 指向 geom1，第二个 geom 的外法线须反号。该近似使用既有接触，不改碰撞 mesh；旋转和 geom 顺序不改变结果。
 

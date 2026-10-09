@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 import math
+from pathlib import Path
 from typing import Any, Iterable
 import xml.etree.ElementTree as ET
 
@@ -17,7 +18,10 @@ import numpy as np
 
 from .abc_assets import BOTTLE_VARIANTS, bottle_geometry
 from .visual_details import appearance_count, build_visual_details
-from .physical_materials import apply_material_policy, material_manifest, object_surface_materials
+from .physical_materials import (
+    apply_material_policy, load_task_material_coefficients, material_manifest,
+    object_surface_materials, task_material_config_path, validate_material_coefficients,
+)
 
 GEOMETRY_REVISION = "paper-aligned-scenes-v2"
 
@@ -191,6 +195,18 @@ class SceneBuildResult:
     worldbody: ET.Element
     assets: ET.Element = field(default_factory=lambda: ET.Element("asset"))
     table_near_edge_m: float = 0.10
+    material_coefficients: dict[tuple[str, str], float] | None = None
+    material_profile_path: Path | None = None
+
+    def __post_init__(self):
+        # Own a validated snapshot and path; later file/env changes cannot alter it.
+        path = (task_material_config_path(self.scene, self.task)
+                if self.material_profile_path is None else Path(self.material_profile_path))
+        coefficients = (load_task_material_coefficients(self.scene, self.task)
+                        if self.material_coefficients is None else self.material_coefficients)
+        object.__setattr__(self, "material_profile_path", path)
+        object.__setattr__(self, "material_coefficients",
+                           validate_material_coefficients(coefficients))
 
     def with_table_near_edge(self, distance: float) -> SceneBuildResult:
         """Translate the table and task together along +X without resampling.
@@ -249,7 +265,11 @@ class SceneBuildResult:
             },
             "sampled_values": self.sampled_values,
             "objects": [item.manifest() for item in self.objects],
-            "physical_materials": material_manifest(),
+            "physical_materials": {
+                **material_manifest(self.material_coefficients),
+                "task_profile": {"scene": self.scene, "task": self.task,
+                                 "path": str(self.material_profile_path)},
+            },
         }
 
     def xml_string(self) -> str:
@@ -259,7 +279,7 @@ class SceneBuildResult:
                       cone="elliptic", noslip_iterations="1")
         ET.SubElement(root, "size", nuser_geom="2")
         root.extend((deepcopy(self.assets), deepcopy(self.worldbody)))
-        apply_material_policy(root, self.objects)
+        apply_material_policy(root, self.objects, self.material_coefficients)
         return ET.tostring(root, encoding="unicode")
 
 
@@ -670,6 +690,8 @@ class ProceduralSceneBuilder:
     def build(self) -> SceneBuildResult:
         import mujoco
 
+        material_profile_path = task_material_config_path(self.scene, self.task)
+        material_coefficients = load_task_material_coefficients(self.scene, self.task)
         rng = np.random.default_rng(self.seed)
         table_top_z = float(rng.uniform(*TABLE_HEIGHT_RANGE))
         table_distance = float(rng.uniform(*TABLE_DISTANCE_RANGE))
@@ -705,7 +727,7 @@ class ProceduralSceneBuilder:
                 ET.SubElement(root, "size", nuser_geom="2")
                 root.append(assets)
                 root.append(worldbody)
-                apply_material_policy(root, objects)
+                apply_material_policy(root, objects, material_coefficients)
                 model = mujoco.MjModel.from_xml_string(ET.tostring(root, encoding="unicode"))
                 data = mujoco.MjData(model)
                 contact_gate(model, data, {item.name for item in objects})
@@ -750,7 +772,9 @@ class ProceduralSceneBuilder:
                 if self.scene == "jenga" and self.task == "playing":
                     values["extraction_target_instance_id"] = 26  # Centre block of layer 9 (one-based).
                 result = SceneBuildResult(self.scene, self.task, self.seed, candidate, objects, values,
-                                          worldbody, assets=assets)
+                                          worldbody, assets=assets,
+                                          material_coefficients=material_coefficients,
+                                          material_profile_path=material_profile_path)
                 return result.with_table_near_edge(table_distance)
             except SceneResetError as exc:
                 last_error = exc

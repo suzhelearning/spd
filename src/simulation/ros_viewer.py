@@ -18,6 +18,7 @@ from data_collector.session import CollectionSession
 from interfaces.keyboard_control import ControlTerminal
 from interfaces.ros_joint_command import TOPIC
 from simulation.collection_control import CollectionControl
+from simulation.material_editor import MaterialEditor
 from simulation.viewer import PlantController
 from simulation.scene import EpisodeTasks, build_selected_scene
 from simulation.viewer_window import ViewerWindow
@@ -79,6 +80,7 @@ class RosViewerApp:
         self.args = args
         self.stop = False
         self.teleop = None
+        self.webxr = None
         self._closed = False
         self._scene_generation = 0
         self._actions: queue.SimpleQueue[tuple[int, str]] = queue.SimpleQueue()
@@ -105,7 +107,10 @@ class RosViewerApp:
                 from pico2_hands.collection_session import TeleopSession
 
                 self.teleop = TeleopSession(
-                    height_m, host=getattr(args, "host", "127.0.0.1"), port=getattr(args, "port", 10002))
+                    height_m, host=getattr(args, "host", "127.0.0.1"),
+                    port=getattr(args, "port", 10002),
+                    start_receiver=getattr(args, "webxr_port", None) is None,
+                )
             self.executor = RosJointCommandExecutor(self.plant, subscribe=self.teleop is None)
             self.collection = CollectionSession(
                 collection_config, self.plant, self.executor,
@@ -114,6 +119,18 @@ class RosViewerApp:
             self.collection_ros = CollectionRosControl(self.executor, self.collection)
             self.control_terminal = ControlTerminal(self.joint_control)
             self.three_key = CollectionControl(self)
+            self.material_editor = MaterialEditor(self)
+            if self.teleop is not None and getattr(args, "webxr_port", None) is not None:
+                from webxr.bridge import WebXRBridge
+
+                self.webxr = WebXRBridge(
+                    host=getattr(args, "webxr_bind", "127.0.0.1"),
+                    port=args.webxr_port,
+                    on_frame=self.teleop.feed, on_command=self.joint_control,
+                    height_m=height_m,
+                )
+                self.webxr.set_scene(self.plant.model, self.plant.data, self._webxr_task())
+                self.webxr.start()
         except BaseException:
             self.close()
             raise
@@ -121,7 +138,7 @@ class RosViewerApp:
     @staticmethod
     def _task_text(scene: str, task: str, scene_manifest: dict | None) -> tuple[str, str]:
         if scene == "hardware_free":
-            return "自由仿真", "无预设物体操作任务；按统一采集按键开始。"
+            return "自由仿真", "无预设物体操作任务；r 开始／存点／暂停时保存，s 暂停／恢复，d 回退／暂停时丢弃。"
         from spd_envs.registry import get_task
 
         spec = get_task(scene, task)
@@ -130,10 +147,19 @@ class RosViewerApp:
 
     def _task_manifest(self, plant, scene: str, task: str, seed: int) -> dict:
         title, goal = self._task_text(scene, task, plant.scene_manifest)
+        duration = None
+        if scene != "hardware_free":
+            from spd_envs.registry import get_task
+
+            duration = get_task(scene, task).target_duration_s
         return {
             **(plant.scene_manifest or {}),
             "task": task, "scene": scene, "seed": seed,
             "task_title_zh": title, "task_goal_zh": goal,
+            "target_duration_s": duration,
+            "target_duration_source": "paper_table2_average" if duration is not None else "unreported",
+            "collection_method": ("webxr" if getattr(self.args, "webxr_port", None) is not None
+                                  else "headset_tcp" if self.teleop is not None else "external_dds"),
             "artifact_hash": plant.artifact_hash,
             "collection_config_path": str(self.args.collection_config.expanduser().resolve()),
         }
@@ -168,6 +194,15 @@ class RosViewerApp:
         if self.plant.scene_manifest is not None:
             table = self.plant.scene_manifest["table"]
             print(f"桌高={table['top_z_m']:.3f} m；桌沿 X={table['near_edge_x_m']:.3f} m；本场景固定。", flush=True)
+
+    def _webxr_task(self) -> dict:
+        duration = None
+        if self.args.scene != "hardware_free":
+            from spd_envs.registry import get_task
+
+            duration = get_task(self.args.scene, self.args.task).target_duration_s
+        return {"title": self.task_title, "goal": self.task_goal,
+                "target_duration_s": duration}
 
 
     def _replace_scene(self, result, scene: str, task: str, seed: int) -> None:
@@ -204,6 +239,7 @@ class RosViewerApp:
             cleanup.callback(old_executor.close)
             cleanup.callback(old_window.close)
         self._discard_scene_actions()
+        self.material_editor.reset_scene()
         self.collection_ros.publish()
 
     def next_task_after_episode(self) -> None:
@@ -221,6 +257,8 @@ class RosViewerApp:
         self.args.scene, self.args.task, self.args.seed = scene, task, seed
         self.args.table_distance = result.table_near_edge_m if result is not None else table_distance
         self._scene_episode_count = self.collection.completed_episodes
+        if self.webxr is not None:
+            self.webxr.set_scene(self.plant.model, self.plant.data, self._webxr_task())
         if not self.stop:
             self._announce_task()
 
@@ -256,6 +294,8 @@ class RosViewerApp:
             except queue.Empty:
                 return
             if key != "q" and generation != self._scene_generation:
+                continue
+            if self.material_editor.key(key):
                 continue
             previous_stage, previous_notice = self.three_key.stage, self.three_key.notice
             self.three_key.key(key)
@@ -299,6 +339,10 @@ class RosViewerApp:
             error = error or local.fault
         if error:
             values["异常"] = _notice_zh(error)
+        editor_hud = self.material_editor.hud()
+        if self.material_editor.opened:
+            values = {name: value for name, value in values.items() if name in {"状态", "异常"}}
+        values.update(editor_hud)
         ghost = None
         ghost_label = ""
         if stage == "auto_paused":
@@ -317,6 +361,18 @@ class RosViewerApp:
         self.window.set_hand_ghost(ghost, label=ghost_label)
         self.window.update_hud(values)
         self.window.sync(now)
+        if self.webxr is not None:
+            self.webxr.publish(self.plant.model, self.plant.data, {
+                "task_title": self.task_title, "task_goal": self.task_goal,
+                "stage": stage, "notice": self.three_key.notice,
+                "state_frames": self.collection.state_frames,
+                "checkpoint_frames": checkpoint_frames,
+                "auto_checkpoint_frames": auto_checkpoint,
+                "control_flags": flags, "sim_time": float(self.plant.data.time),
+                "target_duration_s": self.collection.task_manifest.get("target_duration_s"),
+                "recorded_duration_s": self.collection.state_frames / 60.0,
+                "error": error,
+            })
 
     def run(self) -> int:
         previous_handlers = {
@@ -352,7 +408,7 @@ class RosViewerApp:
         self.stop = True
         with ExitStack() as cleanup:
             for name in ("plant", "executor", "window", "collection", "teleop",
-                         "control_terminal", "three_key"):
+                         "control_terminal", "three_key", "webxr"):
                 resource = getattr(self, name, None)
                 if resource is not None:
                     cleanup.callback(resource.close)
@@ -373,9 +429,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="Override first task's near table edge distance; later tasks sample 0.10–0.30 m")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--height-m", type=float,
-                        help="Own local PICO teleoperation in this process, with user height in metres")
+                        help="Own local headset teleoperation, with operator height in metres")
     parser.add_argument("--host", default="127.0.0.1", help="Headset TCP host for local teleop")
     parser.add_argument("--port", type=int, default=10002, help="Headset TCP port for local teleop")
+    parser.add_argument("--webxr-bind", default="127.0.0.1", help="WebXR HTTP bind address")
+    parser.add_argument("--webxr-port", type=int,
+                        help="Use WebXR input instead of headset TCP, on this HTTP/WebSocket port")
     args = parser.parse_args(argv)
     try:
         app = RosViewerApp(args)

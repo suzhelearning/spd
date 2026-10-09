@@ -8,7 +8,7 @@ for argument in "$@"; do
       echo "Usage: collect_trigger.sh [--command start|save|discard|checkpoint|pause|resume|revert|skip|status] [--timeout SECONDS]"
       echo "Controls the existing SPD collector only (Fast DDS, localhost, ROS domain 120)."
       echo "Interactive: r=checkpoint, s=pause/resume, d=revert (no checkpoint: d twice skips), g=start, f=save."
-      echo "q/Ctrl+C exits this client only. Resume never authorizes motion; use local e with a fresh command first."
+      echo "q/Ctrl+C exits this client only. Resume never authorizes motion; use the SPD local s control."
       echo "Focus this terminal; tap only. Held-key autorepeat can confirm skip; no long-press detection."
       echo "--command works without a TTY; --timeout must be positive finite seconds (default 30)."
       echo "Acceptance is not completion. Unknown outcomes are not retried automatically."

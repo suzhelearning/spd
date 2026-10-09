@@ -1,0 +1,109 @@
+# Dry, unlubricated effective sliding coefficients; no upper bound.
+version: 1
+scene: cups
+task: unstack
+pairs:
+- materials:
+  - wood
+  - wood
+  sliding_mu: 0.6
+- materials:
+  - polyethylene
+  - polyethylene
+  sliding_mu: 0.4
+- materials:
+  - wood
+  - polyethylene
+  sliding_mu: 0.5
+- materials:
+  - wood
+  - ceramic_glaze
+  sliding_mu: 0.5
+- materials:
+  - wood
+  - unglazed_ceramic
+  sliding_mu: 0.6
+- materials:
+  - wood
+  - bare_iron
+  sliding_mu: 0.6
+- materials:
+  - polyethylene
+  - ceramic_glaze
+  sliding_mu: 0.4
+- materials:
+  - polyethylene
+  - unglazed_ceramic
+  sliding_mu: 0.5
+- materials:
+  - polyethylene
+  - bare_iron
+  sliding_mu: 0.4
+- materials:
+  - ceramic_glaze
+  - ceramic_glaze
+  sliding_mu: 0.5
+- materials:
+  - ceramic_glaze
+  - unglazed_ceramic
+  sliding_mu: 0.6
+- materials:
+  - unglazed_ceramic
+  - unglazed_ceramic
+  sliding_mu: 0.7
+- materials:
+  - ceramic_glaze
+  - bare_iron
+  sliding_mu: 0.5
+- materials:
+  - unglazed_ceramic
+  - bare_iron
+  sliding_mu: 0.6
+- materials:
+  - bare_iron
+  - bare_iron
+  sliding_mu: 0.5
+- materials:
+  - wood
+  - polyester_woven_fabric
+  sliding_mu: 0.7
+- materials:
+  - polyethylene
+  - polyester_woven_fabric
+  sliding_mu: 0.5
+- materials:
+  - ceramic_glaze
+  - polyester_woven_fabric
+  sliding_mu: 0.6
+- materials:
+  - unglazed_ceramic
+  - polyester_woven_fabric
+  sliding_mu: 0.7
+- materials:
+  - bare_iron
+  - polyester_woven_fabric
+  sliding_mu: 0.6
+- materials:
+  - wood
+  - silicone
+  sliding_mu: 0.95
+- materials:
+  - polyethylene
+  - silicone
+  sliding_mu: 0.95
+- materials:
+  - ceramic_glaze
+  - silicone
+  sliding_mu: 0.9
+- materials:
+  - unglazed_ceramic
+  - silicone
+  sliding_mu: 0.9
+- materials:
+  - bare_iron
+  - silicone
+  sliding_mu: 0.9
+- materials:
+  - polyester_woven_fabric
+  - silicone
+  sliding_mu: 0.9

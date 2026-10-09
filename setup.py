@@ -3,10 +3,13 @@ from setuptools import find_packages, setup
 setup(
     name="spd",
     version="0.1.0",
-    description="External joint command driven simulation data collection",
+    description="WebXR dexterous simulation collection and replay",
     packages=find_packages("src"),
     package_dir={"": "src"},
-    package_data={"web_replay": ["static/*", "static/vendor/*"]},
+    package_data={
+        "web_replay": ["static/*", "static/vendor/*"],
+        "webxr": ["static/*", "static/vendor/three/*"],
+    },
     install_requires=[
         "numpy",
         "PyYAML",
@@ -18,6 +21,7 @@ setup(
         "trimesh",
         "coacd",
         "spd-envs",
+        "aiohttp>=3.11,<4",
     ],
     zip_safe=False,
     entry_points={

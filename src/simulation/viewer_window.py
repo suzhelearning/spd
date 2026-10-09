@@ -11,6 +11,9 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 
 from interfaces.keyboard_control import CONTROL_KEYS
+from .split_view import _viewport_widths
+
+_EDITOR_KEYS = frozenset(("m", "up", "down", "left", "right", "enter"))
 
 
 class ViewerWindow:
@@ -40,18 +43,6 @@ class ViewerWindow:
         self._task_fonts: dict[int, Any] = {}
         self._hand_ghost_target: np.ndarray | None = None
         self._hand_ghost_label = ""
-        if model is not None:
-            arm_bodies = {
-                f"{link}_{side}"
-                for side in ("L", "R")
-                for link in ("Base", *(f"Link{i}" for i in range(1, 8)), "TCP_Link")
-            }
-            for geom_id in range(model.ngeom):
-                body_name = model.body(int(model.geom_bodyid[geom_id])).name
-                # Group 1 contains visual meshes; collision geometry is untouched.
-                if (model.geom_group[geom_id] == 1
-                        and (body_name in arm_bodies or body_name.startswith(("l_", "r_")))):
-                    model.geom_rgba[geom_id, 3] = 0.45
 
     @property
     def closed(self) -> bool:
@@ -119,7 +110,7 @@ class ViewerWindow:
                 self._joint_control("q")
             elif self._shutdown is not None:
                 self._shutdown()
-        elif name in CONTROL_KEYS and self._joint_control is not None:
+        elif (name in CONTROL_KEYS or name in _EDITOR_KEYS) and self._joint_control is not None:
             self._joint_control(name)
 
     def set_task(self, title_zh: str, goal_zh: str) -> None:
@@ -249,10 +240,10 @@ class ViewerWindow:
         if label_font is not None:
             label_y = header_height - label_height
             draw.line((0, label_y, width, label_y), fill=(64, 76, 91))
-            half = width // 2
+            left_width, separator, right_width = _viewport_widths(width, self.split_view)
             for x, label_width, text in (
-                (0, half, "左侧：自由视角（拖动旋转／平移，滚轮缩放）"),
-                (half, width - half, "右侧：固定头部视角"),
+                (0, left_width, "左侧：自由视角（拖动／滚轮）"),
+                (left_width + separator, right_width, "右侧：固定头部视角"),
             ):
                 if label_width <= 0:
                     continue

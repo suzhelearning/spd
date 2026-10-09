@@ -14,6 +14,15 @@ import numpy as np
 _NO_FRAME = object()
 
 
+def _viewport_widths(width: int, split_view: bool) -> tuple[int, int, int]:
+    """Share free-view, separator and fixed-view widths with the header."""
+    if not split_view:
+        return width, 0, 0
+    separator = min(2, width)
+    left_width = (width - separator) // 3
+    return left_width, separator, width - separator - left_width
+
+
 class SplitViewRenderer:
     """The physics owner submits snapshots; only the worker touches GLFW/GL.
 
@@ -64,6 +73,12 @@ class SplitViewRenderer:
         if self._stop.is_set():
             raise RuntimeError("a closed native viewer cannot be reopened")
         model = copy.copy(self._source_model)
+        # Operator visibility is presentation-only, never baked into trajectory models.
+        arm_bodies = {f"{link}_{side}" for side in ("L", "R")
+                      for link in ("Base", *(f"Link{i}" for i in range(1, 8)), "TCP_Link")}
+        for geom_id in range(model.ngeom):
+            if model.geom_group[geom_id] == 1 and model.body(int(model.geom_bodyid[geom_id])).name in arm_bodies:
+                model.geom_rgba[geom_id, 3] = .45
         self.submit(data, task, hud, ghost, label)
         self._thread = threading.Thread(
             target=self._run, args=(model,), name="spd-split-view", daemon=True,
@@ -162,6 +177,7 @@ class SplitViewRenderer:
             mj.mjv_defaultFreeCamera(model, left_camera)
             left_camera.orthographic = 0
             left_fovy = float(model.vis.global_.fovy)
+            head_fovy = 90.0
             right_scene = right_camera = None
             base_ids = None
             if self._split_view:
@@ -224,11 +240,23 @@ class SplitViewRenderer:
                     return px, py
                 return None
 
+            editor_keys = {
+                glfw.KEY_UP: "up", glfw.KEY_DOWN: "down",
+                glfw.KEY_LEFT: "left", glfw.KEY_RIGHT: "right",
+                glfw.KEY_ENTER: "enter", glfw.KEY_KP_ENTER: "enter",
+            }
+
             def key_callback(_window: Any, key: int, _scan: int, action: int, _mods: int) -> None:
+                nonlocal head_fovy
                 if action != glfw.PRESS:
                     return
                 if key in (glfw.KEY_ESCAPE, glfw.KEY_Q):
                     request_close("escape" if key == glfw.KEY_ESCAPE else "q")
+                elif self._split_view and key in (glfw.KEY_LEFT_BRACKET, glfw.KEY_RIGHT_BRACKET):
+                    delta = 5.0 if key == glfw.KEY_RIGHT_BRACKET else -5.0
+                    head_fovy = min(175.0, max(5.0, head_fovy + delta))
+                elif key in editor_keys:
+                    self._on_key(editor_keys[key])
                 elif 0 <= key < 128:
                     self._on_key(chr(key).lower())
 
@@ -324,8 +352,10 @@ class SplitViewRenderer:
                     self._stop.wait(0.05)
                     continue
                 _, task, hud, ghost, label = packet
-                new_header_key = (width, height, task, hud, label)
+                new_header_key = (width, height, task, hud, label, head_fovy)
                 if new_header_key != header_key:
+                    if self._split_view:
+                        hud = (*hud, ("固定视角 FOV", f"{head_fovy:g}°；[ 缩小 / ] 放大，每次 5°"))
                     header = self._render_header(width, height, task, hud, label)
                     if (
                         not isinstance(header, np.ndarray) or header.dtype != np.uint8
@@ -337,8 +367,7 @@ class SplitViewRenderer:
                     header_key = new_header_key
                 header_height = header_pixels.shape[0]
                 view_height = height - header_height
-                separator = 2 + width % 2 if self._split_view else 0
-                left_width = (width - separator) // 2 if self._split_view else width
+                left_width, separator, right_width = _viewport_widths(width, self._split_view)
                 layout = (width, height, header_height, left_width)
                 if left_width <= 0:
                     self._stop.wait(0.05)
@@ -364,7 +393,7 @@ class SplitViewRenderer:
                     right_camera.distance = 1.0
                     right_camera.azimuth = 0.0
                     right_camera.elevation = -35.0
-                    model.vis.global_.fovy = 70.0
+                    model.vis.global_.fovy = head_fovy
                     mj.mjv_updateScene(
                         model, data, options, perturb, right_camera,
                         mj.mjtCatBit.mjCAT_ALL, right_scene,
@@ -380,7 +409,7 @@ class SplitViewRenderer:
                     if ghost is not None:
                         ghost_renderer.draw(right_scene, ghost, start_index=right_scene.ngeom)
                     mj.mjr_render(
-                        mj.MjrRect(left_width + separator, 0, left_width, view_height),
+                        mj.MjrRect(left_width + separator, 0, right_width, view_height),
                         right_scene, context,
                     )
                     model.vis.global_.fovy = left_fovy

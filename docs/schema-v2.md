@@ -2,7 +2,7 @@
 
 ## 范围与迁移
 
-在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
+在线仿真记录可独立恢复的完整场景物理轨迹；新文件另外记录实际应用的关节位置目标 `robot_target`，不保存原始网络包、完整 `ctrl` 数组或 RGB。WebXR 输入、相对绑定及 IK 由 `webxr.WebXRBridge`、`pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排。旧 state-only 文件与包含目标的文件均可恢复。原有 `offline_rendering` 从记录状态逐帧生成完整渲染伴随文件，不执行训练准备。
 
 旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
 
@@ -55,6 +55,7 @@ episode_<UUID>.h5
     ├── qvel                       float64[N,nv]
     ├── robot_qpos                 float64[N,54]
     ├── robot_qvel                 float64[N,54]
+    ├── robot_target               可选 float64[N,54]，新本地采集写入已应用的绝对关节位置目标
     ├── hand_contact               bool[N,2]
     ├── object_pose                float64[N,O,7]，仅 O>0
     ├── hand_object                bool[N,2,O]，仅 O>0
@@ -154,9 +155,9 @@ pixi run replay_episode /path/to/episode_<UUID>.h5 --expected-model-sha256 <SHA2
 
 replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
 
-这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。后续离线渲染应从记录的实际状态逐帧渲染，而不是重跑目标控制来猜物体轨迹。
+这是独立状态重建，不是恢复原控制循环的检查点：即使新文件含robot_target，也未保存完整ctrl、外加力、求解器warmstart等全部推进历史。离线渲染必须从实际状态逐帧恢复，而不是重跑目标控制来猜物体轨迹。
 
-本版实现进程内检查点／回退及读取后的训练视觉增强，但不实现采后接触裁剪、30 Hz 重采样或动作标签。旧 align_30hz／filter_contacts 入口已移除；离线渲染逐行保留源帧，不代替时间网格处理。训练序列拒绝跨回退／重绑定边界，不得把未来实测 qpos 伪称原始命令。CONTROL-TYPE approach／alignment／grasp／insertion 辅助及其单独标注是**未来计划，尚未实现**；当前提示仅为任务／状态／检查点／手指等待，现有恢复／flags 不是这些辅助动作标签。
+本版实现进程内检查点／回退、完整帧离线渲染与原有读取后的视觉增强，不提供接触裁剪、30 Hz 重采样、未来动作样本或训练文件导出。可选 robot_target 是已应用目标的原始记录，不代表有训练准备入口。旧 align_30hz／filter_contacts 入口保持移除。读取序列仍拒绝跨回退／重绑定边界，不得把未来实测 qpos 伪称原始命令。CONTROL-TYPE 动作辅助和未经验证的左右对称增强没有实现。
 
 ## 离线渲染伴随文件（render schema 2）
 

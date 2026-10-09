@@ -30,7 +30,8 @@ int run(const char* profile,const char* model,bool continuous_follow,bool collec
   }
   robot.forward();
   DualArmController controller(robot,cfg);
-  SimulationRecovery recovery(cfg,{controller.motionLimits(sides[0]),controller.motionLimits(sides[1])},home,.005,
+  const double control_period=collection_session?1.0/60.0:.005;
+  SimulationRecovery recovery(cfg,{controller.motionLimits(sides[0]),controller.motionLimits(sides[1])},home,control_period,
                               continuous_follow?.05:.3);
   auto state=[&]() {return SimulationRecovery::Pair{controller.referenceState(sides[0]),controller.referenceState(sides[1])};};
   auto stop=[&](bool homing) {
@@ -114,7 +115,7 @@ int run(const char* profile,const char* model,bool continuous_follow,bool collec
     } else if(op==2) {
       check(recovery.teleop(),"solve outside TELEOP");
       targets.left_stale=targets.right_stale=now-received>.045;
-      const auto result=controller.step(targets,.005);
+      const auto result=controller.step(targets,control_period);
       accepted=result.accepted;
       // Preserve the accepted controller's bounded braking output on rejection.
       if(accepted)last_live_received=received;

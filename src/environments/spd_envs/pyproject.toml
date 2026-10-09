@@ -7,7 +7,7 @@ name = "spd-envs"
 version = "0.1.0"
 description = "Deterministic MuJoCo scenes and task environments for SPD simulation collection"
 requires-python = ">=3.11"
-dependencies = ["numpy", "mujoco>=3.12,<3.13"]
+dependencies = ["numpy", "mujoco>=3.12,<3.13", "PyYAML"]
 
 [project.scripts]
 validate_scenes = "spd_envs.validate:main"
@@ -16,4 +16,4 @@ validate_scenes = "spd_envs.validate:main"
 include = ["spd_envs*"]
 
 [tool.setuptools.package-data]
-spd_envs = ["assets/**/*.json", "assets/**/*.obj", "assets/**/*.png"]
+spd_envs = ["assets/**/*.json", "assets/**/*.obj", "assets/**/*.png", "defaults/*.yaml"]

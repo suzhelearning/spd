@@ -299,6 +299,13 @@ class CollectionSession:
             elif self.state == "recording" and not self.executor.mailbox.enabled:
                 self._abort("Control disabled")
 
+    def control_due(self, next_tick: int) -> bool:
+        """Apply 60 Hz targets on the same physical ticks that will be recorded."""
+        stride = PHYSICS_HZ // self.config.state_rate_hz
+        if self.state == "recording":
+            return self._first_tick is None or (next_tick - self._first_tick) % stride == 0
+        return next_tick % stride == 0
+
     def tick(self, step: Any, *, recovery: int = 0, control_flags: int = 0) -> None:
         """Aggregate interval quality and recovery (4=tracking-loss rebind)."""
         if self.state != "recording":

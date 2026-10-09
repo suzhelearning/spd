@@ -36,7 +36,7 @@ _REGIONS = {"left": slice(14, 34), "right": slice(34, 54)}
 _FRESH_NS = 45_000_000
 _STABLE_NS = 100_000_000
 _DROPOUT_NS = 120_000_000
-_PERIOD = .005
+_PERIOD = 1. / 60.
 
 
 @dataclass(frozen=True, slots=True)

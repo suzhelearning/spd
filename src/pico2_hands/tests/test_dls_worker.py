@@ -23,7 +23,7 @@ class DlsWorkerTest(unittest.TestCase):
         self.assertTrue(worker.command(4, joints, stamp)["left"]["accepted"])
         # Finish the original approach at its target, including the limit ramp.
         for _ in range(180):
-            stamp += .005
+            stamp += 1. / 60. if worker.collection_session else .005
             result = worker.solve(joints, target, source_time=stamp, received_time=stamp, now=stamp)
             self.assertTrue(all(result[s]["accepted"] for s in ("left", "right")))
             joints = np.array([result[s]["joints"] for s in ("left", "right")])
@@ -32,7 +32,7 @@ class DlsWorkerTest(unittest.TestCase):
     def stop_at_hold(self, worker, joints, stamp):
         worker.command(6, joints, stamp)
         for _ in range(200):
-            stamp += .005
+            stamp += 1. / 60. if worker.collection_session else .005
             result = worker.command(7, joints, stamp)
             joints = np.array([result[s]["joints"] for s in ("left", "right")])
             if result["left"]["status"] == "HOLD":
@@ -105,15 +105,15 @@ class DlsWorkerTest(unittest.TestCase):
             joints, target, stamp = self.settled_tracking(worker)
             target[:, 0] += .04
             positions = []
-            for _ in range(15):
-                stamp += .005
+            for _ in range(5):  # Interrupt after ~80 ms, before reaching the new target.
+                stamp += 1. / 60.
                 result = worker.solve(joints, target, source_time=stamp, received_time=stamp, now=stamp)
                 self.assertTrue(result["left"]["accepted"])
                 joints = np.array([result[s]["joints"] for s in ("left", "right")])
                 positions.append(joints.copy())
             self.assertGreater(np.max(np.abs(positions[-1] - positions[-2])), 1e-7)
             worker.command(6, joints, stamp)
-            stamp += .005
+            stamp += 1. / 60.
             result = worker.command(7, joints, stamp)
             self.assertEqual(result["left"]["status"], "BRAKING")
             joints = np.array([result[s]["joints"] for s in ("left", "right")])
@@ -122,14 +122,14 @@ class DlsWorkerTest(unittest.TestCase):
             self.assertTrue(resumed["left"]["accepted"])
             np.testing.assert_array_equal(resumed["left"]["joints"], joints[0])
             for _ in range(20):
-                stamp += .005
+                stamp += 1. / 60.
                 result = worker.solve(joints, target, source_time=stamp, received_time=stamp, now=stamp)
                 self.assertTrue(result["left"]["accepted"])
                 joints = np.array([result[s]["joints"] for s in ("left", "right")])
                 positions.append(joints.copy())
-            velocity = np.diff(np.asarray(positions), axis=0) / .005
-            acceleration = np.diff(velocity, axis=0) / .005
-            jerk = np.diff(acceleration, axis=0) / .005
+            velocity = np.diff(np.asarray(positions), axis=0) * 60.
+            acceleration = np.diff(velocity, axis=0) * 60.
+            jerk = np.diff(acceleration, axis=0) * 60.
             self.assertTrue(np.all(np.abs(velocity) <= np.asarray(limits["max_velocity_rad_s"]) + 1e-4))
             self.assertTrue(np.all(np.abs(acceleration) <= np.asarray(limits["max_acceleration_rad_s2"]) + 1e-3))
             self.assertTrue(np.all(np.abs(jerk) <= np.asarray(limits["max_jerk_rad_s3"]) + 1e-2))
@@ -139,7 +139,7 @@ class DlsWorkerTest(unittest.TestCase):
             joints, target, stamp = self.settled_tracking(worker)
             target[:, 0] += .03
             for _ in range(25):
-                stamp += .005
+                stamp += 1. / 60.
                 result = worker.solve(joints, target, source_time=stamp, received_time=stamp, now=stamp)
                 joints = np.array([result[s]["joints"] for s in ("left", "right")])
             retained = self.seeds()
@@ -153,7 +153,7 @@ class DlsWorkerTest(unittest.TestCase):
             result = worker.home_frozen(retained, destination, stamp)
             joints = retained
             for _ in range(1200):
-                stamp += .005
+                stamp += 1. / 60.
                 result = worker.command(7, joints, stamp)
                 joints = np.array([result[s]["joints"] for s in ("left", "right")])
                 if result["left"]["status"] == "HOME_REACHED":

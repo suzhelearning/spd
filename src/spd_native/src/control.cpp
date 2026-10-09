@@ -8,7 +8,7 @@ namespace py = pybind11;
 
 namespace {
 using SteadyClock = std::chrono::steady_clock;
-constexpr std::int64_t kDisplayPeriodNs = 50'000'000;
+constexpr std::int64_t kDisplayPeriodNs = 1'000'000'000 / 60;
 
 std::int64_t monotonic_now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -43,7 +43,10 @@ void run_loop(const py::object &app) {
         collection.attr("poll")();
         const auto now = monotonic_now_ns();
         if (!collection.attr("physics_paused").cast<bool>()) {
-            executor.attr("apply_pending")(py::arg("now_ns") = now);
+            const auto next_tick = app.attr("plant").attr("tick").cast<std::int64_t>() + 1;
+            if (collection.attr("control_due")(next_tick).cast<bool>()) {
+                executor.attr("apply_pending")(py::arg("now_ns") = now);
+            }
             if (!executor.attr("mailbox").attr("enabled").cast<bool>() ||
                 (executor.attr("hold_mask").cast<unsigned>() & 1U)) {
                 control.attr("poll")();
@@ -57,7 +60,7 @@ void run_loop(const py::object &app) {
         app.attr("collection_ros").attr("heartbeat")();
         if (now >= display_deadline) {
             app.attr("_update_display")(now);
-            display_deadline = now + kDisplayPeriodNs;
+            display_deadline += ((now - display_deadline) / kDisplayPeriodNs + 1) * kDisplayPeriodNs;
         }
         deadline += period_ns;
         const auto remaining = deadline - monotonic_now_ns();
