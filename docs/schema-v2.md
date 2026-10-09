@@ -2,7 +2,7 @@
 
 ## 范围与迁移
 
-在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
+在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。离线处理由相邻 [data_process](../../data_process/README.md) 消费这些只读原始文件，本规范不定义其产物。
 
 旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
 
@@ -118,7 +118,7 @@ MJB 恢复严格要求记录时相同的 MuJoCo 版本，并重新核验字段�
 
 材料策略 numeric 为 `[2, ...64 个 row-major 系数]`，材料顺序为未知、木、PE、釉面陶瓷、未上釉陶瓷、裸铁、涤纶织物、硅胶；对称矩阵的 `-1` 保留旧混合规则。`geom_user` 保留字段 0／1 的实例／类别，字段 2／3 增加材料／区域 ID（区域 0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶，掌面／指腹依 body 局部外法线左 `Y<0`、右 `Y>0` 分类；背侧和裸壳不赋硅胶。陶瓷底部区域只在外法线局部 `Z<-0.5` 时为未上釉，其余釉面。这不改变碰撞几何、惯量、过滤或法向接触参数，只修改批准接触的两个切向摩擦系数；未知材料、织物—织物、硅胶—硅胶仍保留旧值。
 
-**运行时约定：** 新快照的物理推进、续跑或材料求解力诊断需要匹配版本的 MuJoCo 和材料感知 `_spd_native`；调用 `material_step(model, data)` 推进、`material_forward(model, data)` 重建材料约束／计算力，原生 `Physics` 同样执行策略。带策略的刚体模型支持 Euler／implicit／implicitfast，RK4 或启用 EFM 的模型明确拒绝。MJB 自带矩阵与区域标签，无须源场景／资产，但裸 `mj_step/mj_forward` 不解释这些 custom numeric／`geom_user` 字段，不能等价推进新模型。只读回放／离线渲染仅恢复记录姿态，仍用普通 `mj_forward`、不推进物理、不引入 ROS 原生依赖，也不提供新策略的求解力。旧模型不含此策略时原生接口直接使用普通 MuJoCo step／forward，历史行为不变。
+**运行时约定：** 新快照的物理推进、续跑或材料求解力诊断需要匹配版本的 MuJoCo 和材料感知 `_spd_native`；调用 `material_step(model, data)` 推进、`material_forward(model, data)` 重建材料约束／计算力，原生 `Physics` 同样执行策略。带策略的刚体模型支持 Euler／implicit／implicitfast，RK4 或启用 EFM 的模型明确拒绝。MJB 自带矩阵与区域标签，无须源场景／资产，但裸 `mj_step/mj_forward` 不解释这些 custom numeric／`geom_user` 字段，不能等价推进新模型。只读回放仅恢复记录姿态，仍用普通 `mj_forward`、不推进物理，也不提供新策略的求解力。旧模型不含此策略时原生接口直接使用普通 MuJoCo step／forward，历史行为不变。
 
 ## 生命周期与错误
 
@@ -154,53 +154,10 @@ pixi run replay_episode /path/to/episode_<UUID>.h5 --expected-model-sha256 <SHA2
 
 replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
 
-这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。后续离线渲染应从记录的实际状态逐帧渲染，而不是重跑目标控制来猜物体轨迹。
+这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。消费者必须从记录的实际状态开始，不能重跑目标控制来猜测物体轨迹。
 
-本版实现进程内检查点／回退及读取后的训练视觉增强，但不实现采后接触裁剪、30 Hz 重采样或动作标签。旧 align_30hz／filter_contacts 入口已移除；离线渲染逐行保留源帧，不代替时间网格处理。训练序列拒绝跨回退／重绑定边界，不得把未来实测 qpos 伪称原始命令。CONTROL-TYPE approach／alignment／grasp／insertion 辅助及其单独标注是**未来计划，尚未实现**；当前提示仅为任务／状态／检查点／手指等待，现有恢复／flags 不是这些辅助动作标签。
+采集侧已实现进程内检查点／回退，不实现采后接触裁剪、30 Hz 重采样或动作标签。旧 `align_30hz`／`filter_contacts` 入口已移除；CONTROL-TYPE approach／alignment／grasp／insertion 辅助及其单独标注是**未来计划，尚未实现**。当前提示仅为任务／状态／检查点／手指等待，现有恢复／flags 不是这些辅助动作标签。
 
-## 离线渲染伴随文件（render schema 2）
+## 后处理交接
 
-渲染产物为独立的 `episode_<ID>.render.h5`，不是采集 schema-v2 的新字段。源完整轨迹及同目录 dataset_config.json 必须可用；服务器只需匹配 MuJoCo 精确版本，无须采集主机上的源 XML、纹理目录或 ROS。
-
-相机逻辑名固定为 top、left_wrist、right_wrist。新安装定义来自 version-2 `config/sim_cameras.yaml`，三个相机都挂到非 world 的机器人 body 局部坐标系；光轴为相机 -Z，图像上方为 +Y。批次配置 `camera_config_path` 或 CLI `--camera-config` 可指定覆盖文件，启动时读取一次，先校验原始内嵌模型，再仅覆盖内存模型的相机位置、旋转与挂载。未指定覆盖时使用原内嵌相机，源 HDF5 始终只读。生效配置的 calibration_revision 缺失／空白／含 provisional 时默认拒绝；只有显式诊断开关允许预览，结果标为 diagnostic_only，不把临时位姿升级为正式标定。
-
-```text
-episode_<ID>.render.h5
-├── @render_schema_version = 2
-├── @complete
-├── @source_sha256 / @model_sha256 / @source_metadata_sha256
-├── @settings_sha256 / @metadata_sha256
-├── metadata                       scalar canonical UTF-8 JSON
-├── frames/
-│   ├── source_index               int64[N]，逐行 0..N-1
-│   ├── tick                       int64[N]，等于源轨迹
-│   ├── sim_time                   float64[N]，等于源轨迹
-│   └── monotonic_ns               int64[N]，等于源轨迹
-└── cameras/{top,left_wrist,right_wrist}/
-    ├── jpeg                       vlen uint8[N]，RGB JPEG
-    ├── instance_id                int32[N,H,W]，无损 LZF
-    ├── position                   float64[N,3]，相机世界位置
-    └── rotation                   float64[N,3,3]，camera-to-world 旋转
-```
-
-默认 W=224、H=168、JPEG quality=90，subsampling=0；尺寸、编码设置及存在时的完整相机覆盖配置快照进入 metadata 和 settings_sha256，修改任意安装位姿即改变设置身份。无覆盖时不加入 camera_config 空值，保留已有内嵌相机产物的设置身份。所有 dataset 带逐行内容 SHA-256；JPEG 摘要包含每帧长度，固定宽度数组按连续 little-endian 字节累积。发布前和复用时流式验证实际 JPEG 解码、类型／维度、掩码 ID、时钟关联、变换矩阵与校验和，不一次读入整段图像。
-
-metadata 包含源身份、实际生效的相机数组与配置及临时／已确认状态、渲染配置与引擎版本、实际 GL vendor／renderer／version、GPU EGL 设备号、实例映射、恢复误差摘要。source_sha256、model_sha256、source_metadata_sha256 始终指向原轨迹／原 MJB／原元数据，不伪装成修改后的模型快照。相机世界变换从每帧 mj_forward 后的 cam_xpos／cam_xmat 获取，不用机器人腕部位置代替相机光学位姿。
-
-正实例 ID 复用当前 episode 的 scene_manifest.objects.instance_id，所有属于同一物体子树的外观 mesh 共享同一个 ID。0=天空或无 GEOM，-1=机器人外观（非任务 group1），-2=其他非任务环境，-3=桌子（scene_table 及 scene_detail_table_* 外观，包括桌腿）。盘架／杯架／箱体／柜体／各抽屉仍使用正 ID。实例 ID 不意味着跨 episode 追踪同一个实物。底层 MuJoCo 分割返回 `(object_id, object_type)`，仅 GEOM 类型可索引几何映射；不能将 RGB 编码色号直接当实例 ID。schema 1 混合了桌子和环境，不兼容新的增强语义，必须从原轨迹重新渲染到新输出路径，禁止伪造新版本号。
-
-源文件只读，并在渲染／复用前后核验整文件 SHA-256。每帧恢复还会检查机器人状态和任务物体位姿；不调用 mj_step。每个 episode 的一个 EGL worker 顺序渲染三视角，帧间队列不传输图像。
-
-独占 `.lock` 保护目标文件，先写 `.render.partial.h5`，完成并校验后通过同目录硬链接无覆盖发布，再移除 partial。失败不覆盖已有完整文件；已存在 partial／lock 需人工确认无活动进程后处理。中断不自动重试，完整结果仅在源和设置身份匹配、全部内容校验通过后复用。改变分辨率、相机／源模型或编码设置应使用新输出目录。
-
-不同 GPU／驱动上下文的光栅化和 JPEG 不保证字节级一致，输出记录实际环境用于溯源。正常恢复误差容限为 1e-6，复用时相机变换比较为 1e-12；哈希保证已有输出未改变，不是跨硬件图像完全相同的承诺。
-
-## 读取后的训练视觉增强
-
-`training_data.RenderedSequence(render, source_path=...)` 只读已完成的 render schema 2 和关联原轨迹，构造时校验源 SHA-256，读取前后检查文件身份／大小／时间签名。每次读取自行开关 HDF5 文件，不把句柄带入 fork worker；支持上下文管理器。元数据／选中帧校验不替代渲染器的完整像素校验和与重建验证。
-
-`read(indices, augmentation=VisualAugmenter(...), seed=...)` 要求非空严格递增帧索引，不改变帧率、不补帧。边界集合是所有 `rewind.frame_count`，加上 `recovery_transition[i] != 0` 且与前一帧不同的每个索引（首帧前视为 0）；即每个非零恢复阶段的起点。若 `first_index < boundary <= last_index` 就拒绝读取，非连续选帧或过滤中间过渡帧不能绕过；从边界本身开始的同段序列允许。恢复回到 0 本身不新增边界，质量 flags 改变也不是额外分段规则。
-
-返回 RGB `[T,C,H,W,3]`、整型实例掩码 `[T,C,H,W]`、source_index／原时钟、全部轨迹状态、恢复／回退／control_flags 标签和相机位姿。旧缺失恢复标签保持缺失，`reader.recovery_annotated=false`；旧缺失 flags 时 `events["control_flags"]` 为 uint8 零占位，且 `reader.control_flags_annotated=false`，必须保留此 provenance，不能当作经过标注的正常输入。没有动作监督输出。
-
-`VisualAugmenter` 接受 uint8 `(...,H,W,3)` 和对应整型掩码。物体按正实例 ID 独立采样颜色；桌子 -3 与背景 -2／0 独立选择纹理；机器人 -1 不参与变换。一个 seed 的参数在时序和多相机间共享，明暗细节保留，输入数组／掩码不被就地修改。支持程序化纹理和用户 RGB 纹理库，计划记录 seed、各实例颜色、表面参数和纹理哈希。当前为 CPU NumPy 实现；纹理在归一化图像坐标中共享，不等同于几何投影纹理。CLI `pixi run spd-augment` 只创建新 PNG 预览及打印参数，不写回 HDF5。
+render schema 2 和训练读取规范位于相邻 [data_process 文档](../../data_process/docs/render-schema-v2.md)，不属于本在线原始轨迹协议。VLA 导出与 Q50 压缩仍未实现，约定仅见 [data_process VLA 规范](../../data_process/docs/schema-vla.md)。

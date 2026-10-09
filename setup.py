@@ -25,8 +25,6 @@ setup(
             "spd-model = description.model_compiler.cli:main",
             "spd-scene = simulation.scene:main",
             "spd-collect-trigger = data_collector.trigger:main",
-            "spd-render = offline_rendering.cli:main",
-            "spd-augment = training_data.cli:main",
             "validate_episode = data_collector.episode:validate_main",
             "replay_episode = data_collector.replay:main",
             "spd-web = web_replay.cli:main",

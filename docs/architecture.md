@@ -18,8 +18,8 @@ SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理
        模型快照 + .partial.h5 → 校验 → .h5
                      ↓
        replay_episode：独立逐帧恢复（不推进物理、不渲染）
-                     ↓
-       offline_rendering：按 episode 分配到 EGL GPU，生成 RGB／稳定实例掩码
+                              ↓
+       相邻 data_process：离线处理
 ```
 
 正式入口包括统一 Quest／PICO 裸手采集、`spd-sim --height-m HEIGHT`，以及模型、场景、数据检查命令。无第二套控制终端、旧双进程兼容入口、独立停止命令、HDF5 命令发布或 Zenoh 遥操入口。`replay_episode` 从内嵌模型恢复状态，不把历史观测作为合成发布目标。
@@ -34,15 +34,14 @@ SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理
 | `tools/wuji_hand_native/` | 独立固定 Hand2 环境、重定向桥接与模型 |
 | `src/interfaces/` | Python wire 工具、终端键盘输入与 ROS 消息定义 |
 | `src/simulation/` | 物理线程 `CollectionControl`、模型准备、原生编排、Viewer 与场景／Home 生命周期 |
-| `src/cameras/` | 机器人部件局部相机位姿、模型挂载／内存覆盖与 RGB 获取 |
+| `src/cameras/` | 机器人部件局部相机位姿与模型挂载 |
 | `src/data_collector/` | 配置、采集状态机、ROS 控制、完整物理轨迹与模型快照、独立恢复验证 |
-| `src/offline_rendering/` | spawn 多 GPU 调度、原生 EGL、逐帧恢复渲染与输出校验 |
 | `src/description/` | manifest、模型编译与资源定位 |
 | `src/environments/spd_envs/` | 独立环境包，任务注册、随机化、场景生成与重置检查 |
 | `src/tianji_wuji2/tianji_wuji2/assets/` | 原始 URDF、网格和碰撞资产 |
 | `src/tianji_wuji2/tianji_wuji2/generated/` | 编译后的可加载模型与 manifest |
 | `src/interfaces/tianji_spd_interfaces/` | ROS 2 `JointCommand.msg` 与接口构建元数据 |
-| `config/` | 采集、临时预览相机和 `render_server.yaml` 八卡渲染配置 |
+| `config/` | 采集与相机配置 |
 | `bash/` | 统一裸手／仿真前台启动与只读状态查询入口 |
 | `data/` | 采集产物和已有样本，不随代码清理删除 |
 
@@ -94,7 +93,7 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 
 环境注册 18 个任务。首次选择遵守 `--task`／`--scene`，`--seed` 可复现序列。人工暂停中的保存／丢弃实际完成后，`next_task_after_episode` 从完整目录重抽任务与新 seed、布局及桌面；新模型直接 Home、零速度，不继承旧机器人状态，不经过准备区或 Home 运动。清空旧授权、检查点与排队输入，等待新的 `r` 开段。文件结束失败不切换，且每个完成事件只推进一次。GLFW 换场景先关闭并 join 旧 renderer，再打开新窗口，旧窗口回调由场景 generation 拒绝。
 
-先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。每次生成场景直接均匀采样桌高 0.70–0.80 m、近侧桌沿距离 0.10–0.30 m，生成后固定；物体和固定盘架、杯架、箱体、柜体同步定位，桌腿伸缩而脚垫仍落地。普通物体通过 free joints、重力、摩擦与真实接触运动，三个抽屉通过被动有界 slide joints 运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放，RGB 来自该状态渲染。
+先验证基础机器人资产，再组合任务模型，不覆盖基础 MJCF。每次生成场景直接均匀采样桌高 0.70–0.80 m、近侧桌沿距离 0.10–0.30 m，生成后固定；物体和固定盘架、杯架、箱体、柜体同步定位，桌腿伸缩而脚垫仍落地。普通物体通过 free joints、重力、摩擦与真实接触运动，三个抽屉通过被动有界 slide joints 运动。场景不包含自动策略或成功评分。物理状态不是命令 qpos 回放。
 
 精细场景由 `SceneBuildResult` 组合外观资产、实体和物理材质策略：`abc_assets.py` 读取环境包自带的六种 ABC 瓶子网格、贴图及分块碰撞，`visual_details.py` 生成其余物体的圆角／旋转曲面、材质和细节；`physical_materials.py` 提供表面标签与批准的对称有效滑动摩擦矩阵，完整数值见 [README 材质说明](../README.md)。独立场景、初始化接触检查和机器人合并场景共用同一策略，不更改原 geom 摩擦、不增加显式 geom 配对、不改变碰撞过滤或机器人排除。局部资产路径从环境包位置解析，wheel 包含所需 OBJ／PNG／JSON，运行时不依赖原 ABC 目录。ABC 源资产与变换、导出文件哈希写入 provenance；公开再分发权利尚未确认。
 
@@ -108,7 +107,7 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 
 初始碰撞检查不豁免套杯／柜体等组件；桌面包围盒净空覆盖抽屉完整行程和把手。`sampled_values.affordances` 描述盘架 50mm 槽、杯柄与切向挂杆、箱内空间、套叠间隙和抽屉内部坐标，可用于物理探针。此为任务功能近似与受控验证，不宣称论文 CAD 精确复刻或完整机器人操作成功率。
 
-模型合并先解析原模型资源，再深拷贝场景资产和实体；重复资产名明确拒绝，不修改或消耗原 SceneBuildResult。重复合并输出一致。新模型的网格、纹理和相机继续由 schema-v2 的 MJB 快照完整携带，状态恢复与场景精细化解耦；离线渲染由独立模块消费这些快照。
+模型合并先解析原模型资源，再深拷贝场景资产和实体；重复资产名明确拒绝，不修改或消耗原 SceneBuildResult。重复合并输出一致。新模型的网格、纹理和相机继续由 schema-v2 的 MJB 快照完整携带，状态恢复与场景精细化解耦；已完成轨迹可由相邻 [data_process](../../data_process/README.md) 只读消费。
 
 带桌场景按 seed 随机生成桌高与桌距，不交互询问；在线 `--table-distance` 只覆盖首次场景，保存或丢弃后的新场景不沿用覆盖值。`EpisodeTasks` 默认在后续每条从全目录抽任务；`--task SCENE/TASK --repeat-task` 保持指定任务类型，每条仍抽新 seed、重采样布局／桌高／桌距。独立 `spd-scene` 的显式桌距规则不变。距离沿 +X 从底座原点到近侧桌沿测量。实际高度、距离、工作区中心、采样范围和 seed 保存到 manifest。暂停／回退不重采样；保存和丢弃完成后都生成新场景、初始化 Home、清空授权并等待 `r`。
 
@@ -126,11 +125,11 @@ Viewer 顶部使用一张中文双列图像：左侧任务名称、目标及虚�
 
 MJB 的 custom numeric `spd_material_friction` 保存版本 2 和 row-major 8×8 矩阵。材料 ID 为 0 未知、1 木、2 PE、3 釉面陶瓷、4 未上釉陶瓷、5 裸铁、6 涤纶织物、7 硅胶。`geom_user` 前两个实例／类别字段保留；字段 2 是材料 ID，字段 3 是表面区域（0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶；腕部掌面及 proximal／proximal_abd／middle 指腹只有左侧 body 局部外法线 `Y<0` 或右侧 `Y>0` 时为硅胶，背侧回退为未知材料旧摩擦。陶瓷底部区域默认釉面，仅外法线 body 局部 `Z<-0.5` 为未上釉底面，侧面不误赋底面材料。使用 body 坐标而非 geom 坐标；接触法线从 geom0 指向 geom1，第二个 geom 的外法线须反号。该近似使用既有接触，不改碰撞 mesh；旋转和 geom 顺序不改变结果。
 
-原生 `_spd_native.material_forward(model, data)`／`material_step(model, data)` 在求解前应用接触点材料系数，并重算受影响约束；仅替换 `contact.friction[0:2]`，不是求解后改显示数组。`Physics` 使用同一实现，不安装进程全局回调，也不逐步调用 Python。新模型的物理推进、续跑和材料求解力诊断必须使用该运行时；仅有 MJB 加裸 `mj_step/mj_forward` 不会应用数值／标签约定。带策略的刚体模型支持 Euler／implicit／implicitfast；RK4 和启用 EFM 的模型明确拒绝。只读回放／离线渲染仅恢复记录姿态，继续使用普通 `mj_forward`、不推进时间，也不要求 ROS 原生模块；这里的接触力不是新材料策略下的求解结果。没有此策略的旧模型完全保留普通 MuJoCo forward／step 路径，不改写历史 MJB。JSON manifest 与 MJB 同时保留材料策略和来源，源 XML／网格路径不是恢复依赖。
+原生 `_spd_native.material_forward(model, data)`／`material_step(model, data)` 在求解前应用接触点材料系数，并重算受影响约束；仅替换 `contact.friction[0:2]`，不是求解后改显示数组。`Physics` 使用同一实现，不安装进程全局回调，也不逐步调用 Python。新模型的物理推进、续跑和材料求解力诊断必须使用该运行时；仅有 MJB 加裸 `mj_step/mj_forward` 不会应用数值／标签约定。带策略的刚体模型支持 Euler／implicit／implicitfast；RK4 和启用 EFM 的模型明确拒绝。只读回放仅恢复记录姿态，继续使用普通 `mj_forward`、不推进时间，也不要求 ROS 原生模块；这里的接触力不是新材料策略下的求解结果。没有此策略的旧模型完全保留普通 MuJoCo forward／step 路径，不改写历史 MJB。JSON manifest 与 MJB 同时保留材料策略和来源，源 XML／网格路径不是恢复依赖。
 
 ## 6. 完整场景轨迹采集与恢复
 
-`config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机由独立的 version-2 `config/sim_cameras.yaml` 定义，以 parent、position（米）、rpy_deg（度）指定机器人部件上的局部安装位姿；默认 top 挂 Link_Stand，左右相机挂各自 wrist。模型装配时注入并保存这些定义，但在线采集不创建渲染器、不采 RGB。Viewer 是操作反馈，与后续训练渲染无关。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
+`config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机由独立的 version-2 `config/sim_cameras.yaml` 定义，以 parent、position（米）、rpy_deg（度）指定机器人部件上的局部安装位姿；默认 top 挂 Link_Stand，左右相机挂各自 wrist。模型装配时注入并保存这些定义，但在线采集不创建图像产物。Viewer 是操作反馈；下游处理使用自己的配置快照。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
 
 `r/s/d` 根据状态分流：待接手的 `r` 绑定开段或恢复现场；运动中的 `r` 更新检查点，`s` 人工暂停，`d` 回退；人工暂停中的 `r` 保存整条、`d` 丢弃整条、`s` 恢复运动。人工恢复直接 `_begin_bind(2)`，回退事务完成后直接 `_begin_bind(3)`，都在有效稳定输入下自动授权续采，无额外按键；普通失跟踪仍需首次 `r`。绑定处理中 `s` 可取消／暂停，磁盘保存、丢弃和回退期间普通键不排队重放。`q` 退出保留 partial，不触发保存。
 
@@ -154,26 +153,18 @@ HDF5 仅保留选中前缀和其后续采，主机单调时钟不回退。schema
 
 `CollectionRosControl` 只负责 JSON 状态序列化与心跳，由原生 rclcpp publisher 向 `/spd/collection/status` 发布可靠 transient-local 消息；不开放外部 Trigger 控制。状态包含 collector／operation、路径、帧数、physics_paused、人工 checkpoint_frames、auto_checkpoint_frames 和完成结果；0 是合法起始人工点。底层 session／recorder 管理 API 服务专用集成，不构成第二套操作者流程。
 
-采集侧已实现在线检查点／回退，不实现采后接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除；离线渲染输出当前保留轨迹的所有源帧，不代替这些处理。
+采集侧已实现在线检查点／回退，不实现采后接触裁剪或 30 Hz 样本构建。旧 `align_30hz`、`filter_contacts` 依赖已废弃契约，已移除。
 
-## 7. 八 GPU 离线渲染
+## 7. 后处理交接
 
-`pixi run -e render spd-render` 使用独立无 ROS 的 render 环境。默认部署配置选择 8 个 EGL 设备，每卡一个 spawn worker；父进程不导入 MuJoCo／GL、不加载图像。worker 在任何 native import 前设置 `MUJOCO_GL=egl`、`MUJOCO_EGL_DEVICE_ID`、`PYOPENGL_PLATFORM=egl` 和数值库线程数，再用实际 GL vendor／renderer 检查 NVIDIA 硬件与目标型号。EGL 索引不等于 CUDA_VISIBLE_DEVICES 映射，服务器必须先运行 `--check-gpus`。
+SPD 只生成和校验原始 schema-v2 轨迹。离线恢复成图像、render schema 2、训练读取和视觉增强均位于相邻 [data_process](../../data_process/README.md)，其通过显式本地依赖复用 SPD 的 `cameras.camera`、`data_collector.recorder` 和 `data_collector.trajectory`，不复制协议，也不向 SPD 添加反向依赖。
 
-所有 worker 初始化成功才派发 episode，空闲进程从共享队列取下一段。每段独立加载内嵌模型，单个 Renderer 顺序产生三视角 RGB 和实例掩码，缓冲区有界，不把像素送到父进程。每卡显存独立；workers_per_gpu 可调但不承诺线性加速。当前是原生 EGL 而不是 Warp／Madrona，不需要 CUDA 训练框架。
-
-相机逻辑名固定为 top／left_wrist／right_wrist，安装位姿由用户直接修改 `config/sim_cameras.yaml`，不硬编码到渲染器。批次 YAML 的 camera_config_path 或 CLI --camera-config 在启动时加载一次配置快照并传给 worker；原始 MJB 严格校验后，只对内存模型应用相机覆盖，缺失相机／父体或 world 挂载明确拒绝。输出保存生效的配置与相机数组，完整覆盖配置进入设置哈希，原文件／模型／元数据身份保持不变；相机配置变化不能复用旧产物。未指定覆盖时保留源模型的相机，历史 version-1 元数据仍按原快照读取。默认拒绝 provisional 或无 calibration_revision 的生效配置，显式诊断开关允许预览但输出标记 diagnostic_only；当前数值不是正式标定。
-
-渲染对原始轨迹只读，不推进物理；逐帧赋值并调用普通 `mj_forward` 恢复记录姿态，复用机器人／物体位姿一致性检查。此路径不依赖 ROS 原生模块，也不计算新材料策略的求解力；物理续跑或材料接触诊断须使用 `material_forward/material_step`。隐藏 group0／3 碰撞代理；MuJoCo 分割的 GEOM ID 通过物体子树映射成源 instance_id，同一物体的多个网格共用一个 ID。render schema 2 保留 0 天空、-1 机器人、-2 其他环境，并新增 -3 桌子；柜体、抽屉等任务物体仍用正 ID。相机世界位置、旋转矩阵及源 frame/tick/time 同行写出。
-
-结果独立为 .render.h5；独占锁、partial、完整内容校验和同目录原子无覆盖发布防止混写。源文件／模型／元数据／设置哈希决定复用，已完成输出仍须逐流校验；不匹配、损坏或残留 partial/lock 明确失败，不自动重试／覆盖。进程硬退出或启动超时清理其余自有进程，报告未确认任务；重跑可跳过校验通过的已完成段。输出格式详见 [schema-v2.md](schema-v2.md)。
-
-`training_data` 提供 NumPy CPU 读取后视觉增强：实例染色、独立桌子／背景纹理，时序与多视角共享计划，保留机器人像素、整数掩码、状态与控制质量标签。读取器要求 render schema 2 和完整源轨迹，拒绝跨 rewind 边界或进入非零 recovery_transition 新阶段的边界，即使索引跳过中间帧。旧缺失 recovery 保持缺失；旧缺失 flags 返回零占位但 `control_flags_annotated=false`，不宣称已知正常。增强不改 HDF5；旧 render schema 1 须重新渲染，不猜测桌面掩码。纹理是图像空间变换，不宣称三维材质或 GPU 增强；`pixi run spd-augment` 可生成对照图。完整像素校验仍由 renderer 负责。
+详见 [data_process 架构](../../data_process/docs/architecture.md)、[render schema 2 与训练读取规范](../../data_process/docs/render-schema-v2.md) 和 [VLA 规范](../../data_process/docs/schema-vla.md)。VLA 导出与 Q50 压缩仍未实现。
 
 ## 8. 研究与验证边界
 
 论文参考为 [Pre-training Visual Dexterity in Simulation](papers/2608.15917v1.pdf) §3.1、附录 A.1。论文物理 480 Hz、控制／流传输／记录 60 Hz、训练网格 30 Hz 是不同阶段的契约，不等同于当前实现各流频率或机器性能保证。
 
-原生构建和 41 项定向回归通过，后续 Home 暂停、场景交接和自动快照分支清理有补充验证。真实 TCP 合成输入流程保留 91 帧，恢复标签 0/1/3/4；实际图形 CLI 和原生循环完成终端 r/s/d 操作、244 帧成功文件、准备场景 Home、下一任务及正常退出。真实 EGL render/source 对验证了训练读取拒绝跨重绑定序列、兼容旧标签来源。硬件安全、真实头显跟踪、硬实时和八卡吞吐仍未验证；相机最终标定、训练收益与论文等价性不能由模块存在推断。PICO v1 无显式 tracking-origin epoch；连接／源时钟异常和大幅姿态跳变可撤销参考，但同连接小幅坐标重置无法可靠区分正常运动。
+原生构建和 41 项定向回归通过，后续 Home 暂停、场景交接和自动快照分支清理有补充验证。真实 TCP 合成输入流程保留 91 帧，恢复标签 0/1/3/4；实际图形 CLI 和原生循环完成终端 r/s/d 操作、244 帧成功文件、准备场景 Home、下一任务及正常退出。硬件安全、真实头显跟踪与硬实时仍未验证；相机最终标定、训练收益与论文等价性不能由模块存在推断。PICO v1 无显式 tracking-origin epoch；连接／源时钟异常和大幅姿态跳变可撤销参考，但同连接小幅坐标重置无法可靠区分正常运动。
 
 **未来计划：CONTROL-TYPE 辅助，尚未实现。** approach／alignment／grasp／insertion（接近／对齐／抓取／插入）辅助需作为独立控制类型设计和标注，不能与纯人工动作混标。当前 Viewer 只有任务、状态、检查点和手指等待提示，不含上述辅助策略。

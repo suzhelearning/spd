@@ -28,15 +28,12 @@ coacd = "==1.0.14"
 [environments]
 default = { features = ["sim"], solve-group = "default" }
 ros-jazzy = { features = ["sim", "ros-jazzy"], solve-group = "default" }
-render = { features = ["sim"], solve-group = "default" }
 teleop-native = { features = ["teleop-native"], no-default-feature = true, solve-group = "teleop-native" }
 
 [tasks]
 spd-envs-check = "validate_scenes"
 spd-model = "python -m description.model_compiler.cli --urdf src/tianji_wuji2/tianji_wuji2/assets/tianji_wuji2.urdf --output src/tianji_wuji2/tianji_wuji2/generated --cache src/tianji_wuji2/tianji_wuji2/collision_cache --raw-collisions"
 spd-scene = "pixi run -e ros-jazzy bash bash/run_native_python.sh -m simulation.scene"
-spd-render = "python -m offline_rendering"
-spd-augment = "python -m training_data"
 spd-web = "python -m web_replay"
 spd-quest-receive = "python tools/hand_tracking/quest_hand_tracking_receiver.py"
 spd-quest-teleop = "bash bash/run_quest_hand_sim.sh"
