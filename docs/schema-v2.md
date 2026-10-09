@@ -1,19 +1,20 @@
 # 完整场景物理轨迹 HDF5 Schema v2
 
-## 范围与迁移
+本规范定义 SPD 在线采集的原始 HDF5 轨迹：每段保存可独立重建的完整场景物理状态。它不保存 ROS 命令、执行器目标 `ctrl`、actions 或 RGB。控制操作见 [Pipeline.md](../Pipeline.md)。
 
-在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。离线处理由相邻 [data_process](../../data_process/README.md) 消费这些只读原始文件，本规范不定义其产物。
+## 兼容性
 
-旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
+- schema-v1 的机器人 qpos＋JPEG 文件不转换、覆盖或删除。
+- `recovery_transition=4` 和可选 `control_flags` 是 schema-v2 的 `collection_events` 扩展，不改变 trajectory 或每日配置。读取器必须接受值 `4`，不能将其判为损坏或改写为 `0`。
+- 旧文件缺少恢复字段时报告 `recovery_annotated=false`；缺少质量字段时报告 `control_flags_annotated=false`，不能据此断言旧输入正常。
 
 ## 采样与时钟
 
-- MuJoCo 物理步长严格为 1/480 秒；完整轨迹每 8 个物理步采一帧，仿真时间 60 Hz。
-- 首帧来自后台准备完成后的第一个物理步，不补写开始前的缓存。
-- `tick` 是会话物理步编号，`sim_time` 是 MuJoCo 绝对仿真秒数，`monotonic_ns` 是采集主机绝对单调纳秒。在线回退恢复检查点 tick／仿真时间并删除失败后缀；保留文件内的三条时间轴仍严格递增，主机单调时钟从不回退。
-- 相邻帧 tick 差必须恰好为 8，sim_time 差为 1/60 秒（允许浮点累积误差），monotonic_ns 严格递增。实际墙钟频率由 monotonic_ns 统计；不得伪造固定墙钟间隔。
-- 会话逐步检测漏步，writer 检测采样间隔与非有限状态；重复或缺失帧报错保留 partial，不覆盖、不补零、不静默跳过。
-- 采样不等待新输入帧；短时缺口的有界制动仍记录实际状态及质量标志。人工暂停、回退或持续失跟踪自动暂停冻结整个物理世界和采样，恢复后延续原采样相位；不补写冻结区间，主机时钟保留真实等待。源／求解 worker 故障 fail-closed，未完成段保留 partial。
+- MuJoCo 物理步长为 1/480 秒；每 8 个物理步采一帧，仿真时间为 60 Hz。首帧是后台准备完成后的第一个物理步，不补写此前缓存。
+- `tick` 是会话物理步编号，`sim_time` 是 MuJoCo 绝对仿真秒，`monotonic_ns` 是采集主机绝对单调纳秒。在线回退会恢复检查点的 tick/仿真时间并删去失败后缀；已保留帧的三条时间轴仍严格递增，主机单调时钟从不回退。
+- 相邻帧 tick 必须相差 8，sim_time 必须相差 1/60 秒（允许浮点累积误差），`monotonic_ns` 必须严格递增。墙钟频率只能从 `monotonic_ns` 统计，不得伪造固定间隔。
+- 会话逐步检测漏步；writer 检测采样间隔和非有限状态。重复或缺失帧报错并保留 partial，不覆盖、补零或静默跳过。
+- 采样不等待新输入；短缺口的有界制动仍记录实际状态及质量标志。人工暂停、回退和持续失跟踪冻结整个物理世界与采样，恢复后延续采样相位且不补帧，主机时钟保留真实等待。源或求解 worker 故障 fail-closed，未完成段保留 partial。
 
 ## 文件和数据集布局
 
@@ -24,11 +25,7 @@
 └── episode_<UUID>.h5
 ```
 
-日期在接受 start 时以本机本地日期固定；跨午夜不拆段，下一段进入新日期。单实例采集，不共享输出目录写入。每天的数据集配置只包含：
-
-`schema_version=2`、`robot_config=tianji_wuji2_v1`、`robot_joint_names`、`joint_unit=rad`、`physics_hz=480`、`state_rate_hz=60`。
-
-不同场景的模型、物体数和 qpos 维度可以不同，由每段模型元数据定义。`--output` 优先于 `SPD_EPISODE_OUTPUT`，再使用采集配置的 data_dir；配置内相对路径相对配置文件解析。
+日期在接受 start 时按本机日期固定，跨午夜不拆段；下一段使用新日期。单实例采集，输出目录不共享写入。当天 `dataset_config.json` 仅包含 `schema_version=2`、`robot_config=tianji_wuji2_v1`、`robot_joint_names`、`joint_unit=rad`、`physics_hz=480`、`state_rate_hz=60`；同日配置冲突时拒绝追加。模型、物体数和 qpos 维度可按段不同，以该段模型元数据为准。
 
 ```text
 episode_<UUID>.h5
@@ -64,11 +61,15 @@ episode_<UUID>.h5
     └── eq_active                  bool[N,neq]，仅 neq>0
 ```
 
-所有轨迹数据集首维必须相同且非空。可选字段按模型存在与否确定，不写虚构的零宽度数据集。`qpos/qvel` 包含机器人和所有动态场景自由度；nq 与 nv 不一定相等，free joint 是 7 个位置坐标、6 个速度自由度，不能拿 qpos 地址索引 qvel。抽屉的有界 slide joint 各占一个位置和一个速度坐标，qpos 表示从关闭位置向外打开的米数；不占用机器人 54 维命令。柜体、各抽屉和字母块使用不重叠的实例根。
+所有 trajectory 数据集和逐帧事件字段的首维均为同一非零 `N`；可选字段只在模型存在相应维度时写入，不伪造零宽度数据集。`qpos/qvel` 包含机器人和全部动态场景自由度，采用 MuJoCo 原生坐标：free joint 为 7 个位置坐标、6 个速度自由度，不能以 qpos 地址索引 qvel。抽屉的有界 slide joint 各占一个位置和速度坐标，qpos 是从关闭位置向外打开的米数，不占机器人 54 维命令。
 
-`recovery_transition` 与轨迹逐行对应，值为 `0` 正常、`1` 开段绑定后的过渡、`2` 人工暂停恢复、`3` 手动保存点回退恢复、`4` 持续失跟踪后重新绑定接手（当前需跟踪稳定后首次按 `r`；旧数据可能来自自动恢复或快照回退流程）。它不是动作命令或任务成功标签，也不承诺所有恢复均持续一秒；本地绑定不叠加外部 DDS 的全关节一秒混合。每个物理步提交阶段，采样区间内出现的非零阶段保留到该区间输出；存在多个非零值时保留最后一个。阶段结束前发生但落在其后采样点的过渡也不会漏标。数据必须为 uint8[N]、值在 0..4、无额外属性；旧无此字段时不推断恢复阶段。
+`robot_qpos/robot_qvel` 从完整状态按固定名称投影，顺序为左臂 7、右臂 7、左手 20、右手 20，单位分别为 rad/rad/s，且必须逐元素等于完整状态的对应投影，不是目标值。`object_pose` 是任务物体根 body 的世界坐标 `[x,y,z,qw,qx,qy,qz]`，包含动态物体和固定任务支架；具体顺序由 `metadata.object_names/object_body_ids` 定义，并在独立 `MjData` 上由当前 qpos 重新正运动学计算，不修改在线模拟状态。
 
-`control_flags` 是可选 uint8[N] 位掩码，新录制文件写入；长度与轨迹相同，无额外属性，合法值 0..31，高三位保留为零：
+## 恢复和控制质量字段
+
+`recovery_transition` 为无额外属性的 `uint8[N]`，合法值为 0..4：`0` 正常、`1` 开段绑定过渡、`2` 人工暂停恢复、`3` 手动保存点回退恢复、`4` 持续失跟踪后的重新绑定接手。它不是动作命令或任务成功标签，也不承诺过渡持续一秒。采样区间内出现的非零阶段保留至该帧；多个非零值取最后一个，落在下一个采样点前的过渡也不得漏标。旧文件无此字段时不推断阶段。
+
+`control_flags` 是新录制文件写入的可选、无额外属性 `uint8[N]` 位掩码，合法值为 0..31，高三位必须为零：
 
 | 位值 | 含义 |
 |---|---|
@@ -78,86 +79,51 @@ episode_<UUID>.h5
 | `8` | 右手手指平滑重新接入 |
 | `16` | 左手手指平滑重新接入 |
 
-flags 是上次采样后所有物理步的按位 OR（首帧只含首步），不是仅采样瞬间的状态；因此同侧保持和重入位可同时为 1。位为零表示该已标注区间未报告这些状态，不代表成功抓取、跟踪精度合格或辅助策略未介入的通用证明。人工／自动检查点保存尚未结束区间的恢复／flags 累计，回退恢复该累计而不带回失败后缀。
-
-短缺口期间即使保留 `live`／`blend` 接入状态并抑制新增虚影，实际因无效／过期输入保持目标的物理步仍置对应 `2`／`4` 位；不得因 HUD 尚未进入持续等待而漏标。显示状态通过进程内 `finger_modes` 单独传递，不修改 HDF5 位掩码或增加虚构的新鲜数据。
-
-轨迹、恢复标签和 flags 作为整帧同队列写入／裁剪，失败写入不能留下半行；最终只保留选中前缀及其续采，失败分支不保留为示范。训练可过滤非零恢复或质量位，但不能把删除后的跨回退／重绑定段拼成连续动作。旧无 flags 文件仍可验证；读取器零占位的历史来源必须通过 `control_flags_annotated=false` 保留，绝不能冒充实测全零标志。
-
-`robot_qpos/robot_qvel` 按固定名称从完整状态提取，顺序为左臂 7、右臂 7、左手 20、右手 20，单位 rad／rad/s。它们必须与完整状态对应投影逐元素相等，不是目标值。
-
-`object_pose` 为任务物体根 body 的世界坐标 `[x,y,z,qw,qx,qy,qz]`，包含动态物体和固定任务支架；具体顺序在 metadata.object_names／object_body_ids 中定义。采样在独立 MjData 上从当前 qpos 重新计算正运动学，不使用 mj_step 后滞留的步前派生位置，不改变在线模拟状态。
+flags 是上次采样后所有物理步的按位 OR（首帧仅首步），同侧保持和重入可同时为 1。零只表示已标注区间未报告这些状态，不证明抓取成功、跟踪精度或辅助策略状态；显示用 `finger_modes` 不构成额外 HDF5 数据。读取器为旧文件零占位时必须保留 `control_flags_annotated=false`，不得冒充实测全零。
 
 ## 手–物接触语义
 
-- 两个手索引固定为 left、right，根 body 分别为 `l_wrist`、`r_wrist`，包含其全部子树几何。
-- 物体来自 scene manifest 的 objects 列表，包含物体子树几何；手／物体子树必须互不重叠。
-- 每个物理步在 mj_step 后观察 solver-active 接触（efc_address 非负），累计从上次 capture 至今的接触。第一帧只覆盖首个物理步，之后通常覆盖 8 步。
-- `hand_object[n,s,o]` 表示该区间手 s 曾与物体 o 有有效接触；`hand_contact[n,s]` 是对应物体维的逻辑 OR。
-- 没有任务物体时 hand_contact 恒 false，不创建 hand_object 或 object_pose。
-- 不计机器人自碰撞、手与桌面／地面的接触。此布尔标签不等于完整接触力，也不声称只表示采样时刻的瞬时接触。
-- 开段在运动前建立完整 0 号保存点，正常采集中 `r` 可更新；两者都允许接触。每次失跟踪后的首次 `r` 仅重新绑定、接手，不创建或覆盖手动保存点。
+- 手索引固定为 left、right，根 body 分别为 `l_wrist`、`r_wrist`，各自包含全部子树几何；物体来自 scene manifest 的 objects 列表并包含物体子树几何，二者子树不得重叠。
+- 每个物理步在 `mj_step` 后观察 solver-active（`efc_address` 非负）接触，并累计自上次 capture 以来的结果；首帧只覆盖首个物理步，之后通常覆盖 8 步。
+- `hand_object[n,s,o]` 表示区间内手 `s` 曾与物体 `o` 有有效接触，`hand_contact[n,s]` 是该物体维的逻辑 OR。没有任务物体时 `hand_contact` 恒 false，且不创建 `hand_object` 或 `object_pose`。
+- 不计机器人自碰撞和手与桌面／地面的接触。这些布尔值不是完整接触力，也不表示仅采样瞬间的接触。开段的 0 号手动保存点和后续手动点均允许接触。
 
 ## 模型快照与元数据
 
-MJB 保存编译模型及其中的网格、纹理、相机和物理配置，不需要恢复时重新查找源 XML 或网格文件。metadata 包含：
+`model/mjb` 保存完整编译模型及其中的网格、纹理、相机和物理配置，恢复不依赖重新查找源 XML 或资产。`metadata` 至少包含：
 
-- snapshot_format、精确 mujoco_version、model_sha256、physics_hz、state_rate_hz。
-- 模型 dimensions 和各 trajectory 字段的 dtype／shape。
-- robot_joint_names、joint IDs、qpos／qvel 地址、完整 joint／body 映射。
-- 左右手根及几何映射，任务物体名称、body／geom IDs。
-- task_manifest、scene_manifest，实际采样的布局、物理参数、seed、任务和有效采集配置。
-- 新场景的 `scene_manifest.physical_materials` 与对象 `surface_materials` 保存批准的有效滑动摩擦矩阵、材料／区域标签、来源和表面近似边界，完整数值见 [README 材质说明](../README.md)。对象 `friction`／`friction_range` 仍为原 geom 系数及采样范围，不等于所有接触点的最终有效值。木—木 0.40 和 PE—PE 0.20 保留各自历史参考来源，其他新值为 `engineering_choice_not_measured`；这些工程取值不是厂商规格或实物测量。MJB 保存 custom numeric `spd_material_friction` 和 `geom_user`，不是显式 geom 配对。旧文件无策略时不推断新材料，不用当前规则重写旧 MJB。
-- 已编译的 camera 数组与相机配置文档；零相机模型也可记录，无须构造 Renderer。新相机配置为 version 2，各项保存 parent、以米为单位的局部 position 和以度为单位的 rpy_deg，旋转为 Rz(yaw) Ry(pitch) Rx(roll)；历史内嵌 version-1 look_at 配置仍按原模型校验，不迁移或改写。
-- 可访问的源模型／URDF／manifest／配置／网格／纹理路径与 SHA-256 溯源；这些路径仅用于溯源，不是恢复依赖。
-- object_pose_convention 和 contact_convention。
+- `snapshot_format`、精确 `mujoco_version`、`model_sha256`、`physics_hz`、`state_rate_hz`，以及模型 dimensions 和各 trajectory 字段的 dtype/shape；
+- `robot_joint_names`、joint IDs、qpos/qvel 地址和完整 joint/body 映射；左右手根及几何映射、任务物体名称和 body/geom IDs；
+- `task_manifest`、`scene_manifest`、实际采样布局、物理参数、seed、任务和有效采集配置，以及 `object_pose_convention`、`contact_convention`；
+- 已编译 camera 数组和相机配置。零相机模型也可记录，不必构造 Renderer。version-2 相机配置保存 parent、以米为单位的局部 position、以度为单位的 `rpy_deg`，旋转为 `Rz(yaw) Ry(pitch) Rx(roll)`；历史内嵌 version-1 `look_at` 配置仍按原模型校验，不迁移或改写；
+- 可访问的源模型、URDF、manifest、配置、网格和纹理路径及 SHA-256，仅作溯源，不是恢复依赖。
 
-元数据 JSON 使用排序键、紧凑分隔符、UTF-8、不转义非 ASCII 字符且拒绝 NaN。文件字节与元数据分别校验 SHA-256；哈希用于一致性检查，不是来源认证或安全签名。
+新场景的 `scene_manifest.physical_materials` 和对象 `surface_materials` 保存批准的有效滑动摩擦矩阵、材料/区域标签、来源和表面近似边界；对象 `friction/friction_range` 仍是原 geom 系数及采样范围，不是各接触点的最终有效值。MJB 的 `spd_material_friction` numeric 为 `[2, ...64 个 row-major 系数]`，`geom_user` 字段 0/1 为实例/类别、字段 2/3 为材料/区域 ID。材料数值、标签顺序和区域分类见 [architecture.md 的材料与接触](architecture.md#材料与接触)；旧文件无策略时不得推断新材料或用当前规则重写旧 MJB。
 
-MJB 恢复严格要求记录时相同的 MuJoCo 版本，并重新核验字段、维度、关节／物体地址和相机配置。插件模型因未记录插件状态被明确拒绝。采集期间不得修改模型、物体物理参数、相机或资产；更改后重建会话，不能混用旧模型快照。
+metadata JSON 使用排序键、紧凑分隔符、UTF-8、不转义非 ASCII 且拒绝 NaN。MJB 和 metadata 原始字节分别以 SHA-256 校验；哈希用于一致性检查，不是来源认证或安全签名。
 
-材料策略 numeric 为 `[2, ...64 个 row-major 系数]`，材料顺序为未知、木、PE、釉面陶瓷、未上釉陶瓷、裸铁、涤纶织物、硅胶；对称矩阵的 `-1` 保留旧混合规则。`geom_user` 保留字段 0／1 的实例／类别，字段 2／3 增加材料／区域 ID（区域 0 整体、1 陶瓷底部、2 左掌侧、3 右掌侧）。整个 distal 指尖为硅胶，掌面／指腹依 body 局部外法线左 `Y<0`、右 `Y>0` 分类；背侧和裸壳不赋硅胶。陶瓷底部区域只在外法线局部 `Z<-0.5` 时为未上釉，其余釉面。这不改变碰撞几何、惯量、过滤或法向接触参数，只修改批准接触的两个切向摩擦系数；未知材料、织物—织物、硅胶—硅胶仍保留旧值。
+恢复 MJB 必须使用记录时相同版本的 MuJoCo，并重新核验字段、维度、关节/物体地址和相机配置。因未记录插件状态，插件模型明确拒绝。采集期间不得修改模型、物体物理参数、相机或资产；变更后必须重建会话，不能混用旧模型快照。
 
-**运行时约定：** 新快照的物理推进、续跑或材料求解力诊断需要匹配版本的 MuJoCo 和材料感知 `_spd_native`；调用 `material_step(model, data)` 推进、`material_forward(model, data)` 重建材料约束／计算力，原生 `Physics` 同样执行策略。带策略的刚体模型支持 Euler／implicit／implicitfast，RK4 或启用 EFM 的模型明确拒绝。MJB 自带矩阵与区域标签，无须源场景／资产，但裸 `mj_step/mj_forward` 不解释这些 custom numeric／`geom_user` 字段，不能等价推进新模型。只读回放仅恢复记录姿态，仍用普通 `mj_forward`、不推进物理，也不提供新策略的求解力。旧模型不含此策略时原生接口直接使用普通 MuJoCo step／forward，历史行为不变。
+带材料策略的新快照在物理推进、续跑或材料求解力诊断时，必须使用匹配版本的 MuJoCo 与材料感知 `_spd_native`：`material_step(model, data)` 推进，`material_forward(model, data)` 重建材料约束并计算力，原生 `Physics` 使用同一策略。此类刚体模型仅支持 Euler、implicit、implicitfast；RK4 或启用 EFM 明确拒绝。MJB 自带矩阵和区域标签而不需要源场景/资产，但裸 `mj_step/mj_forward` 不解释这些字段，不能等价推进。只读回放仅恢复记录姿态，使用普通 `mj_forward`，不推进物理也不提供新策略的求解力；不含策略的历史模型仍使用普通 MuJoCo step/forward，保持历史行为。
 
-## 生命周期与错误
+## 发布、partial 与失败
 
-Quest／PICO 共用 `spd-quest-teleop`／`spd-pico-teleop --height-m HEIGHT`。按键由状态解释：待接手时 `r` 开始／重新接手；运动中 `r` 存检查点、`s` 人工暂停、`d` 回退并自动重新绑定续采；人工暂停中 `s` 重新绑定继续、`r` 保存整条、`d` 丢弃整条。`s` 继续和运动中 `d` 回退都无需额外 `r`。普通失跟踪仍保持现场、等待首次 `r`，不回退或覆盖检查点。手指平滑限速、输入新鲜度、非有限拒绝及有限越限饱和规则不变。默认仅开放只读状态，无远程 Trigger 控制。
+有界队列每次传递一整帧自有快照；`append_frame` 后不得再修改该帧数组。trajectory、恢复标签和 flags 必须同队列写入或裁剪，失败写入不得留下半行，最终文件只保留选中的前缀及其续采，不保留失败分支为示范。
 
-终端／窗口不再识别组合键，空格和 `x` 不操作录制；只有 `r/s/d` 与退出键生效，单键按下即时派发。`q`／Ctrl+C／窗口 Esc 退出不代替保存，未完成段保留 partial。回退和内部重绑定期间暂停采样，但恢复条件满足后自动续采，不补写等待时段，不要求再次按键。
+只有关闭文件并校验行数、标签、类型、有限值、时钟、模型、metadata 和状态投影后，才标记 `complete=true` 并发布 `.h5`。中断、错误、漏 tick、队列溢出以及源/求解故障保留 `.partial.h5`；`max_frames=0` 表示不限，达到正数上限时可发布 `complete=true, success=false`，只有操作者显式保存才标记 `success=true`。公开校验器拒绝 `.partial.h5` 与 `complete=false`；内部 `allow_partial=True` 仅用于发布前验证，`valid=true` 不表示完整或成功。意外终止留下的未关闭 HDF5 是失败数据，不能改扩展名绕过检查。
 
-单个有界队列每次传递一整帧自有快照；调用 append_frame 后不得再次修改该帧数组。后台 HDF5 线程写入，保存／丢弃由协调 worker 执行，不在 ROS 控制回调同步等待。
+## 在线检查点与回退边界
 
-只有关闭文件、校验行数／标签／类型／有限值／时钟／模型／元数据／状态投影后，才标记 complete 并发布 `.h5`。中断、错误、漏 tick、队列溢出保留 partial。`max_frames=0` 不限，达到正数上限发布 `complete=true, success=false`；只有人工暂停中的 `r` 显式保存标记 success=true，任务成功不是自动评分。人工暂停中的 `d` 删除当前整条，不影响已保存段；运动中的 `d` 仅裁剪检查点之后的失败后缀。
+在线手动检查点是进程内完整 `MjData` 副本，同时保存 tick、保留目标、采样相位、未结束的接触累计和恢复/flags 累计。失跟踪现场快照只用于等待提示，不是首次重新接手的恢复来源；两者都不落盘，进程重启后不可恢复，且不等同于文件的 state-only 重建。
 
-保存和丢弃完成后默认直接生成全目录随机新任务；`--task SCENE/TASK --repeat-task` 则始终保持指定任务。两种模式都生成新 seed／布局／桌面，机器人初始化 Home、零速度，不继承旧状态、不进入准备区或执行回零运动，等待新的 `r` 绑定开段。不加 `--repeat-task` 时，首次显式任务／场景不锁定后续任务；桌距覆盖始终只作用于首次场景。新场景清空旧检查点及授权，不自动录制；保存或丢弃失败不更换当前场景。
+手动回退暂停物理和命令应用，保留检查点已接受的前 `N` 帧（`N=0` 合法），同步裁剪标签和 flags、恢复写入时钟并刷盘，再恢复完整状态和内部重绑定。稳定输入后自动续采，不补等待区间；采样仍严格每 8 tick 一帧，generation 丢弃旧异步结果。失跟踪后的首次重新接手只绑定当前现场，不恢复快照、不产生 `rewind`，也不创建或覆盖手动点。检查点保存尚未结束采样区间的恢复/flags 累计；回退恢复这些累计，不带回失败后缀。
 
-公开校验器拒绝 `.partial.h5` 和 complete=false 的文件。内部 `allow_partial=True` 用于最终发布前验证，其 valid=true 不表示 complete=true，更不表示采集成功。意外进程终止可能留下尚未关闭的 HDF5，应作为失败数据处理，不能通过改扩展名绕过 complete 检查。
+可选 `/collection_events/rewind` 是一维可扩展 compound 数据集，字段顺序为 `frame_count: <i8`、`monotonic_ns: <i8`。每行标识零基 `frame_count` **之前**的分支边界和实际回退主机时间：`0 <= frame_count <= N`，`frame_count=N` 表示尚未追加续采帧。更早回退会删除大于新保留帧数的边界、保留等值边界；帧数非递减，事件时间严格递增。它不是完整失败尝试审计日志，旧的无回退 schema-v2 文件仍可读取。
 
-### 在线检查点与回退边界
+最终轨迹不含从失败现场跳回检查点的状态；训练窗口不得跨 `rewind` 边界或任何新的非零恢复阶段起点，即使跳帧略过该点。文件只记录最终保留轨迹，不是所有尝试的审计日志。
 
-在线手动检查点是进程内完整 `MjData` 副本，另存 tick、保留目标、采样相位、未结束的接触累计与恢复／flags 累计；另有失跟踪现场快照仅用于等待提示，不作为首次 `r` 的恢复来源。它们与磁盘 state-only 恢复不是同一契约，不落盘，不能在进程重启后恢复。
+## 独立状态重建
 
-运动中 `d` 先暂停物理和命令应用、清除授权／候选，唯一写线程保留手动检查点时已接受的前 N 帧，同步裁剪标签及 flags、恢复写入时钟并刷盘，物理线程再恢复完整状态并发起内部重绑定。N=0 合法；稳定输入到来后自动续采，不停留在人工暂停，无需 `r/s`。人工暂停中的 `s` 同样直接发起重新绑定和续采授权。失跟踪后的首次 `r` 则仅绑定当前现场，不走快照恢复、不产生 `rewind` 或覆盖手动点。generation 拒绝旧结果；续采仍严格每 8 tick 一帧，等待区间不补帧。
+回放先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 `MjData`，赋值 qpos/qvel 与存在的 act/mocap/equality 状态，设置 `data.time` 后调用普通 `mj_forward`；不推进物理、不恢复或下发命令、不创建相机渲染器，也不引入 ROS 原生依赖。它核对机器人状态投影和任务物体世界位姿，报告最大误差；四元数 `q` 与 `-q` 视作同一方向。
 
-可选 `/collection_events/rewind` 是一维可扩展 compound 数据集，字段顺序为 `frame_count: <i8`、`monotonic_ns: <i8`。每行标识零基帧索引 `frame_count` **之前**的分支边界及实际回退主机时间；`0 <= frame_count <= N`，等于 N 表示尚未追加续采帧。后续更早回退删除大于新保留帧数的边界，等值边界保留；帧数非递减，事件时间严格递增。此记录不是完整失败尝试审计日志。没有回退的旧 schema-v2 文件仍可读取。
-
-最终轨迹不包含被裁掉的失败现场到检查点的跳变；训练窗口不得跨 `rewind` 边界或新的非零恢复阶段起点，即使通过跳帧略过它们。暂停／回退期间的主机时间差真实保留，不补帧。文件仅含最终保留轨迹，不是所有尝试的审计日志。
-
-## 独立恢复与当前边界
-
-```bash
-pixi run validate_episode /path/to/episode_<UUID>.h5
-pixi run replay_episode /path/to/episode_<UUID>.h5
-pixi run replay_episode /path/to/episode_<UUID>.h5 --expected-model-sha256 <SHA256>
-```
-
-replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
-
-这是独立状态重建，不是恢复原控制循环的检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。消费者必须从记录的实际状态开始，不能重跑目标控制来猜测物体轨迹。
-
-采集侧已实现进程内检查点／回退，不实现采后接触裁剪、30 Hz 重采样或动作标签。旧 `align_30hz`／`filter_contacts` 入口已移除；CONTROL-TYPE approach／alignment／grasp／insertion 辅助及其单独标注是**未来计划，尚未实现**。当前提示仅为任务／状态／检查点／手指等待，现有恢复／flags 不是这些辅助动作标签。
-
-## 后处理交接
-
-render schema 2 和训练读取规范位于相邻 [data_process 文档](../../data_process/docs/render-schema-v2.md)，不属于本在线原始轨迹协议。VLA 导出与 Q50 压缩仍未实现，约定仅见 [data_process VLA 规范](../../data_process/docs/schema-vla.md)。
+这只是独立状态重建，不是控制循环检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。消费者必须从记录的实际状态开始，不能重跑目标控制来猜测物体轨迹。

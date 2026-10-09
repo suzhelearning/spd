@@ -1,6 +1,6 @@
 # SPD 数据流水线
 
-本文按当前源码说明 SPD 的输入、控制、物理、采集、轨迹校验与网页回放数据流。离线渲染、训练读取以及 VLA／Q50 约定已迁至相邻 [data_process](../data_process/README.md)。
+本文按当前源码说明 SPD 的输入、控制、物理、采集、轨迹校验与网页回放数据流。
 
 **默认 Quest／PICO 裸手采集不经过 ROS 话题。** TCP 负责头显输入，管道负责原生求解子进程通信，内存快照负责控制交接，HDF5 负责持久化。可选外部 DDS 模式才启用下述两个 ROS 话题。
 
@@ -22,7 +22,6 @@ flowchart TD
     S --> R[完整物理轨迹 HDF5]
     R --> B[spd-web 浏览器回放]
     R --> X[validate_episode / replay_episode]
-    R --> D[相邻 data_process：离线处理]
 ```
 
 本地裸手与外部 DDS 是互斥输入模式，不是同时驱动机器人的两个命令源。图中的“一个采集进程”指主控／物理／采集归属同一个主进程；双臂和 Hand2 数值求解仍有独立子进程。
@@ -112,7 +111,7 @@ KEEP_LAST(1)／BEST_EFFORT 是最新目标通道，不保证每次控制发送�
 
 状态转换时尝试发布，心跳调用间隔达到 250 ms 时再次发布；不是硬实时频率保证。
 
-**本地模式不会实际发布此话题。** [executor.cpp](src/spd_native/src/executor.cpp) 在 `subscribe=false` 时提前返回，既不创建命令 subscription，也不创建 status publisher；`publish_status()` 在没有 publisher 时不发送。因此本地 Viewer 通过进程内 `snapshot()` 获取状态，不依赖 `/spd/collection/status`。现有架构文档中未区分模式的状态发布描述应以此源码条件为准。
+**本地模式不会实际发布此话题。** [executor.cpp](src/spd_native/src/executor.cpp) 在 `subscribe=false` 时提前返回，既不创建命令 subscription，也不创建 status publisher；`publish_status()` 在没有 publisher 时不发送。本地 Viewer 通过进程内 `snapshot()` 获取状态，不依赖 `/spd/collection/status`。
 
 ### 4.3 不应误认为已提供的服务和话题
 
@@ -176,9 +175,3 @@ data/episodes/YYYYMMDD/
 | `pixi run spd-web --directory data/episodes` | 数据目录 → HTTP 服务 → 浏览器回放 | 否 |
 
 浏览器入口为 [src/web_replay/cli.py](src/web_replay/cli.py)，默认 `127.0.0.1:8765`。它直接读取原始轨迹，不要求先离线渲染；HTTP 不是 ROS 通信。服务无身份认证，只用于本机或可信网络。
-
-## 7. 后处理交接
-
-SPD 只生成、校验和网页回放原始 schema-v2 轨迹；离线状态恢复成图像、render schema 2、训练读取和视觉增强由相邻 [data_process](../data_process/README.md) 提供。该项目以显式本地 `../spd` 依赖复用 `cameras.camera` 与 `data_collector.recorder/trajectory`，没有将这些协议复制到下游，也没有反向依赖。
-
-后续处理的入口、GPU 配置和输出语义见 [data_process 数据流水线](../data_process/Pipeline.md)，render schema 和训练读取见其 [独立规范](../data_process/docs/render-schema-v2.md)。VLA 导出和独立 Q50 压缩均仍未实现；格式约定仅见 [data_process VLA 规范](../data_process/docs/schema-vla.md)。
