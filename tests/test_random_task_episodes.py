@@ -1,4 +1,4 @@
-"""Completed saves and discards both start fresh random Home scenes."""
+"""Completed saves and discards start fresh Home scenes under the selected task policy."""
 import argparse
 import importlib.util
 from pathlib import Path
@@ -36,6 +36,30 @@ class EpisodeTaskSequenceTests(unittest.TestCase):
                 replay = EpisodeTasks(scene, task, 7)
                 self.assertEqual([replay.next() for _ in range(257)], [first, *following])
 
+    def test_repeat_task_preserves_selection_with_reproducible_new_seeds(self):
+        from simulation.scene import EpisodeTasks, build_selected_scene
+
+        for scene, task in ((None, "bottles/toss_in_bin"), ("bottles", "toss_in_bin")):
+            with self.subTest(scene=scene, task=task):
+                sequence = EpisodeTasks(scene, task, 7, repeat_task=True)
+                episodes = [sequence.next() for _ in range(5)]
+                self.assertEqual(episodes[0], (scene, task, 7))
+                self.assertEqual({(s, t) for s, t, _ in episodes}, {(scene, task)})
+                replay = EpisodeTasks(scene, task, 7, repeat_task=True)
+                self.assertEqual([replay.next() for _ in episodes], episodes)
+                manifests = [build_selected_scene(*episode).manifest() for episode in episodes]
+                self.assertTrue(all(manifest["scene"] == "bottles" and manifest["task"] == "toss_in_bin"
+                                    for manifest in manifests))
+                self.assertNotEqual(manifests[0]["table"], manifests[1]["table"])
+
+    def test_repeat_task_requires_an_explicit_task(self):
+        from simulation.scene import EpisodeTasks
+
+        for scene in (None, "bottles", "hardware_free"):
+            with self.subTest(scene=scene):
+                with self.assertRaisesRegex(ValueError, "--repeat-task requires an explicit --task"):
+                    EpisodeTasks(scene, None, 7, repeat_task=True)
+
 
 @unittest.skipUnless(ROS_AVAILABLE, "run inside ros-jazzy with the local interface overlay")
 class RandomTaskEpisodeTests(unittest.TestCase):
@@ -43,7 +67,7 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.app = self.make_app()
         self.sequence = 0
 
-    def make_app(self, *, scene="cups", task=None, table_distance=None):
+    def make_app(self, *, scene="cups", task=None, table_distance=None, repeat_task=False):
         from description.model_builder import config_root
         from simulation.ros_viewer import RosViewerApp
 
@@ -51,7 +75,8 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         app = RosViewerApp(argparse.Namespace(
             collection_config=config_root() / "collect_sim.yaml", output=Path(directory.name),
-            max_frames=0, scene=scene, task=task, seed=7, table_distance=table_distance, headless=True,
+            max_frames=0, scene=scene, task=task, seed=7, table_distance=table_distance,
+            headless=True, repeat_task=repeat_task,
         ))
         self.addCleanup(app.close)
         return app
@@ -148,6 +173,25 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.start()
         self.finish_and_advance()
         self.assertEqual((self.app.args.scene, self.app.args.task, self.app.args.seed), expected.next())
+
+    def test_repeat_task_after_save_and_discard_keeps_bottles_and_refreshes_layout(self):
+        from simulation.scene import build_selected_scene
+
+        self.app.close()
+        self.app = self.make_app(scene=None, task="bottles/toss_in_bin", repeat_task=True)
+        previous_seed = self.app.args.seed
+        previous_table = self.app.plant.scene_manifest["table"]
+        for key in ("r", "d", "r"):
+            with self.subTest(completion=key):
+                self.start()
+                self.finish_and_advance(key)
+                self.assertEqual((self.app.args.scene, self.app.args.task), ("bottles", "toss_in_bin"))
+                self.assertNotEqual(self.app.args.seed, previous_seed)
+                self.assertNotEqual(self.app.plant.scene_manifest["table"], previous_table)
+                expected = build_selected_scene("bottles", "toss_in_bin", self.app.args.seed)
+                self.assertEqual(self.app.plant.scene_manifest, expected.manifest())
+                previous_seed = self.app.args.seed
+                previous_table = self.app.plant.scene_manifest["table"]
 
     def test_failed_save_retains_scene_and_freezes(self):
         self.start()

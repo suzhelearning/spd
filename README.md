@@ -20,6 +20,17 @@ adb install -r apps/quest/quest3s_hand_tracking.apk
 # adb install -r apps/pico/pico_hand_tracking_adb.apk
 ```
 
+本地 `spd` 与 `spd-envs` 的 editable 构建复用 `feature.sim.dependencies` 中的 Conda `setuptools`，仅对这两个本地包禁用构建隔离，避免源码更新后为重建包再次从 PyPI 下载构建后端。首次安装其他依赖仍可能需要网络；锁文件和 TLS 校验保持启用。
+
+Linux 下若 `adb devices -l` 显示 `no permissions`，这不是头显授权提示，而是主机 USB 设备权限不足。Quest 3S（USB vendor `2833`、product `5013`）可安装下列规则；当前用户需属于 `plugdev` 组，`id -nG` 可检查。规则需要管理员权限：
+
+```bash
+printf '%s\n' 'SUBSYSTEM=="usb", ATTR{idVendor}=="2833", ATTR{idProduct}=="5013", MODE="0660", GROUP="plugdev", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/70-spd-quest3s.rules
+sudo udevadm control --reload-rules
+```
+
+拔插头显 USB 后，再运行 `adb devices -l`。若此时显示 `unauthorized`，在头显内接受 USB 调试授权；显示 `device` 才可开始采集。不要用 `sudo` 启动整个采集程序。
+
 在头显中打开对应应用、开启手部跟踪并授予权限。停止旧 PICO／Quest／Manus／外骨骼会话，不要让诊断接收器和采集入口同时占用输入。多设备时设置 `ANDROID_SERIAL`；本地后端需要时建立 ADB 转发。
 
 Quest 与 PICO 共用 TCP `10002`：小端 `<BBqI>` 帧头，magic `0xAB`、type `0x40`、version `1`，载荷 `1968` 字节，双手各 26 个 OpenXR 关节；坐标 FLU（前、左、上），四元数 `xyzw`，不额外翻轴或交换左右手。日志中的 PICO 是共用输入实现名称。
@@ -34,6 +45,9 @@ PICO APK 使用 Git LFS 管理，SHA-256：`f46519e1e94ec55f1ee55e51347af8564f47
 # Quest；1.75 换成操作者实际身高（米）
 pixi run spd-quest-teleop --height-m 1.75
 
+# 固定投瓶入箱任务；保存或丢弃后仍采集此任务，布局继续随机
+pixi run --locked spd-quest-teleop --height-m 1.75 --task bottles/toss_in_bin --repeat-task
+
 # PICO，二选一运行；任务、输出、无图形等参数与 spd-sim 相同
 # pixi run spd-pico-teleop --height-m 1.75 --task mugs/hang_mug --seed 0
 # pixi run spd-pico-teleop --height-m 1.75 --headless --output data/episodes
@@ -41,7 +55,7 @@ pixi run spd-quest-teleop --height-m 1.75
 
 Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_sim.sh` → 原生 `spd_executor` → `simulation.ros_viewer --height-m ...`。也可直接 `pixi run spd-sim --height-m 1.75`。不再使用旧 `r` 前伸标定、`s` 跟随的独立发布入口，也不需要相邻源码工作区或 `TIANJI_TELEOP_ROOT`。
 
-首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed，重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`；随机抽样允许任务重复。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认 `/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
+首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。默认每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed；加 `--repeat-task` 则始终沿用显式 `--task`，不切换任务类型，此参数必须与 `--task` 同用。两种模式都重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`，不固定物体位置或桌面参数。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认项目根目录下的 `data/episodes/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
 
 ## 操作与恢复
 
@@ -51,13 +65,15 @@ Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_si
 |---|---|---|---|
 | 待接手：首次进入、新任务、失跟踪后 | 绑定并开始／重新接手，不存检查点 | 无操作 | 无操作 |
 | 运动／录制中 | 更新检查点，继续录制 | 人工暂停 | 回退检查点并裁掉失败后缀，重新绑定后自动续采 |
-| 人工暂停中 | 保存整条已有样本，进入随机新任务 | 重新绑定并继续 | 直接丢弃整条，进入随机新任务 |
+| 人工暂停中 | 保存整条已有样本，进入下一条 | 重新绑定并继续 | 直接丢弃整条，进入下一条 |
 
 终端与窗口均按单键即时处理，无需回车、无组合键等待窗口。**运动中 `d` 和人工暂停中 `s` 都包含重新接手授权：内部等待有效稳定输入并重新绑定，随后继续，无需额外按 `r`。** 每次失跟踪后的首次 `r` 仍只重新接手。旧组合键、空格暂停和双 `x` 丢弃已取消；快速连续按键会按顺序分别解释，请根据当前状态点按、不要长按。窗口忽略 RELEASE／REPEAT；终端无法识别物理松开，可能收到系统重复字符。`q`／Ctrl+C／窗口 Esc 退出，不代替保存，未完成段保留 `.partial.h5`。
 
-**典型流程：** `r` 接手开段 → 运动中 `r` 存检查点 → 失误 `d` 回退并自动续采 → `s` 人工暂停 → `s` 继续，或 `r` 保存整条，或 `d` 丢弃整条。保存与丢弃后都在新随机任务的 Home 等待 `r`。任务成功由操作者判断，不是自动评分。
+**典型流程：** `r` 接手开段 → 运动中 `r` 存检查点 → 失误 `d` 回退并自动续采 → `s` 人工暂停 → `s` 继续，或 `r` 保存整条，或 `d` 丢弃整条。保存与丢弃后都在下一条场景的 Home 等待 `r`；默认随机任务，`--repeat-task` 保持指定任务。任务成功由操作者判断，不是自动评分。
 
 本版状态分流通过 25 项定向回归（键盘／控制 17、随机任务 8）。真实 DLS／Hand2 和 MuJoCo 窗口通过实际 GLFW 按键验证：运动 `r` 存点、`d` 回退自动续采、`s` 暂停及恢复无需 `r`、暂停 `r` 保存与暂停 `d` 丢弃；18 帧保存文件及恢复标签校验通过，保存和丢弃后的新任务均 Home 等待 `r`。使用合成跟踪输入，非真人头显验收。
+
+固定任务模式通过 11 项任务切换回归；真实原生 run_loop 与 MuJoCo 双视口使用合成外部目标完成保存和丢弃，两次交接仍为 `bottles/toss_in_bin`、重采样布局并冻结 Home，保存文件校验通过。验证数据使用临时目录，不写入正式采集目录；非真人头显验收。
 
 手指按左右手独立跟随，不要求匹配握姿。首次接入和持续失效后的恢复使用 200 ms 平滑混合，每关节目标限速 2 rad/s。任一侧输入无效，或目标超过 **45 ms** 不新鲜，立即保持当前目标，不外推、不继续执行旧目标；但距最后有效目标不足 **120 ms** 时保留原跟随／接入状态，暂停接入计时，恢复新鲜输入后接着原进度继续，不重走整套接入。达到 120 ms 才进入等待，恢复后重新平滑接入；连续无效帧不会延长预算。已正常跟随的手在短缺口时显示“短时保持”，不因此新增虚影；等待或平滑接入时才显示目标虚影。录制仍即时标记手指保持／退化，不把短缺口伪装成正常数据。另一手和双臂不被单侧手指缺口阻塞。
 
@@ -67,7 +83,7 @@ Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_si
 
 Hand2 本地进程响应等待预算为 **300 ms**（原 100 ms），不是允许使用 300 ms 旧目标。读取时先取管道中已缓存的响应，再对缺失字节检查剩余预算，避免场景构建／线程调度推迟读取后将已完成求解误报为超时。预算不逐次重置，响应序号、原始观察时间戳和 45 ms 新鲜度规则不变，过期结果不驱动手指；真正缺少响应仍报错，并标明左右手及已收到字节数。诊断中合成输入的原生响应约 1.4 ms 已完整写出，场景构建约 1.3 s 后读取：旧版误报、新版成功取回且丢弃过期控制目标；人为延迟 worker 150 ms 时，100 ms 预算失败、300 ms 预算通过。16 项手指输送／接手定向测试通过；这些结果不代表已确认此前真人故障的唯一原因。
 
-**保存和丢弃整条都只在人工暂停中执行。** 先按 `s` 暂停，再按 `r` 保存，或按 `d` 丢弃。文件关闭、校验并发布 `.h5`，或丢弃删除完成后，直接生成随机新任务及布局，新机器人初始化 Home、零速度，清空旧检查点和授权，等待新的 `r`。两种操作都不进入安全准备区、不执行回 Home 运动、不自动录制。保存／丢弃失败保留原场景及可保留的 partial，不切换任务。
+**保存和丢弃整条都只在人工暂停中执行。** 先按 `s` 暂停，再按 `r` 保存，或按 `d` 丢弃。文件关闭、校验并发布 `.h5`，或丢弃删除完成后，直接按任务选择模式生成下一条场景及新布局，新机器人初始化 Home、零速度，清空旧检查点和授权，等待新的 `r`。两种操作都不进入安全准备区、不执行回 Home 运动、不自动录制。保存／丢弃失败保留原场景及可保留的 partial，不切换任务。
 
 新段保留成功前缀，人工回退会同步裁剪轨迹和标签。schema-v2 扩展 `/collection_events/recovery_transition`：`0` 正常、`1` 开段、`2` 人工暂停恢复、`3` 人工检查点回退恢复、`4` 失跟踪后重新接手；可选 `control_flags` 按采样区间累计输入退化和每手等待／重入。失跟踪重新接手本身不产生回退事件，但训练仍不能跨重新绑定边界拼接，旧无标签文件须保留来源不明的语义，详见 [数据契约](docs/schema-v2.md)。
 
@@ -144,7 +160,7 @@ pixi run spd-sim --height-m 1.75 --scene hardware_free
 
 `pixi run spd-scene` 自动进入原生运行环境并加载 overlay；模型编译、独立场景生成及离线恢复／渲染仍可使用各自 Python 环境。回归入口为 `pixi run spd-test`，需先完成原生构建。旧独立双进程控制入口、原生三键状态机和 `spd-viewer` console 入口已移除，不提供旧流程兼容入口。
 
-SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为 `/data/TianjiSim/trajectories`，新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。
+SPD 启动器不会自动重建接口。`config/collect_sim.yaml` 默认采集根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），新 episode 自动存入开始当天的 `YYYYMMDD/` 子目录；显式 `--output PATH` 优先于 `SPD_EPISODE_OUTPUT`，两者均未提供时使用配置的 `data_dir`。已运行进程不自动切换目录；退出后重新启动，并移除旧 `--output` 或环境变量覆盖。
 
 主进程在当前终端前台运行，不使用 tmux。终端 `q`／`Ctrl+C` 或窗口 `q`／`Esc` 退出并关闭自有后端，不停止外部硬件控制器；未完成段保留 partial。一次只启动一个采集进程，不共享输出目录。暂停／回退冻结物理，输入监控继续以便稳定重绑定。
 
@@ -251,11 +267,11 @@ pixi run spd-scene --task cups/pyramid --seed 0 \
 
 机器人动力学保留 URDF 的质量、质心和惯性，不以外观网格体积重算装配惯性。瓶子仍按轻质空瓶配置名义质量，不能把品牌贴图当作真实材质或质量测量。刚体仿真不模拟材料屈服、破碎或柔性。机器人外观透明度只影响显示，不改变接触和动力学。
 
-**机械手伺服采用参考基础的五倍增益。** `src/description/model_compiler/mjcf.py` 保留来自 `tianji_teleop/src/simulation/simulation/physics.py` 的 `_HAND_GAINS` 基础表，以 `_HAND_GAIN_SCALE=5.0` 同时缩放 `kp` 和执行器 `kv/Kd`。实际每根手指 `Kp=(4.0, 1.25, 2.0, 1.0) N·m/rad`、`Kd=(0.125, 0.075, 0.060, 0.040) N·m·s/rad`，左右手相同；順序为 CMC/MCP 屈伸、CMC/MCP 外展、MCP/PIP、IP/DIP。这是两者均乘 5，不是 Kd 乘 sqrt(5)，也不再叠加之前的逐关节倍率试调。运行时不依赖参考仓库，这些不是实机 MIT 参数。手指被动 `joint damping=0`、力矩／控制限幅、双臂增益、摩擦、碰撞与惯量保持不变。
+**机械手伺服采用参考基础的二十倍增益。** `src/description/model_compiler/mjcf.py` 保留来自 `tianji_teleop/src/simulation/simulation/physics.py` 的 `_HAND_GAINS` 基础表，以 `_HAND_GAIN_SCALE=20.0` 同时缩放 `kp` 和执行器 `kv/Kd`，相对前一十五倍配置乘 `20/15`。实际每根手指 `Kp=(16.0, 5.0, 8.0, 4.0) N·m/rad`、`Kd=(0.50, 0.30, 0.24, 0.16) N·m·s/rad`，左右手相同；顺序为 CMC/MCP 屈伸、CMC/MCP 外展、MCP/PIP、IP/DIP。这是两者均乘 20，不是 Kd 乘 sqrt(20)，也不叠加逐关节倍率。倍率仅作用于左右手的 40 个关节，不作用于双臂的 14 个关节；双臂保持 `Kp=500.0`、`dampratio=1`，实际 Kd 由 MuJoCo 按参考构型的模型惯量生成，可在 `actuator_calibration.yaml` 查看各关节值。运行时不依赖参考仓库，这些不是实机 MIT 参数。手指被动 `joint damping=0`、力矩／控制限幅、双臂增益、摩擦、碰撞与惯量保持不变。
 
-正式 `generated/unified_plant.xml`、`actuator_calibration.yaml`、`model_manifest.yaml` 同步重建并校验；重启采集加载新增益，不热改运行中的模型，旧轨迹按内嵌 MJB 保留记录时增益。隔离重力的真实模型食指 DIP 验证中，外加 `0.03 N·m` 时偏转约 `0.03000 rad`，`0.15 rad` 目标的末态误差小于 `4e-7 rad`。在单关节线性近似下，同时放大 Kp/Kd 会提高阻尼比，不是保持阻尼比；更硬不代表更大的最大力矩，达到原力矩上限后仍会限幅。
+正式 `generated/unified_plant.xml`、`actuator_calibration.yaml`、`model_manifest.yaml` 已同步重建并校验；重启采集加载新增益，不热改运行中的模型，旧轨迹按内嵌 MJB 保留记录时增益。此前同参数二十倍模型的隔离重力／接触食指 DIP 验证中，外加 `0.03 N·m` 的静态偏转为 `0.00750 rad`，符合 `Kp=4.0` 的线性静态响应。同时缩放 Kp/Kd 不保持原阻尼比；刚度改变不代表最大力矩改变，达到原力矩上限后仍会限幅。
 
-五倍增益验证：左右手 40 个执行器的编译 Kp/Kd 均为调整前的 5 倍，其他物理数组、双臂与碰撞产物不变，正式模型校验和 5 个场景连续性回归通过。挂杯／杯塔的闭合验证中，中位目标误差约 `0.00152 rad`、最大约 `0.07224 rad`、末段最大摆动小于 `0.0018 rad`；约 `0.31%` 的关节步采样达到原力矩上限，未扩大限幅。新增益随 MJB 保存恢复。上述为定向仿真验证，不是所有任务抓持成功或实机安全证明；未连接头显验证人工操作。
+恢复二十倍增益验证：左右手 40 个执行器的编译 Kp/Kd 均为前一十五倍模型的 `20/15`，双臂执行器和其他模型数组、双臂投影及碰撞产物不变，正式模型校验通过。隔离重力／接触的食指 DIP 以当前采集限速 `2 rad/s` 到达 `0.15 rad`，末态误差小于 `1e-5 rad`，无 MuJoCo 警告。元音／辅音分类场景加载新增益后推进 480 步，无非有限状态或 MuJoCo 警告，MJB 保存恢复保留增益。**保留已知风险：** 此前同参数二十倍模型的 DIP `0.15 rad` 瞬跳目标测试触及原 `±0.3 N·m` 限幅并出现明显振荡，3 秒后未收敛；不得将平滑目标验证推广为任意目标或接触负载均稳定。保留采集的混合与限速；上述为定向仿真验证，不是完整抓持成功或实机安全证明，未连接头显验证人工操作。
 
 **物理材质与外观分离。** 用户指定木质积木／字母块／多米诺／柜体／抽屉，PE 杯／瓶／箱，裸铁盘架／杯架支撑，以及木质杯架底座；盘和马克杯分为釉面与未上釉底面。桌面／地面标签为涤纶织物。标签不重算质量、惯量或碰撞几何，不改变配色和随机采样。
 
@@ -302,17 +318,17 @@ pixi run spd-envs-check
 
 ```yaml
 version: 2
-data_dir: /data/TianjiSim/trajectories
+data_dir: ../data/episodes
 state_rate_hz: 60
 writer_queue_size: 256
 max_frames: 0
 ```
 
-- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如 `/data/TianjiSim/trajectories/20260922/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
+- `data_dir` 是采集根目录；相对路径基于配置文件所在目录解析，可用 `--collection-config PATH` 指定配置。每次开始新段按本机本地日期选择 `YYYYMMDD/`，例如项目根目录下的 `data/episodes/20261007/`。跨午夜正在录制的段不拆分，仍保存到开始当天；下一段自动进入新日期，无需重启。`--output` 和环境变量覆盖的根目录也遵循此规则。
 - 轨迹固定每 8 个 480 Hz 物理步采一帧，即仿真时间 60 Hz。记录物理步编号、仿真时间和主机单调时间；实际墙钟频率必须另行统计，不能以名义调度推断。旧配置中的 `camera_rate_hz` 已移除，配置版本改为 2。
 - `writer_queue_size` 限制后台写入队列；溢出报错并保留 partial，不静默丢帧。
 - `max_frames: 0` 表示不限；正数限制完整场景轨迹帧数，不按接收的命令数计数。可用 `--max-frames N` 覆盖。
-- 到达正数上限自动结束、校验并保存为 **`success=false`**，完成后直接生成随机新任务、初始化 Home 并等待 `r`；默认 `0` 不限帧数。只有操作者在人工暂停中按 `r` 显式保存才标记成功。
+- 到达正数上限自动结束、校验并保存为 **`success=false`**，完成后按任务选择模式生成下一条场景、初始化 Home 并等待 `r`；默认 `0` 不限帧数。只有操作者在人工暂停中按 `r` 显式保存才标记成功。
 - 每段记录实际生效的配置与配置文件路径；采样直接读取当前物理状态，不等待新的 ROS cmd，也不补写录制前缓存。
 
 默认仅发布 `/spd/collection/status`（`std_msgs/msg/String` JSON，可靠、transient-local），包含状态、帧数、路径、`physics_paused`、`checkpoint_frames`、`auto_checkpoint_frames` 和完成结果等。`checkpoint_frames=0` 是合法起始保存点；`auto_checkpoint_frames` 仅表示失跟踪现场快照的帧数，重新接手续采后清空，不转为 `checkpoint_frames`。底层采集类保留管理接口供专用集成，但 `spd-sim` 不开放外部 Trigger 控制；升级后须重启采集进程。
@@ -333,12 +349,12 @@ max_frames: 0
 
 新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
-每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为 `/data/TianjiSim/trajectories`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不迁移、不删除。
+每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为项目根目录下的 `data/episodes`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不自动迁移、不删除。
 
 ```bash
 # 将路径替换为采集状态输出的实际文件路径
-pixi run validate_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
-pixi run replay_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5'
+pixi run validate_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
+pixi run replay_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
 ```
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
@@ -427,7 +443,7 @@ pixi run -e render spd-render --check-gpus
 
 # config/sim_cameras.yaml 的实际安装位姿和标定确认后，正式批量渲染
 pixi run -e render spd-render \
-  --input /data/TianjiSim/trajectories \
+  --input data/episodes \
   --output /data/TianjiSim-rendered
 ```
 

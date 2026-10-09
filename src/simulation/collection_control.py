@@ -87,7 +87,7 @@ class CollectionControl:
         if automatic:
             self._stage("auto_paused", "跟踪丢失：保持当前姿态；摆好现实姿态后按 r 重新接手")
         else:
-            self._stage("paused", "人工暂停：s 重新绑定继续；r 保存整条并随机新任务；d 丢弃整条并随机新任务")
+            self._stage("paused", "人工暂停：s 重新绑定继续；r 保存整条并进入下一条；d 丢弃整条并进入下一条")
 
     def _fail(self, reason):
         self._halt()
@@ -213,11 +213,11 @@ class CollectionControl:
                     return
                 self._halt()
                 if self._request("save"):
-                    self._stage("saving", "关闭并校验示范文件；成功后直接随机新任务，Home 等待 r")
+                    self._stage("saving", "关闭并校验示范文件；成功后生成下一条场景，Home 等待 r")
             elif key == "d":
                 self._halt()
                 if self._request("discard"):
-                    self._stage("discarding", "丢弃整条文件；完成后直接随机新任务，Home 等待 r")
+                    self._stage("discarding", "丢弃整条文件；完成后生成下一条场景，Home 等待 r")
             return
         if key == "s":
             self._pause()
@@ -262,7 +262,7 @@ class CollectionControl:
                     self._fail(str(exc))
                     return
                 self.control_flags = self.recovery = 0
-                self._stage("idle", "整条已结束；全新随机任务已在 Home，双手放在腰间，r 重新绑定开始")
+                self._stage("idle", "整条已结束；下一条场景已在 Home，双手放在腰间，r 重新绑定开始")
             return
         if self.stage == "reverting":
             if self.collection.state == "paused":

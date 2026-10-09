@@ -4,7 +4,7 @@
 
 在线仿真记录可独立恢复的完整场景物理轨迹，不记录 ROS cmd、执行器目标 `ctrl`、actions 或 RGB。输入、相对绑定及 IK 由进程内 `pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排；可选外部 DDS 模式不是生产裸手流程，也没有本地重绑定保证。`src/offline_rendering/` 独立读取这些文件并生成渲染结果，绝不改写原轨迹。
 
-旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录 `/data/TianjiSim/trajectories`，采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
+旧机器人 qpos＋JPEG 文件不自动迁移、覆盖或删除；同日 `dataset_config.json` 冲突时拒绝追加。当前默认根目录为项目根目录下的 `data/episodes`（配置值 `../data/episodes` 相对配置文件解析），采集配置 version 2、state_rate_hz 60。`recovery_transition=4` 与可选 `control_flags` 是 schema-v2 的兼容 `collection_events` 扩展，不改 trajectory 或每日配置。旧缺失恢复标签的文件报告 `recovery_annotated=false`；旧缺失质量标志报告 `control_flags_annotated=false`，不能据此断言旧输入正常。消费端需支持扩展值，不能将 4 误当损坏或改写成 0。
 
 ## 采样与时钟
 
@@ -130,7 +130,7 @@ Quest／PICO 共用 `spd-quest-teleop`／`spd-pico-teleop --height-m HEIGHT`。�
 
 只有关闭文件、校验行数／标签／类型／有限值／时钟／模型／元数据／状态投影后，才标记 complete 并发布 `.h5`。中断、错误、漏 tick、队列溢出保留 partial。`max_frames=0` 不限，达到正数上限发布 `complete=true, success=false`；只有人工暂停中的 `r` 显式保存标记 success=true，任务成功不是自动评分。人工暂停中的 `d` 删除当前整条，不影响已保存段；运动中的 `d` 仅裁剪检查点之后的失败后缀。
 
-保存和丢弃完成后都直接生成全目录随机新任务、新 seed／布局／桌面，机器人初始化 Home、零速度，不继承旧状态、不进入准备区或执行回零运动，等待新的 `r` 绑定开段。首次显式任务／场景／桌距不锁定后续任务。新场景清空旧检查点及授权，不自动录制；保存或丢弃失败不更换当前场景。
+保存和丢弃完成后默认直接生成全目录随机新任务；`--task SCENE/TASK --repeat-task` 则始终保持指定任务。两种模式都生成新 seed／布局／桌面，机器人初始化 Home、零速度，不继承旧状态、不进入准备区或执行回零运动，等待新的 `r` 绑定开段。不加 `--repeat-task` 时，首次显式任务／场景不锁定后续任务；桌距覆盖始终只作用于首次场景。新场景清空旧检查点及授权，不自动录制；保存或丢弃失败不更换当前场景。
 
 公开校验器拒绝 `.partial.h5` 和 complete=false 的文件。内部 `allow_partial=True` 用于最终发布前验证，其 valid=true 不表示 complete=true，更不表示采集成功。意外进程终止可能留下尚未关闭的 HDF5，应作为失败数据处理，不能通过改扩展名绕过 complete 检查。
 

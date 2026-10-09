@@ -45,7 +45,7 @@ class CollectionControlTests(unittest.TestCase):
         self.publisher = self.peer.create_publisher(JointCommand, TOPIC, best_effort_qos())
         args = SimpleNamespace(collection_config=config_root() / "collect_sim.yaml", output=self.root,
                                max_frames=0, scene="hardware_free", task=None, seed=0,
-                               table_distance=None, headless=True, height_m=None)
+                               table_distance=None, headless=True, height_m=None, repeat_task=False)
         self.app = RosViewerApp(args)
         self.addCleanup(self.app.close)
         self.control = self.app.three_key

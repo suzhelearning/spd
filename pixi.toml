@@ -17,6 +17,9 @@ scipy = ">=1.11.0"
 trimesh = ">=4.8,<5"
 pyglfw = ">=2.10.2,<3"
 
+[feature.sim.pypi-options]
+no-build-isolation = ["spd", "spd-envs"]
+
 [feature.sim.pypi-dependencies]
 spd = { path = ".", editable = true }
 spd-envs = { path = "src/environments/spd_envs", editable = true }

@@ -1,7 +1,7 @@
 version: 2
 # Relative paths are resolved from this configuration file, not the shell cwd.
 # Root only: each episode is stored under its local start date (YYYYMMDD/).
-data_dir: /data/TianjiSim/trajectories
+data_dir: ../data/episodes
 # Whole-scene trajectories: one sample per eight 480 Hz physics ticks.
 # Online collection does not render or store training images.
 state_rate_hz: 60
