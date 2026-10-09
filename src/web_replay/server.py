@@ -13,22 +13,65 @@ import threading
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .dataset import ReplayEpisode, ReplayError, scan_directory
+from .static_scene import StaticScene
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _MAX_BODY_BYTES = 64 * 1024
 
 
+def _resolve_initial_episode(directory: Path, initial_episode: str | None) -> str | None:
+    if initial_episode is None:
+        return None
+    if not isinstance(initial_episode, str) or not initial_episode.strip():
+        raise ValueError("--episode 必须是目录内非空的相对 .h5 路径")
+    candidate = Path(initial_episode).expanduser()
+    if candidate.is_absolute():
+        raise ValueError("--episode 必须是相对于 --directory 的文件名或路径")
+    try:
+        resolved = (directory / candidate).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError(f"--episode 路径无法解析: {initial_episode}: {exc}") from exc
+    if not resolved.is_relative_to(directory):
+        raise ValueError("--episode 必须位于 --directory 内")
+    if not resolved.is_file():
+        raise ValueError(f"--episode 不是普通文件: {initial_episode}")
+    if not resolved.name.endswith(".h5") or resolved.name.endswith((".partial.h5", ".render.h5")):
+        raise ValueError(f"--episode 不是已完成的轨迹 .h5 文件: {initial_episode}")
+    return resolved.relative_to(directory).as_posix()
+
+
 class ReplayApplication:
     """Catalog paths plus a bounded cache of selected models, never all models."""
 
-    def __init__(self, directory: Path):
-        self.directory = directory
+    def __init__(self, directory: Path, initial_episode: str | None = None, *, scene_path: Path | None = None):
+        try:
+            root = Path(directory).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError, TypeError) as exc:
+            raise ValueError(f"目录无法解析: {directory}: {exc}") from exc
+        if not root.is_dir():
+            raise ValueError(f"不是目录: {root}")
+        self.directory = root
+        if scene_path is not None and initial_episode is not None:
+            raise ValueError("--scene 与 --episode 不能同时使用")
+        self.scene_path = None
+        if scene_path is not None:
+            try:
+                source = Path(scene_path).expanduser().resolve(strict=True)
+            except (OSError, RuntimeError, TypeError) as exc:
+                raise ValueError(f"场景模型路径无法解析: {scene_path}: {exc}") from exc
+            if not source.is_file():
+                raise ValueError(f"场景模型不是普通文件: {source}")
+            self.scene_path = source
+        self._scene: StaticScene | None = None
+        self.initial_episode = _resolve_initial_episode(root, initial_episode)
         self._summaries: dict[str, dict] = {}
         self._paths: dict[str, Path] = {}
         self._episodes: OrderedDict[str, ReplayEpisode] = OrderedDict()
         self._lock = threading.RLock()
 
     def scan(self, directory: str) -> dict:
+        if self.scene_path is not None:
+            raise ReplayError("静态场景模式不扫描轨迹目录")
         root, summaries, paths, skipped = scan_directory(directory)
         with self._lock:
             self.directory = root
@@ -50,6 +93,14 @@ class ReplayApplication:
                     self._episodes.popitem(last=False)
             self._episodes.move_to_end(episode_id)
             return self._episodes[episode_id]
+
+    def static_scene(self) -> StaticScene:
+        with self._lock:
+            if self.scene_path is None:
+                raise KeyError("服务未启用静态场景模式")
+            if self._scene is None:
+                self._scene = StaticScene(self.scene_path)
+            return self._scene
 
 
 class ReplayHTTPServer(ThreadingHTTPServer):
@@ -133,10 +184,27 @@ class ReplayHandler(BaseHTTPRequestHandler):
             path = unquote(parsed.path)
             app = self.server.application
             if path == "/api/config":
-                self._json(HTTPStatus.OK, {"directory": str(app.directory), "sample_rate": 60})
+                if app.scene_path is not None:
+                    self._json(HTTPStatus.OK, {"mode": "scene", "scene_path": str(app.scene_path)})
+                else:
+                    self._json(HTTPStatus.OK, {
+                        "mode": "replay",
+                        "directory": str(app.directory),
+                        "sample_rate": 60,
+                        "initial_episode": app.initial_episode,
+                    })
+                return
+            if path in {"/api/scene/info", "/api/scene/scene.glb"}:
+                static_scene = app.static_scene()
+                if path.endswith("/info"):
+                    self._json(HTTPStatus.OK, static_scene.info)
+                else:
+                    self._send(HTTPStatus.OK, static_scene.scene_glb, "model/gltf-binary")
                 return
             segments = path.strip("/").split("/")
             if len(segments) == 4 and segments[:2] == ["api", "episodes"]:
+                if app.scene_path is not None:
+                    raise KeyError("静态场景模式不提供轨迹帧")
                 if segments[3] not in {"info", "scene.glb", "frames"}:
                     raise KeyError("接口不存在")
                 episode = app.episode(segments[2])

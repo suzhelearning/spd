@@ -137,25 +137,30 @@ def _cameras(model: Any) -> dict[str, Any]:
 def _validate_camera_config(model: Any, document: Any) -> None:
     if document is None:
         return
-    if not isinstance(document, dict) or document.get("version") != 1 or not isinstance(document.get("cameras"), dict):
-        raise TrajectoryError("invalid camera configuration metadata")
-    from cameras.camera import look_at_rotation, rotation_to_mujoco_quat
+    from cameras.camera import CAMERA_NAMES, CameraError, parse_camera_config
 
-    for name, config in document["cameras"].items():
+    try:
+        configs = parse_camera_config(document, allow_legacy=True)
+    except CameraError as exc:
+        raise TrajectoryError("invalid camera configuration metadata") from exc
+    fovy = float(document["fovy_deg"])
+    for name in CAMERA_NAMES:
+        config = configs[name]
         camera = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, name)
-        if camera < 0 or not isinstance(config, dict):
+        if camera < 0:
             raise TrajectoryError(f"camera configuration is not present in compiled model: {name}")
-        parent = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, config["parent"])
-        position = np.asarray(config["position"], dtype=np.float64)
-        target = np.asarray(config["look_at"], dtype=np.float64)
-        if position.shape != (3,) or target.shape != (3,) or not np.all(np.isfinite(position)) or not np.all(np.isfinite(target)):
+        parent = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, config.parent)
+        position = np.asarray(config.position, dtype=np.float64)
+        quaternion = np.asarray(config.quaternion, dtype=np.float64)
+        if (parent < 0
+                or position.shape != (3,) or quaternion.shape != (4,)
+                or not np.all(np.isfinite(position)) or not np.all(np.isfinite(quaternion))):
             raise TrajectoryError(f"invalid camera coordinates: {name}")
-        quaternion = np.asarray(rotation_to_mujoco_quat(look_at_rotation(position, target)))
         if (int(model.cam_bodyid[camera]) != parent
                 or not np.allclose(model.cam_pos[camera], position, rtol=0, atol=1e-12)
                 or min(np.max(np.abs(model.cam_quat[camera] - quaternion)),
                        np.max(np.abs(model.cam_quat[camera] + quaternion))) > 1e-12
-                or not np.isclose(model.cam_fovy[camera], document["fovy_deg"], rtol=0, atol=1e-12)):
+                or not np.isclose(model.cam_fovy[camera], fovy, rtol=0, atol=1e-12)):
             raise TrajectoryError(f"camera configuration disagrees with compiled model: {name}")
 
 

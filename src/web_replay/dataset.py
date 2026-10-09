@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -13,7 +14,9 @@ from typing import Any, Mapping
 import h5py
 import mujoco
 import numpy as np
+from yaml.error import YAMLError
 
+from cameras.camera import CAMERA_NAMES, CameraConfig, CameraError, load_camera_config
 from data_collector.recorder import JOINT_NAMES, PHYSICS_HZ, ROBOT_CONFIG, SCHEMA_VERSION, STATE_RATE_HZ
 from data_collector.trajectory import TrajectoryError, load_model
 
@@ -25,6 +28,7 @@ CHUNK_FRAMES = 240
 _FRAME_STRIDE = PHYSICS_HZ // STATE_RATE_HZ
 _MAX_CHUNKS = 2
 _ALLOWED_ROOT_ATTRS = frozenset(("schema_version", "robot_config", "task", "success", "complete", "abort_reason"))
+_EDITOR_CAMERA_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "sim_cameras.yaml"
 
 
 class ReplayError(ValueError):
@@ -145,6 +149,38 @@ def _load_dataset_config(path: Path) -> None:
         raise ReplayError("dataset_config.json 不符合 schema-v2 数据集配置")
 
 
+def _load_editor_camera_config() -> tuple[dict[str, Any], dict[str, CameraConfig]]:
+    """Load the fixed viewer mount document, not trajectory camera metadata."""
+    try:
+        document, configs = load_camera_config(_EDITOR_CAMERA_CONFIG_PATH)
+    except FileNotFoundError as exc:
+        raise ReplayError(f"缺少回放相机配置文件: {_EDITOR_CAMERA_CONFIG_PATH}") from exc
+    except (OSError, UnicodeDecodeError, YAMLError, CameraError, TypeError, ValueError) as exc:
+        raise ReplayError(f"回放相机配置无效: {_EDITOR_CAMERA_CONFIG_PATH}: {exc}") from exc
+    return deepcopy(document), configs
+
+
+def _camera_mounts(
+    model: Any, configs: Mapping[str, CameraConfig]
+) -> tuple[list[dict[str, str | int]], tuple[int, ...]]:
+    mounts: list[dict[str, str | int]] = []
+    parent_body_ids: list[int] = []
+    for name in CAMERA_NAMES:
+        config = configs.get(name)
+        if config is None:
+            raise ReplayError(f"回放相机配置缺少 {name}")
+        parent_body_id = int(
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, config.parent)
+        )
+        if parent_body_id <= 0:
+            raise ReplayError(
+                f"相机 {name} 的挂载父体不存在或为 world: {config.parent}"
+            )
+        mounts.append({"name": name, "parent_body_id": parent_body_id})
+        parent_body_ids.append(parent_body_id)
+    return mounts, tuple(parent_body_ids)
+
+
 def _field_spec(value: Any, name: str) -> tuple[np.dtype[Any], tuple[int, ...]]:
     if not isinstance(value, dict) or set(value) != {"dtype", "shape"}:
         raise ReplayError(f"model metadata fields.{name} 必须包含 dtype 和 shape")
@@ -215,28 +251,8 @@ def _episode_labels(metadata: Mapping[str, Any], root_task: str) -> tuple[str, s
     return task, scene, title
 
 
-def _descriptor(handle: h5py.File, path: Path) -> _Descriptor:
-    if path.name.endswith(".partial.h5"):
-        raise ReplayError("partial 轨迹不是已完成 episode")
-    root_attrs = set(handle.attrs)
-    if root_attrs - _ALLOWED_ROOT_ATTRS:
-        raise ReplayError("episode 包含不支持的 schema-v2 根属性")
-    if _integer(handle.attrs.get("schema_version"), "schema_version") != SCHEMA_VERSION:
-        raise ReplayError("不支持的 episode schema_version")
-    if _text(handle.attrs.get("robot_config", ""), "robot_config") != ROBOT_CONFIG:
-        raise ReplayError("episode robot_config 与 schema-v2 配置不一致")
-    complete = _boolean(handle.attrs.get("complete"), "episode complete")
-    _boolean(handle.attrs.get("success"), "episode success")
-    if not complete:
-        raise ReplayError("episode 尚未完成")
-    if "abort_reason" in handle.attrs:
-        raise ReplayError("带 abort_reason 的 episode 不能标记为完成")
-    root_task = _text(handle.attrs.get("task", ""), "episode task")
-    if not root_task:
-        raise ReplayError("episode task 不能为空")
-    if set(handle) - {"model", "trajectory", "collection_events"} or not {"model", "trajectory"} <= set(handle):
-        raise ReplayError("schema-v2 episode 必须包含 model 和 trajectory")
-
+def _model_metadata(handle: h5py.File) -> dict[str, Any]:
+    """Validate model-only headers without touching trajectory datasets."""
     model_group = handle["model"]
     if not isinstance(model_group, h5py.Group) or set(model_group) != {"mjb", "metadata"}:
         raise ReplayError("model 必须仅包含 mjb 与 metadata")
@@ -273,6 +289,33 @@ def _descriptor(handle: h5py.File, path: Path) -> _Descriptor:
         )
     if metadata.get("physics_hz") != PHYSICS_HZ or metadata.get("state_rate_hz") != SAMPLE_RATE:
         raise ReplayError("model metadata 的物理或状态采样率不符合 480/60 Hz")
+    return metadata
+
+
+def _descriptor(handle: h5py.File, path: Path) -> _Descriptor:
+    if path.name.endswith(".partial.h5"):
+        raise ReplayError("partial 轨迹不是已完成 episode")
+    root_attrs = set(handle.attrs)
+    if root_attrs - _ALLOWED_ROOT_ATTRS:
+        raise ReplayError("episode 包含不支持的 schema-v2 根属性")
+    if _integer(handle.attrs.get("schema_version"), "schema_version") != SCHEMA_VERSION:
+        raise ReplayError("不支持的 episode schema_version")
+    if _text(handle.attrs.get("robot_config", ""), "robot_config") != ROBOT_CONFIG:
+        raise ReplayError("episode robot_config 与 schema-v2 配置不一致")
+    complete = _boolean(handle.attrs.get("complete"), "episode complete")
+    _boolean(handle.attrs.get("success"), "episode success")
+    if not complete:
+        raise ReplayError("episode 尚未完成")
+    if "abort_reason" in handle.attrs:
+        raise ReplayError("带 abort_reason 的 episode 不能标记为完成")
+    root_task = _text(handle.attrs.get("task", ""), "episode task")
+    if not root_task:
+        raise ReplayError("episode task 不能为空")
+    if set(handle) - {"model", "trajectory", "collection_events"} or not {"model", "trajectory"} <= set(handle):
+        raise ReplayError("schema-v2 episode 必须包含 model 和 trajectory")
+
+    metadata = _model_metadata(handle)
+    model_hash = metadata["model_sha256"]
 
     fields = metadata.get("fields")
     if not isinstance(fields, dict) or not fields:
@@ -503,12 +546,16 @@ class ReplayEpisode:
                     initial_state = self._read_initial_state(trajectory, descriptor.metadata)
                 self._assert_source_identity()
                 model = load_model(model_bytes, descriptor.metadata, expected_model_sha256=descriptor.model_sha256)
+                camera_config, camera_configs = _load_editor_camera_config()
+                camera_mounts, mount_body_ids = _camera_mounts(model, camera_configs)
                 data = mujoco.MjData(model)
                 self._model, self._data = model, data
                 self._object_body_ids = np.asarray(descriptor.metadata["object_body_ids"], dtype=np.intp)
                 self._set_kinematics(*initial_state[:3])
                 self._verify_object_pose(initial_state[3], 0)
-                scene_glb, body_ids, center = export_scene(model, data, descriptor.metadata)
+                scene_glb, body_ids, center = export_scene(
+                    model, data, descriptor.metadata, extra_body_ids=mount_body_ids
+                )
                 body_index_array = np.asarray(body_ids, dtype=np.intp)
                 body_names = [
                     mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(body_id))
@@ -528,6 +575,8 @@ class ReplayEpisode:
                     "sample_rate": SAMPLE_RATE,
                     "body_ids": [int(body_id) for body_id in body_index_array],
                     "body_names": body_names,
+                    "camera_config": camera_config,
+                    "camera_mounts": camera_mounts,
                     "center": center,
                     "chunk_frames": CHUNK_FRAMES,
                     "frame_stride": len(body_index_array) * 7,
@@ -553,6 +602,8 @@ class ReplayEpisode:
                 **self._info,
                 "body_ids": list(self._info["body_ids"]),
                 "body_names": list(self._info["body_names"]),
+                "camera_config": deepcopy(self._info["camera_config"]),
+                "camera_mounts": deepcopy(self._info["camera_mounts"]),
                 "center": list(self._info["center"]),
             }
 

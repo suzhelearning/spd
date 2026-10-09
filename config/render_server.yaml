@@ -3,6 +3,8 @@ version: 1
 input_dir: /data/TianjiSim/trajectories
 # Keep rendered products separate; raw trajectories remain read-only.
 output_dir: /data/TianjiSim-rendered
+# Loaded once at batch startup; a relative path is resolved from this YAML file.
+camera_config_path: sim_cameras.yaml
 # EGL enumeration indices, NOT guaranteed to match nvidia-smi/CUDA ordinals.
 # Run --check-gpus on the server before using these eight indices.
 gpu_ids: [0, 1, 2, 3, 4, 5, 6, 7]
@@ -14,6 +16,6 @@ render:
   width: 224
   height: 168
   jpeg_quality: 90
-  # Camera positions are intentionally not specified here. Use final URDF-derived
-  # model cameras; provisional camera snapshots require an explicit diagnostic opt-in.
+  # Camera placement comes from the snapshotted top-level camera_config_path.
+  # Provisional calibration still requires an explicit diagnostic opt-in.
   allow_provisional_cameras: false

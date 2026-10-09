@@ -323,7 +323,13 @@ max_frames: 0
 
 每段内嵌 MuJoCo 编译模型（含网格、纹理与相机）、版本与 SHA-256、任务和实际随机参数、关节／物体映射与相机元数据。采集开始后的样本直接来自完成物理积分的场景，不等新的 ROS 命令、不补录旧缓存。手–物接触在每个物理步观察，按采样区间累计，避免只看 60 Hz 瞬间漏掉短接触；不会把桌面接触和机器人自碰撞当作手–物接触。
 
-`config/sim_cameras.yaml` 的三路相机当前只是 `provisional-v1` 预览定义，位置尚未定稿。离线渲染器只使用模型中已有的 `top`、`left_wrist`、`right_wrist` 命名相机，不硬编码外参，不新增或替代缺失相机。正式渲染默认拒绝临时或缺少标定确认的快照。最终位置将由用户提供的 URDF 相机安装定义转换到模型；标准 URDF 无原生相机标签，具体 link/joint 或 Gazebo 扩展转换待实际文件格式确定后接入，本次不猜测实现。
+`config/sim_cameras.yaml` 使用相机配置 **version 2**，为三个机器人安装位置分别保留局部位姿。`top` 默认挂到 `Link_Stand`，`left_wrist`／`right_wrist` 默认挂到 `l_wrist`／`r_wrist`；三个视角都不是世界坐标系相机。以后直接修改每项的 `parent`、`position` 和 `rpy_deg`，即可指定实际安装部件和外参：
+
+- `parent`：模型中存在的机器人 body 名称；新配置不允许 `world`。
+- `position: [x, y, z]`：相机原点在 parent 坐标系中的位置，单位米。
+- `rpy_deg: [roll, pitch, yaw]`：相机到 parent 的旋转，单位度，采用 `Rz(yaw) Ry(pitch) Rx(roll)`。相机沿自身 `-Z` 看，图像上方为 `+Y`；真机标定若使用其他相机轴约定，需先转换。
+
+当前 `provisional-v2` 数值仅保留旧预览的近似方向，不是实测安装尺寸或正式标定。新采集会话将这些局部相机写入 MJB；采集期间不热更新配置，修改后须重建会话。历史轨迹内嵌的 version-1 `look_at` 配置仍按原快照严格读取，不改写旧文件。
 
 新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
@@ -339,6 +345,26 @@ pixi run replay_episode '/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5
 
 数据契约见 [docs/schema-v2.md](docs/schema-v2.md)。在线人工／自动检查点、暂停与失败回退已实现，人工点允许接触；超过 10 秒无接触裁剪和 30 Hz 训练样本构建仍未实现，属于后续数据处理。离线渲染生成所有保留源帧的图像，不改变采样时间网格。旧 `align_30hz`、`filter_contacts` 入口已移除，不能从 state-only 文件恢复未记录的原始命令。
 
+## 单场景相机视角调整
+
+只调相机安装位姿时，无需加载或播放轨迹：
+
+```bash
+pixi run --locked -e render spd-web \
+  --scene /home/fcl/datasets/spd_sim/episode_2a2d4ae61f7245928d012cb9e66455ba.h5 \
+  --port 8765
+```
+
+浏览器打开 `http://127.0.0.1:8765`。`--scene` 仅从指定 HDF5 读取内嵌 MJB 与模型元数据，显示模型编译后的 `qpos0`；不是采集轨迹的第一帧。此模式不扫描目录、不读取任何轨迹帧、不推进物理，也不显示播放控件。
+
+主视图显示 `top`、`left_wrist`、`right_wrist` 的位置、坐标轴与视锥，底部同时预览三个相机画面。右侧每个相机提供六个滑条与数值输入：局部 `X/Y/Z`（米）和 `Roll/Pitch/Yaw`（度）；数值输入超出默认滑条范围时显式扩展范围。位姿相对于各自安装父体，旋转为 `Rz(yaw) Ry(pitch) Rx(roll)`，光轴为相机局部 `-Z`、图像上方为 `+Y`。鼠标旋转、平移、缩放的是主观察视角，不修改相机安装位姿。
+
+默认位姿来自 `config/sim_cameras.yaml`。`top` 安装在 `Link_Stand`，当前指定 `position: [0.1, 0, 0.5]`、`rpy_deg: [30, 0, -90]`；左右腕相机分别安装在 `l_wrist`、`r_wrist`。修改配置后重启服务并刷新页面。
+
+“恢复初始位姿”仅重置对应相机；“重置主观察视角”仅重置观察视图。“下载 v2 YAML”导出完整相机配置 `sim_cameras.v2.yaml`，可作为离线渲染的 `--camera-config` 输入。网页调整只保留在当前页面，不会自动覆盖配置文件或源 HDF5；关闭或刷新前应先下载。若要网页下次启动采用导出参数，将该 YAML 的配置同步到 `config/sim_cameras.yaml` 后重启服务并刷新页面。
+
+三幅预览使用 WebGL，供视角检查，不等同于正式 MuJoCo 训练 RGB。当前配置仍为 provisional；指定安装位姿不代表已完成真机相机标定。
+
 ## 网页三维轨迹回放（60 Hz）
 
 在项目根目录启动，不需要 ROS、头显或原生 Viewer：
@@ -349,7 +375,7 @@ pixi run --locked spd-web --directory /home/fcl/datasets/spd_sim --port 8765
 
 浏览器打开 `http://127.0.0.1:8765`。左侧输入**服务端文件系统目录**并扫描，递归列出已完成的 schema-v2 轨迹；浏览器不会上传本机目录。每个轨迹所在目录需要配套 `dataset_config.json`，MuJoCo 版本必须与内嵌 MJB 完全一致。无效、不完整或不可读文件显示在跳过列表中；扫描失败保留上一次可用列表。
 
-选择轨迹后加载真实模型、网格和纹理，使用 `mj_kinematics` 恢复记录的机器人与物体位姿，浏览器通过本地 Three.js 绘制。模型按需加载，帧数据以最多 240 帧的有界块读取，不一次解码全部轨迹，不推进物理、不修改 HDF5。观察视图不是离线训练 RGB，相机标定要求不被该入口替代。
+选择轨迹后加载真实模型、网格和纹理，使用 `mj_kinematics` 恢复记录的机器人与物体位姿，浏览器通过本地 Three.js 绘制。底部三个相机画面等宽横向排列，总宽度与 3D 视图区一致，保持 16:9 画面比例。模型按需加载，帧数据以最多 240 帧的有界块读取，不一次解码全部轨迹，不推进物理、不修改 HDF5。观察视图不是离线训练 RGB，相机标定要求不被该入口替代。
 
 支持播放／暂停、拖动进度、上一帧／下一帧、重新开始、循环与重置视角；鼠标旋转、平移和缩放。空格播放／暂停，左右方向键逐帧；输入框内不拦截按键。切入后台自动暂停。播放按源数据 **60 Hz、1 倍速仿真时间轴**推进，缓冲期间冻结时间轴；页面单独显示实际绘制 FPS。显示性能取决于浏览器 GPU，性能不足时可能跳过显示帧，但不会删除源数据。
 
@@ -399,7 +425,7 @@ pixi install -e render --locked
 # 不读取数据，只在每个 worker 中创建 EGL 上下文并报告真实 GPU
 pixi run -e render spd-render --check-gpus
 
-# 最终相机已写入模型并确认标定后，正式批量渲染
+# config/sim_cameras.yaml 的实际安装位姿和标定确认后，正式批量渲染
 pixi run -e render spd-render \
   --input /data/TianjiSim/trajectories \
   --output /data/TianjiSim-rendered
@@ -410,20 +436,23 @@ pixi run -e render spd-render \
 本机或少量 GPU 可覆盖设备型号和并发，例如：
 
 ```bash
-pixi run -e render spd-render --check-gpus --gpus 0 --expected-gpu-name "RTX 5060 Ti"
+pixi run -e render spd-render --check-gpus --gpus 0 --expected-gpu-name "RTX 5060"
 
 # 仅诊断临时视角；不是对相机位置的确认，不应混入正式训练图像
 pixi run -e render spd-render \
-  --gpus 0 --expected-gpu-name "RTX 5060 Ti" \
+  --gpus 0 --expected-gpu-name "RTX 5060" \
+  --camera-config config/sim_cameras.yaml \
   --allow-provisional-cameras \
   --input /path/to/trajectories --output /path/to/diagnostic-renders
 ```
 
-相机位置未定时可以完成 GPU／吞吐诊断，但默认正式命令会拒绝当前 provisional 数据。不要通过改 revision 名称冒充实测标定；正式 URDF 相机接入后必须重新检查视角及投影。既有轨迹中的相机不会随仓库 URDF 改动而自动改变；对旧轨迹注入新标定需要另行提供明确的转换流程，不能静默换模型。
+默认 `config/render_server.yaml` 的 `camera_config_path: sim_cameras.yaml` 按该配置所在目录解析；`--camera-config PATH` 按启动工作目录解析，并覆盖默认路径。配置在批次启动时读入一次快照，后续修改 YAML 不影响已启动的 worker。将批次配置的 `camera_config_path` 设为 `null` 可只使用源模型内嵌相机。
+
+已有轨迹也可以使用同一局部位姿配置重新渲染：先严格校验原 MJB，再仅修改内存模型的相机挂载，不改原 HDF5、机器人动力学或记录状态。实际相机配置进入输出元数据和设置哈希；修改位姿后须选择新的输出目录，不能复用或覆盖旧参数产物。相机位置未定时只允许显式诊断模式；不要通过改 revision 名称冒充实测标定，正式使用前仍需检查视角及投影。
 
 将完整日期目录（包括 `dataset_config.json`）复制到服务器。内嵌模型包含网格／纹理，不需要原始场景 XML、原 ABC 工作区或采集主机路径。输入和输出目录必须分开；建议用本地 NVMe 暂存，完成后再归档到共享存储。输出需要支持 POSIX 独占创建、硬链接和 fsync 的文件系统。
 
-默认输出 224×168、JPEG quality 90 RGB 和无损 int32 实例掩码。物体的多个外观网格统一映射到原始实例 ID；0 表示天空／无几何，-1 表示机器人，-2 表示非任务环境，正数为任务物体（含固定支架）。每帧保留源行号、物理 tick、仿真时间、单调时间及实际相机世界位置／旋转矩阵。相机姿态只来自源模型和记录状态。
+默认输出 224×168、JPEG quality 90 RGB 和无损 int32 实例掩码。物体的多个外观网格统一映射到原始实例 ID；0 表示天空／无几何，-1 表示机器人，-2 表示非任务环境，正数为任务物体（含固定支架）。每帧保留源行号、物理 tick、仿真时间、单调时间及实际相机世界位置／旋转矩阵。相机世界姿态由生效的局部安装位姿与每帧机器人状态共同计算。
 
 输出路径镜像输入目录，文件名为 `episode_<ID>.render.h5`，与原轨迹分离。每段先写 partial，逐帧验证 JPEG、掩码、关联时钟、姿态、哈希和恢复误差后再发布；已有完整输出只在源文件／模型／元数据／设置均匹配且内容校验通过时跳过。配置变化或输出损坏直接失败，不覆盖、不自动重试。残留 partial／lock 必须先确认没有运行进程，再人工检查处理。
 

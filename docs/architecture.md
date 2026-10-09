@@ -34,7 +34,7 @@ SPD C++ physics：按名称映射目标 → position actuators → MuJoCo 物理
 | `tools/wuji_hand_native/` | 独立固定 Hand2 环境、重定向桥接与模型 |
 | `src/interfaces/` | Python wire 工具、终端键盘输入与 ROS 消息定义 |
 | `src/simulation/` | 物理线程 `CollectionControl`、模型准备、原生编排、Viewer 与场景／Home 生命周期 |
-| `src/cameras/` | 世界／腕部仿真相机与 RGB 获取 |
+| `src/cameras/` | 机器人部件局部相机位姿、模型挂载／内存覆盖与 RGB 获取 |
 | `src/data_collector/` | 配置、采集状态机、ROS 控制、完整物理轨迹与模型快照、独立恢复验证 |
 | `src/offline_rendering/` | spawn 多 GPU 调度、原生 EGL、逐帧恢复渲染与输出校验 |
 | `src/description/` | manifest、模型编译与资源定位 |
@@ -122,7 +122,7 @@ MJB 的 custom numeric `spd_material_friction` 保存版本 2 和 row-major 8×8
 
 ## 6. 完整场景轨迹采集与恢复
 
-`config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机定义仍由 `config/sim_cameras.yaml` 注入模型并保存，但在线采集不创建渲染器、不采 RGB。Viewer 是操作反馈，与后续训练渲染无关。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
+`config/collect_sim.yaml` 使用 version 2：物理 480 Hz、固定轨迹 60 Hz，每 8 个物理步记录一帧。三路相机由独立的 version-2 `config/sim_cameras.yaml` 定义，以 parent、position（米）、rpy_deg（度）指定机器人部件上的局部安装位姿；默认 top 挂 Link_Stand，左右相机挂各自 wrist。模型装配时注入并保存这些定义，但在线采集不创建渲染器、不采 RGB。Viewer 是操作反馈，与后续训练渲染无关。相机配置仍为 provisional；名义仿真频率不是负载下墙钟性能保证。
 
 `r/s/d` 根据状态分流：待接手的 `r` 绑定开段或恢复现场；运动中的 `r` 更新检查点，`s` 人工暂停，`d` 回退；人工暂停中的 `r` 保存整条、`d` 丢弃整条、`s` 恢复运动。人工恢复直接 `_begin_bind(2)`，回退事务完成后直接 `_begin_bind(3)`，都在有效稳定输入下自动授权续采，无额外按键；普通失跟踪仍需首次 `r`。绑定处理中 `s` 可取消／暂停，磁盘保存、丢弃和回退期间普通键不排队重放。`q` 退出保留 partial，不触发保存。
 
@@ -154,7 +154,7 @@ HDF5 仅保留选中前缀和其后续采，主机单调时钟不回退。schema
 
 所有 worker 初始化成功才派发 episode，空闲进程从共享队列取下一段。每段独立加载内嵌模型，单个 Renderer 顺序产生三视角 RGB 和实例掩码，缓冲区有界，不把像素送到父进程。每卡显存独立；workers_per_gpu 可调但不承诺线性加速。当前是原生 EGL 而不是 Warp／Madrona，不需要 CUDA 训练框架。
 
-相机位置由用户后续 URDF 定义，当前只固定逻辑名 top／left_wrist／right_wrist。渲染器不决定外参，只读模型中已有相机；缺失即报错。默认拒绝 provisional 或无 calibration_revision 的快照，显式诊断开关允许预览但输出标记 diagnostic_only。现有临时 YAML 的坐标不代表正式相机位置。URDF link/joint／相机扩展转换和历史轨迹换相机须在实际格式确定后单独接入，不隐式修改已记录模型。
+相机逻辑名固定为 top／left_wrist／right_wrist，安装位姿由用户直接修改 `config/sim_cameras.yaml`，不硬编码到渲染器。批次 YAML 的 camera_config_path 或 CLI --camera-config 在启动时加载一次配置快照并传给 worker；原始 MJB 严格校验后，只对内存模型应用相机覆盖，缺失相机／父体或 world 挂载明确拒绝。输出保存生效的配置与相机数组，完整覆盖配置进入设置哈希，原文件／模型／元数据身份保持不变；相机配置变化不能复用旧产物。未指定覆盖时保留源模型的相机，历史 version-1 元数据仍按原快照读取。默认拒绝 provisional 或无 calibration_revision 的生效配置，显式诊断开关允许预览但输出标记 diagnostic_only；当前数值不是正式标定。
 
 渲染对原始轨迹只读，不推进物理；逐帧赋值并调用普通 `mj_forward` 恢复记录姿态，复用机器人／物体位姿一致性检查。此路径不依赖 ROS 原生模块，也不计算新材料策略的求解力；物理续跑或材料接触诊断须使用 `material_forward/material_step`。隐藏 group0／3 碰撞代理；MuJoCo 分割的 GEOM ID 通过物体子树映射成源 instance_id，同一物体的多个网格共用一个 ID。render schema 2 保留 0 天空、-1 机器人、-2 其他环境，并新增 -3 桌子；柜体、抽屉等任务物体仍用正 ID。相机世界位置、旋转矩阵及源 frame/tick/time 同行写出。
 

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
+import { CameraRig } from './camera-rig.js';
 
 const API_ROOT = '/api';
 const SOURCE_SAMPLE_RATE = 60;
@@ -9,6 +10,11 @@ const MAX_CACHED_CHUNKS = 6;
 const PRESENT_INTERVAL_MS = 1000 / 60;
 
 const elements = {
+  workspace: document.querySelector('.workspace'),
+  catalogPanel: document.getElementById('catalogPanel'),
+  applicationTitle: document.getElementById('applicationTitle'),
+  headerDescription: document.getElementById('headerDescription'),
+  productKicker: document.getElementById('productKicker'),
   directoryForm: document.getElementById('directoryForm'),
   directoryInput: document.getElementById('directoryInput'),
   scanButton: document.getElementById('scanButton'),
@@ -19,6 +25,7 @@ const elements = {
   skippedPanel: document.getElementById('skippedPanel'),
   skippedSummary: document.getElementById('skippedSummary'),
   skippedList: document.getElementById('skippedList'),
+  viewerModeKicker: document.getElementById('viewerModeKicker'),
   episodeTitle: document.getElementById('episodeTitle'),
   episodePath: document.getElementById('episodePath'),
   sceneStatus: document.getElementById('sceneStatus'),
@@ -28,6 +35,10 @@ const elements = {
   stageMessageText: document.getElementById('stageMessageText'),
   stageSpinner: document.getElementById('stageSpinner'),
   bufferingIndicator: document.getElementById('bufferingIndicator'),
+  cameraPreviewGrid: document.getElementById('cameraPreviewGrid'),
+  cameraPreviewSlots: new Map(
+    [...document.querySelectorAll('[data-camera-preview]')].map((slot) => [slot.dataset.cameraPreview, slot]),
+  ),
   taskValue: document.getElementById('taskValue'),
   frameValue: document.getElementById('frameValue'),
   timeValue: document.getElementById('timeValue'),
@@ -37,11 +48,16 @@ const elements = {
   timelineStart: document.getElementById('timelineStart'),
   timelineEnd: document.getElementById('timelineEnd'),
   restartButton: document.getElementById('restartButton'),
+  replayControls: document.getElementById('replayControls'),
   previousButton: document.getElementById('previousButton'),
   playButton: document.getElementById('playButton'),
   nextButton: document.getElementById('nextButton'),
   loopButton: document.getElementById('loopButton'),
   resetCameraButton: document.getElementById('resetCameraButton'),
+  cameraRigEditor: document.getElementById('cameraRigEditor'),
+  cameraRigStatus: document.getElementById('cameraRigStatus'),
+  cameraRigExportButton: document.getElementById('cameraRigExportButton'),
+  sceneResetCameraButton: document.getElementById('sceneResetCameraButton'),
 };
 
 const publishedReplayState = {
@@ -52,6 +68,8 @@ const publishedReplayState = {
   sampleRate: SOURCE_SAMPLE_RATE,
   renderFps: 0,
   buffering: false,
+  cameraMounts: [],
+  mode: 'replay',
 };
 window.replayState = publishedReplayState;
 
@@ -90,6 +108,8 @@ const state = {
   fpsFrames: 0,
   renderFps: 0,
   lastFpsMeasurement: 0,
+  previewViewports: [],
+  mode: 'replay',
 };
 
 const scene = new THREE.Scene();
@@ -110,6 +130,8 @@ let renderer = null;
 let controls = null;
 let gltfLoader = null;
 let resizeObserver = null;
+let cameraRig = null;
+const renderSize = new THREE.Vector2();
 
 function nonEmptyString(value) {
   return typeof value === 'string' && value.trim() ? value.trim() : '';
@@ -175,6 +197,24 @@ function syncReplayState() {
   publishedReplayState.sampleRate = state.sampleRate;
   publishedReplayState.renderFps = Math.round(state.renderFps * 10) / 10;
   publishedReplayState.buffering = state.buffering;
+  publishedReplayState.mode = state.mode;
+}
+
+function setPresentationMode(mode) {
+  state.mode = mode;
+  const staticScene = mode === 'scene';
+  document.title = staticScene ? 'SPD 相机位姿调节' : 'SPD 轨迹回放';
+  elements.workspace.classList.toggle('scene-mode', staticScene);
+  elements.catalogPanel.hidden = staticScene;
+  elements.replayControls.hidden = staticScene;
+  elements.sceneResetCameraButton.hidden = !staticScene;
+  elements.viewerModeKicker.textContent = staticScene ? '当前场景' : '当前轨迹';
+  elements.applicationTitle.textContent = staticScene ? '三维场景相机调节' : '三维轨迹回放';
+  elements.productKicker.textContent = staticScene ? 'SPD 静态场景' : 'SPD 数据回放';
+  elements.headerDescription.textContent = staticScene
+    ? '查看编译后的静态模型并手动调整三台相机'
+    : '按源数据 60 Hz 时间轴查看已完成轨迹';
+  elements.replayCanvas.setAttribute('aria-label', staticScene ? '静态三维场景' : '三维轨迹场景');
 }
 
 function setScanStatus(message, tone = 'neutral') {
@@ -211,12 +251,28 @@ function setBuffering(buffering) {
 }
 
 function updateHeading() {
+  const staticScene = state.mode === 'scene';
   if (!state.selectedSummary && !state.info) {
-    elements.episodeTitle.textContent = '尚未选择轨迹';
-    elements.episodePath.textContent = '请从左侧列表选择一条已完成轨迹。';
+    elements.episodeTitle.textContent = staticScene ? '尚未加载场景' : '尚未选择轨迹';
+    elements.episodePath.textContent = staticScene
+      ? '正在等待服务端静态模型。'
+      : '请从左侧列表选择一条已完成轨迹。';
     return;
   }
   const descriptor = state.info || state.selectedSummary;
+  if (staticScene) {
+    elements.episodeTitle.textContent = nonEmptyString(descriptor?.title)
+      || nonEmptyString(descriptor?.scene)
+      || '静态模型';
+    const sceneName = nonEmptyString(descriptor?.scene)
+      || nonEmptyString(descriptor?.source_path)
+      || `场景 ID：${state.episodeId || '—'}`;
+    const poseSource = nonEmptyString(descriptor?.pose_source) === 'compiled_qpos0'
+      ? '编译模型 qpos0'
+      : '静态模型';
+    elements.episodePath.textContent = `${sceneName} · ${poseSource}`;
+    return;
+  }
   elements.episodeTitle.textContent = displayTitle(descriptor);
   elements.episodePath.textContent = nonEmptyString(state.selectedSummary?.relative_path)
     || nonEmptyString(descriptor?.relative_path)
@@ -262,6 +318,7 @@ function updateTransportUI() {
   elements.playButton.disabled = !ready;
   elements.loopButton.disabled = !ready;
   elements.resetCameraButton.disabled = !ready;
+  elements.sceneResetCameraButton.disabled = state.mode !== 'scene' || !state.sceneRoot;
   elements.playButton.textContent = state.playing ? '暂停' : '播放';
   elements.playButton.setAttribute('aria-pressed', String(state.playing));
   elements.loopButton.textContent = `循环：${state.loop ? '开' : '关'}`;
@@ -442,6 +499,29 @@ function normalizeInfo(raw, expectedId) {
   };
 }
 
+function normalizeStaticSceneInfo(raw) {
+  if (!raw || typeof raw !== 'object' || raw.mode !== 'scene') {
+    throw new Error('静态场景信息格式无效。');
+  }
+  if (nonEmptyString(raw.id) && raw.id !== 'static-scene') {
+    throw new Error('静态场景标识无效。');
+  }
+  if (!Array.isArray(raw.body_ids) || raw.body_ids.length === 0) {
+    throw new Error('静态场景没有可显示的刚体。');
+  }
+  const bodyIds = raw.body_ids.map(Number);
+  if (!bodyIds.every(Number.isInteger) || new Set(bodyIds).size !== bodyIds.length) {
+    throw new Error('静态场景刚体索引无效。');
+  }
+  return {
+    ...raw,
+    id: 'static-scene',
+    mode: 'scene',
+    bodyIds,
+    center: normalizeCenter(raw.center) || normalizeCenter(raw.workspace_center),
+  };
+}
+
 function chunkStartForFrame(frame) {
   return Math.floor(frame / state.chunkFrames) * state.chunkFrames;
 }
@@ -605,6 +685,9 @@ function clearInstalledEpisode() {
     object.removeFromParent();
   }
   disposeSceneResources(state.sceneObjects);
+  cameraRig?.clear();
+  state.previewViewports = [];
+  publishedReplayState.cameraMounts = [];
   state.sceneRoot = null;
   state.sceneObjects = [];
   state.bodyNodes.clear();
@@ -632,6 +715,7 @@ function clearInstalledEpisode() {
 }
 
 function clearSelection() {
+  setPresentationMode('replay');
   state.generation += 1;
   abortEpisodeRequests();
   clearInstalledEpisode();
@@ -670,8 +754,8 @@ function mountModel(gltf, info) {
   scene.add(root);
   scene.updateMatrixWorld(true);
   try {
-    // Frame blocks contain world poses. Detach every body group to the identity scene root
-    // once so assigning position/quaternion never multiplies an exported body hierarchy.
+    // Replay frames and compiled static scenes use world poses. Detach each body group
+    // so later world-pose assignment never multiplies an exported hierarchy.
     for (const node of orderedNodes) {
       scene.attach(node);
       node.matrixAutoUpdate = true;
@@ -693,7 +777,24 @@ function mountModel(gltf, info) {
   state.needsRender = true;
 }
 
+function installCameraRig(info) {
+  if (!cameraRig) {
+    throw new Error('相机安装编辑器尚未初始化。');
+  }
+  scene.updateMatrixWorld(true);
+  cameraRig.install({
+    cameraConfig: info.camera_config,
+    cameraMounts: info.camera_mounts,
+    bodyNodes: state.bodyNodes,
+  });
+  updatePreviewViewports();
+  state.needsRender = true;
+}
+
 function applyFrame(frame) {
+  if (state.mode !== 'replay') {
+    return false;
+  }
   const clamped = clampFrame(frame);
   const chunk = cachedChunkForFrame(clamped);
   if (!chunk) {
@@ -714,6 +815,8 @@ function applyFrame(frame) {
     node.matrixAutoUpdate = true;
     node.matrixWorldNeedsUpdate = true;
   }
+  scene.updateMatrixWorld(true);
+  cameraRig?.update(state.bodyNodes);
 
   state.frame = clamped;
   state.requestedFrame = clamped;
@@ -772,7 +875,7 @@ function failBufferedFrame(start, error) {
 }
 
 function requestChunk(start, { prefetch = false } = {}) {
-  if (!state.info || start < 0 || start >= state.frames) {
+  if (state.mode !== 'replay' || !state.info || start < 0 || start >= state.frames) {
     return Promise.resolve(null);
   }
   const cached = state.chunks.get(start);
@@ -824,7 +927,7 @@ function requestChunk(start, { prefetch = false } = {}) {
 }
 
 function preloadNextChunk(frame) {
-  if (!state.info) {
+  if (state.mode !== 'replay' || !state.info) {
     return;
   }
   const nextStart = chunkStartForFrame(frame) + state.chunkFrames;
@@ -834,7 +937,7 @@ function preloadNextChunk(frame) {
 }
 
 function seekTo(frame, { pause = false } = {}) {
-  if (!state.info || !state.sceneRoot) {
+  if (state.mode !== 'replay' || !state.info || !state.sceneRoot) {
     return;
   }
   if (pause) {
@@ -879,7 +982,7 @@ function pausePlayback({ announce = true, cancelBuffer = false } = {}) {
 }
 
 function startPlayback() {
-  if (!state.info || !state.sceneRoot) {
+  if (state.mode !== 'replay' || !state.info || !state.sceneRoot) {
     return;
   }
   if (state.frame >= state.frames - 1 && !state.loop && !state.buffering) {
@@ -905,7 +1008,7 @@ function togglePlayback() {
 }
 
 function stepFrame(delta) {
-  if (!state.info || !state.sceneRoot) {
+  if (state.mode !== 'replay' || !state.info || !state.sceneRoot) {
     return;
   }
   pausePlayback({ announce: false, cancelBuffer: true });
@@ -918,7 +1021,7 @@ function stepFrame(delta) {
 }
 
 function advancePlayback(now) {
-  if (!state.playing || state.buffering || !state.info || state.frames < 1) {
+  if (state.mode !== 'replay' || !state.playing || state.buffering || !state.info || state.frames < 1) {
     return;
   }
   const elapsedFrames = Math.floor(((now - state.playbackAnchorTime) / 1000) * state.sampleRate);
@@ -975,6 +1078,9 @@ function resetCamera() {
     }
     bounds.expandByObject(object);
   }
+  for (const { marker } of cameraRig.getPreviewEntries()) {
+    bounds.expandByObject(marker);
+  }
 
   const sphere = new THREE.Sphere();
   if (!bounds.isEmpty()) {
@@ -1017,10 +1123,106 @@ function configureInfo(info) {
   syncReplayState();
 }
 
+function configureStaticSceneInfo(info) {
+  state.info = info;
+  state.frames = 0;
+  state.sampleRate = SOURCE_SAMPLE_RATE;
+  state.chunkFrames = MAX_CHUNK_FRAMES;
+  state.poseWidth = 0;
+  state.frame = 0;
+  state.requestedFrame = 0;
+  state.playing = false;
+  state.buffering = false;
+  state.stopAtEnd = false;
+  state.playbackAnchorFrame = 0;
+  state.playbackAnchorTime = performance.now();
+  refreshEpisodeUI();
+  syncReplayState();
+}
+
+async function loadStaticScene(scenePath) {
+  const sceneId = 'static-scene';
+  setPresentationMode('scene');
+  const generation = ++state.generation;
+  abortEpisodeRequests();
+  clearInstalledEpisode();
+  state.episodeId = sceneId;
+  state.selectedSummary = {
+    id: sceneId,
+    title: '正在加载静态场景',
+    scene: nonEmptyString(scenePath) || '静态模型',
+  };
+  updateHeading();
+  updateTransportUI();
+  syncReplayState();
+  showStageMessage('正在加载编译后的静态模型与相机配置…', 'loading', true);
+  setSceneStatus('正在加载静态模型', 'loading');
+
+  const controller = new AbortController();
+  state.selectionController = controller;
+  let parsedScene = null;
+  try {
+    const [rawInfo, glbBuffer] = await Promise.all([
+      requestJson(`${API_ROOT}/scene/info`, { signal: controller.signal }),
+      requestArrayBuffer(`${API_ROOT}/scene/scene.glb`, { signal: controller.signal }),
+    ]);
+    if (!isCurrentSelection(generation, sceneId)) {
+      return;
+    }
+
+    const info = normalizeStaticSceneInfo(rawInfo);
+    configureStaticSceneInfo(info);
+    state.episodeId = info.id;
+    state.selectedSummary = info;
+    updateHeading();
+    const parsed = await parseGlb(glbBuffer);
+    parsedScene = parsed?.scene || null;
+    if (!isCurrentSelection(generation, info.id)) {
+      if (parsedScene) {
+        disposeSceneResources([parsedScene]);
+      }
+      return;
+    }
+    if (!parsedScene) {
+      throw new Error('静态场景 GLB 为空。');
+    }
+
+    mountModel({ scene: parsedScene }, info);
+    parsedScene = null;
+    installCameraRig(info);
+    state.selectionController = null;
+    setBuffering(false);
+    resetCamera();
+    hideStageMessage();
+    setSceneStatus('已加载静态模型，可调整相机位姿', 'success');
+    state.needsRender = true;
+    refreshEpisodeUI();
+    syncReplayState();
+  } catch (error) {
+    if (!isCurrentSelection(generation, sceneId) || isAbortError(error)) {
+      if (parsedScene) {
+        disposeSceneResources([parsedScene]);
+      }
+      return;
+    }
+    if (parsedScene) {
+      disposeSceneResources([parsedScene]);
+    }
+    state.selectionController = null;
+    abortEpisodeRequests();
+    clearInstalledEpisode();
+    updateHeading();
+    refreshEpisodeUI();
+    showStageMessage(`无法加载静态模型：${readableError(error)}。请检查场景文件或重新启动服务。`, 'error');
+    setSceneStatus('静态模型加载失败', 'error');
+  }
+}
+
 async function selectEpisode(summary) {
   if (!summary || !nonEmptyString(summary.id)) {
     return;
   }
+  setPresentationMode('replay');
   const episodeId = summary.id;
   const generation = ++state.generation;
   abortEpisodeRequests();
@@ -1083,6 +1285,7 @@ async function selectEpisode(summary) {
     if (!applyFrame(0)) {
       throw new Error('无法应用首帧姿态。');
     }
+    installCameraRig(info);
     state.selectionController = null;
     setBuffering(false);
     resetCamera();
@@ -1112,11 +1315,14 @@ async function selectEpisode(summary) {
 }
 
 async function scanCatalog() {
+  if (state.mode !== 'replay') {
+    return false;
+  }
   const directory = elements.directoryInput.value.trim();
   if (!directory) {
     setScanStatus('请输入服务端可访问的轨迹目录。', 'error');
     elements.directoryInput.focus();
-    return;
+    return false;
   }
 
   const generation = ++state.catalogGeneration;
@@ -1134,7 +1340,7 @@ async function scanCatalog() {
       signal: controller.signal,
     });
     if (generation !== state.catalogGeneration) {
-      return;
+      return false;
     }
     if (!payload || !Array.isArray(payload.episodes)) {
       throw new Error('服务端返回的轨迹目录格式无效。');
@@ -1154,11 +1360,13 @@ async function scanCatalog() {
     renderSkipped();
     const skippedText = state.skipped.length ? `；跳过 ${state.skipped.length} 个不可用文件` : '';
     setScanStatus(`扫描完成：找到 ${state.catalog.length} 条可回放轨迹${skippedText}。`, 'success');
+    return true;
   } catch (error) {
     if (generation !== state.catalogGeneration || isAbortError(error)) {
-      return;
+      return false;
     }
     setScanStatus(`扫描失败：${readableError(error)}。已保留上一次可用列表。`, 'error');
+    return false;
   } finally {
     if (generation === state.catalogGeneration) {
       elements.scanButton.disabled = false;
@@ -1170,6 +1378,11 @@ async function scanCatalog() {
 async function loadConfiguration() {
   try {
     const config = await requestJson(`${API_ROOT}/config`);
+    if (config?.mode === 'scene') {
+      await loadStaticScene(config.scene_path);
+      return;
+    }
+    setPresentationMode('replay');
     if (!nonEmptyString(config?.directory)) {
       throw new Error('服务端没有提供默认目录。');
     }
@@ -1180,9 +1393,113 @@ async function loadConfiguration() {
       updateTelemetry();
       syncReplayState();
     }
-    await scanCatalog();
+    const scanned = await scanCatalog();
+    if (!scanned) {
+      return;
+    }
+
+    const parameters = new URLSearchParams(window.location.search);
+    const hasUrlEpisode = parameters.has('episode');
+    const requestedEpisode = hasUrlEpisode
+      ? nonEmptyString(parameters.get('episode'))
+      : nonEmptyString(config.initial_episode);
+    if (!requestedEpisode) {
+      if (hasUrlEpisode) {
+        setScanStatus('URL 的 episode 参数为空，未自动选择其他轨迹。', 'error');
+      }
+      return;
+    }
+    const matchedEpisode = state.catalog.find((entry) => (
+      entry.id === requestedEpisode || entry.relative_path === requestedEpisode
+    ));
+    if (!matchedEpisode) {
+      setScanStatus(
+        `未找到指定轨迹“${requestedEpisode}”（仅接受 ID 或相对路径完全匹配）；未自动选择其他轨迹。`,
+        'error',
+      );
+      return;
+    }
+    setScanStatus(`已精确匹配指定轨迹：${displayTitle(matchedEpisode)}。正在加载…`, 'loading');
+    await selectEpisode(matchedEpisode);
   } catch (error) {
     setScanStatus(`无法读取默认目录：${readableError(error)}。请填写服务端目录后重新扫描。`, 'error');
+  }
+}
+
+function updatePreviewViewports() {
+  state.previewViewports = [];
+  if (!renderer || !cameraRig?.isInstalled || elements.cameraPreviewGrid.hidden) {
+    return;
+  }
+  const canvasBounds = elements.replayCanvas.getBoundingClientRect();
+  if (canvasBounds.width < 1 || canvasBounds.height < 1) {
+    return;
+  }
+  // Three.js applies the pixel ratio to viewport/scissor coordinates itself.
+  renderer.getSize(renderSize);
+  const scaleX = renderSize.x / canvasBounds.width;
+  const scaleY = renderSize.y / canvasBounds.height;
+  for (const entry of cameraRig.getPreviewEntries()) {
+    const slot = elements.cameraPreviewSlots.get(entry.name);
+    if (!slot) {
+      continue;
+    }
+    const slotBounds = slot.getBoundingClientRect();
+    const left = Math.max(canvasBounds.left, slotBounds.left);
+    const right = Math.min(canvasBounds.right, slotBounds.right);
+    const top = Math.max(canvasBounds.top, slotBounds.top);
+    const bottom = Math.min(canvasBounds.bottom, slotBounds.bottom);
+    if (right <= left || bottom <= top) {
+      continue;
+    }
+    const x = Math.floor((left - canvasBounds.left) * scaleX);
+    const viewportRight = Math.ceil((right - canvasBounds.left) * scaleX);
+    const y = Math.floor((canvasBounds.bottom - bottom) * scaleY);
+    const viewportTop = Math.ceil((canvasBounds.bottom - top) * scaleY);
+    const viewportWidth = viewportRight - x;
+    const viewportHeight = viewportTop - y;
+    if (viewportWidth > 0 && viewportHeight > 0) {
+      state.previewViewports.push({
+        entry,
+        x,
+        y,
+        width: viewportWidth,
+        height: viewportHeight,
+      });
+    }
+  }
+}
+
+function renderSceneWithCameraPreviews() {
+  renderer.getSize(renderSize);
+  const width = renderSize.x;
+  const height = renderSize.y;
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, width, height);
+  renderer.clear(true, true, true);
+  renderer.render(scene, camera);
+
+  if (!cameraRig?.isInstalled || state.previewViewports.length === 0) {
+    return;
+  }
+
+  const helpersWereVisible = cameraRig.helpersRoot?.visible ?? true;
+  cameraRig.setHelpersVisible(false);
+  try {
+    renderer.setScissorTest(true);
+    for (const viewport of state.previewViewports) {
+      const previewCamera = viewport.entry.previewCamera;
+      previewCamera.aspect = viewport.width / viewport.height;
+      previewCamera.updateProjectionMatrix();
+      renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
+      renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
+      renderer.clear(true, true, true);
+      renderer.render(scene, previewCamera);
+    }
+  } finally {
+    cameraRig.setHelpersVisible(helpersWereVisible);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
   }
 }
 
@@ -1199,6 +1516,7 @@ function resizeRenderer() {
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
+  updatePreviewViewports();
   camera.updateProjectionMatrix();
   state.needsRender = true;
 }
@@ -1213,6 +1531,8 @@ function initializeRenderer() {
     });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setClearColor(scene.background, 1);
+    renderer.autoClear = false;
     renderer.shadowMap.enabled = false;
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false;
@@ -1289,7 +1609,7 @@ function animationFrame(now) {
   }
 
   try {
-    renderer.render(scene, camera);
+    renderSceneWithCameraPreviews();
     state.lastRenderAt = now;
     state.needsRender = false;
     recordRender(now);
@@ -1326,6 +1646,7 @@ function installEvents() {
     updateTransportUI();
   });
   elements.resetCameraButton.addEventListener('click', resetCamera);
+  elements.sceneResetCameraButton.addEventListener('click', resetCamera);
   elements.timelineInput.addEventListener('input', () => {
     pausePlayback({ announce: false, cancelBuffer: true });
     seekTo(Number(elements.timelineInput.value));
@@ -1333,6 +1654,9 @@ function installEvents() {
 
   document.addEventListener('keydown', (event) => {
     if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || isEditableTarget(event.target)) {
+      return;
+    }
+    if (state.mode !== 'replay') {
       return;
     }
     if (event.code === 'Space') {
@@ -1360,10 +1684,29 @@ function installEvents() {
     state.scanController?.abort();
     abortEpisodeRequests();
     resizeObserver?.disconnect();
+    cameraRig?.dispose();
+    controls?.dispose();
+  });
+}
+
+function initializeCameraRig() {
+  cameraRig = new CameraRig({
+    scene,
+    editor: elements.cameraRigEditor,
+    status: elements.cameraRigStatus,
+    exportButton: elements.cameraRigExportButton,
+    previewGrid: elements.cameraPreviewGrid,
+    onPoseChanged: () => {
+      state.needsRender = true;
+    },
+    onDiagnostics: (cameraMounts) => {
+      publishedReplayState.cameraMounts = cameraMounts;
+    },
   });
 }
 
 function initialize() {
+  initializeCameraRig();
   initializeRenderer();
   installEvents();
   refreshEpisodeUI();

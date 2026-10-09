@@ -1,8 +1,8 @@
-# Temporary operator-preview views, not approved training camera placements.
-# Final URDF camera frames/conversion will be integrated once their format is supplied.
-# Keep this revision provisional until the actual calibration is confirmed.
-version: 1
-calibration_revision: provisional-v1
+# Provisional operator-preview local mounts, not approved training-camera placements.
+# position is in the named body frame; rpy_deg is Rz(yaw) Ry(pitch) Rx(roll).
+# User-specified local mounts, not calibrated against physical cameras.
+version: 2
+calibration_revision: provisional-v2
 width: 1280
 height: 720
 fovy_deg: 70.0
@@ -10,14 +10,14 @@ near_m: 0.01
 far_m: 3.0
 cameras:
   top:
-    parent: world
-    position: [0.50, 0.00, 1.80]
-    look_at: [0.45, 0.00, 1.05]
+    parent: Link_Stand
+    position: [0.1, 0.0, 0.5]
+    rpy_deg: [30.0, 0.0, -90.0]
   left_wrist:
     parent: l_wrist
-    position: [-0.035, 0.000, 0.005]
-    look_at: [0.000, 0.000, -0.150]
+    position: [0.0, -0.05, 0.0]
+    rpy_deg: [0.0, 10.0, 90.0]
   right_wrist:
     parent: r_wrist
-    position: [0.035, 0.000, 0.005]
-    look_at: [0.000, 0.000, -0.150]
+    position: [0.0, 0.05, 0.0]
+    rpy_deg: [0.0, 10.0, -90.0]

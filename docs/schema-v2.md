@@ -108,7 +108,7 @@ MJB 保存编译模型及其中的网格、纹理、相机和物理配置，不�
 - 左右手根及几何映射，任务物体名称、body／geom IDs。
 - task_manifest、scene_manifest，实际采样的布局、物理参数、seed、任务和有效采集配置。
 - 新场景的 `scene_manifest.physical_materials` 与对象 `surface_materials` 保存批准的有效滑动摩擦矩阵、材料／区域标签、来源和表面近似边界，完整数值见 [README 材质说明](../README.md)。对象 `friction`／`friction_range` 仍为原 geom 系数及采样范围，不等于所有接触点的最终有效值。木—木 0.40 和 PE—PE 0.20 保留各自历史参考来源，其他新值为 `engineering_choice_not_measured`；这些工程取值不是厂商规格或实物测量。MJB 保存 custom numeric `spd_material_friction` 和 `geom_user`，不是显式 geom 配对。旧文件无策略时不推断新材料，不用当前规则重写旧 MJB。
-- 已编译的 camera 数组与相机配置文档；零相机模型也可记录，无须构造 Renderer。
+- 已编译的 camera 数组与相机配置文档；零相机模型也可记录，无须构造 Renderer。新相机配置为 version 2，各项保存 parent、以米为单位的局部 position 和以度为单位的 rpy_deg，旋转为 Rz(yaw) Ry(pitch) Rx(roll)；历史内嵌 version-1 look_at 配置仍按原模型校验，不迁移或改写。
 - 可访问的源模型／URDF／manifest／配置／网格／纹理路径与 SHA-256 溯源；这些路径仅用于溯源，不是恢复依赖。
 - object_pose_convention 和 contact_convention。
 
@@ -162,7 +162,7 @@ replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每
 
 渲染产物为独立的 `episode_<ID>.render.h5`，不是采集 schema-v2 的新字段。源完整轨迹及同目录 dataset_config.json 必须可用；服务器只需匹配 MuJoCo 精确版本，无须采集主机上的源 XML、纹理目录或 ROS。
 
-相机逻辑名固定为 top、left_wrist、right_wrist，位置和投影参数完全来自内嵌模型。位置尚未定稿；模型 camera_config.calibration_revision 缺失／空白／含 provisional 时默认拒绝。只有显式诊断开关允许预览，结果标为 diagnostic_only，不把临时相机升级为正式标定。URDF 相机安装格式及转换尚待用户定稿，不在渲染配置中添加猜测外参。
+相机逻辑名固定为 top、left_wrist、right_wrist。新安装定义来自 version-2 `config/sim_cameras.yaml`，三个相机都挂到非 world 的机器人 body 局部坐标系；光轴为相机 -Z，图像上方为 +Y。批次配置 `camera_config_path` 或 CLI `--camera-config` 可指定覆盖文件，启动时读取一次，先校验原始内嵌模型，再仅覆盖内存模型的相机位置、旋转与挂载。未指定覆盖时使用原内嵌相机，源 HDF5 始终只读。生效配置的 calibration_revision 缺失／空白／含 provisional 时默认拒绝；只有显式诊断开关允许预览，结果标为 diagnostic_only，不把临时位姿升级为正式标定。
 
 ```text
 episode_<ID>.render.h5
@@ -183,9 +183,9 @@ episode_<ID>.render.h5
     └── rotation                   float64[N,3,3]，camera-to-world 旋转
 ```
 
-默认 W=224、H=168、JPEG quality=90，subsampling=0；尺寸与编码设置进入 metadata 和 settings_sha256。所有 dataset 带逐行内容 SHA-256；JPEG 摘要包含每帧长度，固定宽度数组按连续 little-endian 字节累积。发布前和复用时流式验证实际 JPEG 解码、类型／维度、掩码 ID、时钟关联、变换矩阵与校验和，不一次读入整段图像。
+默认 W=224、H=168、JPEG quality=90，subsampling=0；尺寸、编码设置及存在时的完整相机覆盖配置快照进入 metadata 和 settings_sha256，修改任意安装位姿即改变设置身份。无覆盖时不加入 camera_config 空值，保留已有内嵌相机产物的设置身份。所有 dataset 带逐行内容 SHA-256；JPEG 摘要包含每帧长度，固定宽度数组按连续 little-endian 字节累积。发布前和复用时流式验证实际 JPEG 解码、类型／维度、掩码 ID、时钟关联、变换矩阵与校验和，不一次读入整段图像。
 
-metadata 包含源身份、原始编译相机定义与临时／已确认状态、渲染配置与引擎版本、实际 GL vendor／renderer／version、GPU EGL 设备号、实例映射、恢复误差摘要。相机世界变换从每帧 mj_forward 后的 cam_xpos／cam_xmat 获取，不用机器人腕部位置代替相机光学位姿。
+metadata 包含源身份、实际生效的相机数组与配置及临时／已确认状态、渲染配置与引擎版本、实际 GL vendor／renderer／version、GPU EGL 设备号、实例映射、恢复误差摘要。source_sha256、model_sha256、source_metadata_sha256 始终指向原轨迹／原 MJB／原元数据，不伪装成修改后的模型快照。相机世界变换从每帧 mj_forward 后的 cam_xpos／cam_xmat 获取，不用机器人腕部位置代替相机光学位姿。
 
 正实例 ID 复用当前 episode 的 scene_manifest.objects.instance_id，所有属于同一物体子树的外观 mesh 共享同一个 ID。0=天空或无 GEOM，-1=机器人外观（非任务 group1），-2=其他非任务环境，-3=桌子（scene_table 及 scene_detail_table_* 外观，包括桌腿）。盘架／杯架／箱体／柜体／各抽屉仍使用正 ID。实例 ID 不意味着跨 episode 追踪同一个实物。底层 MuJoCo 分割返回 `(object_id, object_type)`，仅 GEOM 类型可索引几何映射；不能将 RGB 编码色号直接当实例 ID。schema 1 混合了桌子和环境，不兼容新的增强语义，必须从原轨迹重新渲染到新输出路径，禁止伪造新版本号。
 

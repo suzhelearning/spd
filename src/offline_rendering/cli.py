@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=_DEFAULT_CONFIG,
                         help=f"Batch YAML configuration (default: {_DEFAULT_CONFIG})")
+    parser.add_argument("--camera-config", dest="camera_config_path", type=Path,
+                        help="Camera YAML override; relative paths are resolved from the working directory")
     parser.add_argument("--input", dest="input_dir", type=Path,
                         help="Episode .h5 or directory searched recursively for episode_*.h5")
     parser.add_argument("--output", dest="output_dir", type=Path,

@@ -1,7 +1,7 @@
 """Read-only trajectory replay into immutable, streamed native-EGL render files.
 
 Import this module only after the worker configures its EGL device and thread
-limits. Camera geometry comes exclusively from the embedded compiled model.
+limits. A snapshotted camera document may override the embedded model in memory.
 """
 from __future__ import annotations
 
@@ -20,8 +20,9 @@ import mujoco
 import numpy as np
 from PIL import Image, __version__ as pillow_version
 
+from cameras.camera import apply_camera_config
 from data_collector.recorder import validate_episode_path
-from data_collector.trajectory import load_model, restore_frame
+from data_collector.trajectory import _cameras, load_model, restore_frame
 from offline_rendering.config import CAMERA_NAMES, INSTANCE_POLICY, RENDER_SCHEMA_VERSION, RenderSettings
 
 _RESTORE_TOLERANCE = 1e-6
@@ -75,15 +76,13 @@ def _require(condition: bool, message: str) -> None:
         raise RenderError(message)
 
 
-def _calibration(metadata: dict[str, Any], settings: RenderSettings) -> dict[str, Any]:
-    config = metadata.get("camera_config")
-    revision = config.get("calibration_revision") if isinstance(config, dict) else None
+def _calibration(camera_config: Any, settings: RenderSettings) -> dict[str, Any]:
+    revision = camera_config.get("calibration_revision") if isinstance(camera_config, dict) else None
     approved = isinstance(revision, str) and bool(revision.strip()) and "provisional" not in revision.casefold()
     if not approved and not settings.allow_provisional_cameras:
         raise RenderError(
-            "camera calibration is absent, unapproved, or provisional; finalize cameras in the "
-            "source camera-equipped compiled model with an approved calibration_revision, or "
-            "explicitly allow provisional cameras for diagnostic-only rendering"
+            "camera calibration is absent, unapproved, or provisional; provide an approved effective "
+            "camera configuration, or explicitly allow provisional cameras for diagnostic-only rendering"
         )
     return {"revision": revision, "approved": approved, "diagnostic_only": not approved,
             "allow_provisional_cameras": settings.allow_provisional_cameras}
@@ -150,13 +149,20 @@ def _open_source(path: Path, settings: RenderSettings) -> Iterator[_Source]:
     path = Path(path).resolve(strict=True)
     _require(path.is_file() and path.suffix in {".h5", ".hdf5"}, "source must be one completed HDF5 episode")
     source_hash = _file_hash(path)
+    settings_snapshot = settings.as_dict()
     validation = validate_episode_path(path)
     with h5py.File(path, "r") as handle:
         metadata_json = handle["model/metadata"].asstr()[()]
         metadata = json.loads(metadata_json)
-        calibration = _calibration(metadata, settings)
         model = load_model(handle["model/mjb"][:].tobytes(), metadata,
                            expected_model_sha256=validation["model_sha256"])
+        camera_override = settings_snapshot.get("camera_config")
+        effective_camera_config = (
+            camera_override if camera_override is not None else metadata["camera_config"]
+        )
+        if camera_override is not None:
+            apply_camera_config(model, camera_override)
+        calibration = _calibration(effective_camera_config, settings)
         camera_ids = {name: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, name) for name in CAMERA_NAMES}
         missing = [name for name, index in camera_ids.items() if index < 0]
         _require(not missing, f"embedded compiled model is missing named cameras: {', '.join(missing)}")
@@ -165,14 +171,14 @@ def _open_source(path: Path, settings: RenderSettings) -> Iterator[_Source]:
             "source_sha256": source_hash,
             "model_sha256": validation["model_sha256"],
             "source_metadata_sha256": hashlib.sha256(metadata_json.encode("utf-8")).hexdigest(),
-            "settings_sha256": _json_hash(settings.as_dict()),
+            "settings_sha256": _json_hash(settings_snapshot),
         }
         output_metadata = {
             "source": {**identity, "schema_version": 2, "frames": validation["frames"]},
-            "compiled_cameras": metadata["cameras"],
-            "camera_config": metadata["camera_config"],
+            "compiled_cameras": _cameras(model),
+            "camera_config": effective_camera_config,
             "calibration": calibration,
-            "settings": settings.as_dict(),
+            "settings": settings_snapshot,
             "renderer_contract": _RENDER_CONTRACT,
             "engine": {"name": "MuJoCo EGL", "mujoco_version": mujoco.mj_versionString(),
                        "pillow_version": pillow_version},

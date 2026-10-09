@@ -7,7 +7,8 @@ its geom frame exactly once.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from numbers import Integral
+from typing import Any, Iterable, Mapping
 
 import mujoco
 import numpy as np
@@ -631,15 +632,23 @@ def _extend_bounds(lower: np.ndarray | None, upper: np.ndarray | None, mesh: tri
     )
 
 
-def export_scene(model: Any, data: Any, metadata: Mapping[str, Any]) -> tuple[bytes, list[int], list[float]]:
-    """Export visible MuJoCo geometry with direct world-body animation nodes.
+def export_scene(
+    model: Any,
+    data: Any,
+    metadata: Mapping[str, Any],
+    extra_body_ids: Iterable[int] = (),
+) -> tuple[bytes, list[int], list[float]]:
+    """Export visible geometry and requested body animation nodes.
 
-    ``data`` must already contain frame-zero kinematics.  No forward dynamics or
+    ``data`` must already contain frame-zero kinematics. No forward dynamics or
     rendering is performed here; only compiled visual geometry is converted.
+    ``extra_body_ids`` adds body nodes without making invisible geometry affect
+    the scene bounds or center.
     """
     if not isinstance(metadata, Mapping):
         raise SceneError("model metadata must be a mapping")
-    if int(model.nbody) <= 0 or int(model.ngeom) < 0:
+    body_count = int(model.nbody)
+    if body_count <= 0 or int(model.ngeom) < 0:
         raise SceneError("compiled model has invalid body or geom counts")
     visible_geoms = [
         geom_id for geom_id in range(int(model.ngeom))
@@ -647,9 +656,22 @@ def export_scene(model: Any, data: Any, metadata: Mapping[str, Any]) -> tuple[by
     ]
     if not visible_geoms:
         raise SceneError("model has no visible geoms in MuJoCo groups 1 or 2")
-    body_ids = sorted({int(model.geom_bodyid[geom_id]) for geom_id in visible_geoms})
-    if any(body_id < 0 or body_id >= int(model.nbody) for body_id in body_ids):
+    visible_body_ids = {int(model.geom_bodyid[geom_id]) for geom_id in visible_geoms}
+    if any(body_id < 0 or body_id >= body_count for body_id in visible_body_ids):
         raise SceneError("visible geom references an invalid body")
+    body_ids = set(visible_body_ids)
+    try:
+        extras = iter(extra_body_ids)
+    except TypeError as exc:
+        raise SceneError("extra_body_ids must be an iterable of body ids") from exc
+    for raw_body_id in extras:
+        if isinstance(raw_body_id, bool) or not isinstance(raw_body_id, Integral):
+            raise SceneError("extra_body_ids must contain integer body ids")
+        body_id = int(raw_body_id)
+        if body_id < 0 or body_id >= body_count:
+            raise SceneError(f"extra body id is invalid: {body_id}")
+        body_ids.add(body_id)
+    body_ids = sorted(body_ids)
 
     scene = trimesh.Scene(base_frame="world")
     body_transforms: dict[int, np.ndarray] = {}

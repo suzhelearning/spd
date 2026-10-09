@@ -18,14 +18,14 @@
   <div class="application-shell">
     <header class="application-header">
       <div>
-        <p class="product-kicker">SPD 数据回放</p>
-        <h1>三维轨迹回放</h1>
+        <p id="productKicker" class="product-kicker">SPD 数据回放</p>
+        <h1 id="applicationTitle">三维轨迹回放</h1>
       </div>
-      <p class="header-description">按源数据 60 Hz 时间轴查看已完成轨迹</p>
+      <p id="headerDescription" class="header-description">按源数据 60 Hz 时间轴查看已完成轨迹</p>
     </header>
 
     <main class="workspace">
-      <aside class="catalog-panel" aria-label="轨迹目录与列表">
+      <aside id="catalogPanel" class="catalog-panel" aria-label="轨迹目录与列表">
         <form id="directoryForm" class="directory-form">
           <label for="directoryInput">服务端轨迹目录</label>
           <div class="directory-row">
@@ -56,15 +56,32 @@
       <section class="viewer-panel" aria-label="三维回放">
         <div class="viewer-heading">
           <div class="selection-heading">
-            <p class="section-kicker">当前轨迹</p>
+            <p id="viewerModeKicker" class="section-kicker">当前轨迹</p>
             <h2 id="episodeTitle">尚未选择轨迹</h2>
             <p id="episodePath" class="episode-path">请从左侧列表选择一条已完成轨迹。</p>
           </div>
-          <p id="sceneStatus" class="scene-status" data-tone="neutral" role="status" aria-live="polite">等待选择</p>
+          <div class="viewer-heading-actions">
+            <p id="sceneStatus" class="scene-status" data-tone="neutral" role="status" aria-live="polite">等待选择</p>
+            <button id="sceneResetCameraButton" type="button" class="secondary-control scene-reset-button" hidden>重置主观察视角</button>
+          </div>
         </div>
 
         <div id="canvasStage" class="canvas-stage" aria-busy="false">
           <canvas id="replayCanvas" tabindex="0" aria-label="三维轨迹场景"></canvas>
+          <div id="cameraPreviewGrid" class="camera-preview-grid" role="group" aria-label="三台相机的 WebGL 视角预览" hidden>
+            <div class="camera-preview-slot" data-camera-preview="top">
+              <span>top</span>
+              <small>WebGL 视角预览</small>
+            </div>
+            <div class="camera-preview-slot" data-camera-preview="left_wrist">
+              <span>left_wrist</span>
+              <small>WebGL 视角预览</small>
+            </div>
+            <div class="camera-preview-slot" data-camera-preview="right_wrist">
+              <span>right_wrist</span>
+              <small>WebGL 视角预览</small>
+            </div>
+          </div>
           <div id="stageMessage" class="stage-message" data-mode="empty">
             <span id="stageSpinner" class="spinner" aria-hidden="true" hidden></span>
             <p id="stageMessageText">选择一条轨迹后，将加载真实模型与源帧数据。</p>
@@ -75,7 +92,7 @@
           </div>
         </div>
 
-        <section class="replay-controls" aria-label="回放控制">
+        <section id="replayControls" class="replay-controls" aria-label="回放控制">
           <dl class="telemetry-grid">
             <div>
               <dt>任务</dt>
@@ -121,6 +138,18 @@
           <p class="keyboard-hint">空格播放或暂停；左右方向键逐帧。输入框获得焦点时不会拦截按键。</p>
         </section>
       </section>
+      <aside class="camera-rig-panel" aria-label="相机安装位姿编辑器">
+        <div class="camera-rig-heading">
+          <div>
+            <p class="section-kicker">相机安装位姿</p>
+            <h2>三相机本地位姿</h2>
+          </div>
+          <button id="cameraRigExportButton" type="button" class="camera-export-button" disabled>下载 v2 YAML</button>
+        </div>
+        <p id="cameraRigStatus" class="status-message" data-tone="neutral" role="status" aria-live="polite">等待相机配置</p>
+        <p class="camera-rig-note">预览为 WebGL 视角校对，不等于正式 MuJoCo 训练 RGB；调整仅保留在当前页面，可下载 YAML。</p>
+        <div id="cameraRigEditor" class="camera-rig-editor"></div>
+      </aside>
     </main>
   </div>
 
