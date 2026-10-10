@@ -29,6 +29,7 @@ GEOMETRY_REVISION = "paper-aligned-scenes-v2"
 TABLE_Z = 0.75
 TABLE_HEIGHT_RANGE = (0.70, 0.80)
 TABLE_DISTANCE_RANGE = (0.10, 0.30)
+BIN_X_RANGE = (0.40, 0.60)
 WORKSPACE_CENTER = (0.45, 0.0, TABLE_Z)
 WORKSPACE_X = (0.10, 0.80)
 WORKSPACE_Y = (-0.55, 0.55)
@@ -553,7 +554,8 @@ class ProceduralSceneBuilder:
             "drawer": DRAWER_SIZE,
         }[class_name]
 
-    def _sample_candidate(self, rng: np.random.Generator, candidate: int, table_top_z: float) -> tuple[ObjectSpec, ...]:
+    def _sample_candidate(self, rng: np.random.Generator, candidate: int, table_top_z: float,
+                          table_distance: float) -> tuple[ObjectSpec, ...]:
         objects: list[ObjectSpec] = []
         # Whole-layout transforms preserve every mechanical assembly. Independent
         # loose-object scatter stays bounded and passes the actual contact gate.
@@ -595,6 +597,9 @@ class ProceduralSceneBuilder:
                 if layout_variant == 1:
                     xy[1] += 0.020 if instance_id % 2 else -0.020
             xy = rotation @ (xy - (0.45, 0.0)) + (0.45, 0.0) + translation
+            if self.scene == "bottles" and self.task == "toss_in_bin" and class_name == "bin":
+                # The table shifts after collision validation; sample the bin in world X.
+                xy[0] = rng.uniform(*BIN_X_RANGE) - (table_distance - TABLE_DISTANCE_RANGE[0])
             yaw = assembly_yaw
             if not assembled:
                 yaw += float(rng.uniform(-math.pi, math.pi))
@@ -698,7 +703,7 @@ class ProceduralSceneBuilder:
         last_error: Exception | None = None
         for candidate in range(MAX_RESET_CANDIDATES):
             try:
-                objects = self._sample_candidate(rng, candidate, table_top_z)
+                objects = self._sample_candidate(rng, candidate, table_top_z, table_distance)
                 worldbody = self._worldbody(objects, table_top_z)
                 labels = _letters_for(objects, self.seed, self.task, self.target_word)
                 assets, visuals, table_visuals, appearance = build_visual_details(

@@ -55,7 +55,7 @@ pixi run --locked spd-quest-teleop --height-m 1.75 --task bottles/toss_in_bin --
 
 Quest 包装脚本转入 `bash/run_pico_hand_sim.sh`，再经 `bash/start_spd_sim.sh` → 原生 `spd_executor` → `simulation.ros_viewer --height-m ...`。也可直接 `pixi run spd-sim --height-m 1.75`。不再使用旧 `r` 前伸标定、`s` 跟随的独立发布入口，也不需要相邻源码工作区或 `TIANJI_TELEOP_ROOT`。
 
-首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。默认每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed；加 `--repeat-task` 则始终沿用显式 `--task`，不切换任务类型，此参数必须与 `--task` 同用。两种模式都重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`，不固定物体位置或桌面参数。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认项目根目录下的 `data/episodes/YYYYMMDD/episode_<UUID>.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。日期以开段时为准，跨午夜不拆当前段。
+首次启动不传 `--task` 时从 18 个任务中选择；`--task mugs/hang_mug` 指定首个任务，`--scene cups` 限制首个任务范围，`--scene hardware_free` 首次为无任务场景。默认每次保存或丢弃整条完成后，都从完整任务目录重新随机分配任务和新 seed；加 `--repeat-task` 则始终沿用显式 `--task`，不切换任务类型，此参数必须与 `--task` 同用。两种模式都重新生成布局、桌高 `0.70–0.80 m` 与桌距 `0.10–0.30 m`，不固定物体位置或桌面参数。`--seed 0` 可复现整个选择序列，`--table-distance 0.2` 只覆盖首个场景桌距。输出默认项目根目录下的 `data/episodes/YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.h5`，`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。文件名和日期取开段时本机本地时间，跨午夜不拆当前段。
 
 ## 全部固定场景任务命令
 
@@ -137,6 +137,8 @@ pixi run --locked spd-quest-teleop --height-m 1.75 --task cups/unstack --repeat-
 ### 瓶子（1 个任务）
 
 `bottles/toss_in_bin` 每条只生成 **1 个自由运动瓶子和 1 个收纳箱**。瓶子位置、朝向、6 种瓶型以及半径／高度仍按 seed 随机采样；`--repeat-task` 只固定任务类型，不固定这些参数。实际摩擦参数读取 `config/task_material_friction/bottles/toss_in_bin.yaml`；该任务面板只列出 PE—PE、PE—涤纶织物、PE—硅胶、涤纶织物—硅胶四项。首次建档继承当前已保存模板，之后保存／重启不再回到模板值。
+
+默认随机桌距下，收纳箱底部中心的世界坐标 X（机器人前方）在 `0.40–0.60 m` 内采样；场景生成仍检查箱体与瓶子不重叠、箱体留在桌面上。显式传入 `--table-distance` 会平移整张桌子及任务物体，因此可能使箱体超出这个默认 X 范围。
 
 ```bash
 # 投瓶入箱
@@ -377,7 +379,7 @@ pixi run spd-scene --task cups/pyramid --seed 0 --headless --duration 3 --output
 
 每次生成场景时直接均匀采样桌面上表面高度 `h ∈ [0.70, 0.80] m` 和近侧桌沿距离 `d ∈ [0.10, 0.30] m`，生成后固定。桌板尺寸 `0.80 × 1.10 × 0.05 m`，中心为 `(d + 0.40, 0, h - 0.025) m`；距离沿机器人前方 `+X` 从底座原点测量。桌上物体与固定支架同步定位，桌腿伸缩而脚垫保持落地。在线 `--table-distance` 只覆盖首次场景，成功保存后的新任务重新随机桌距；独立 `spd-scene` 仍接受显式桌距。修改采样范围后须重新启动采集进程；已有轨迹的内嵌模型不变。相同 seed 可复现，暂停／恢复／回退不重采样。随机范围不构成全姿态可达或避碰保证。
 
-默认 `/data/TianjiSim/trajectories/YYYYMMDD/episode_<UUID>.h5`；`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。按开始日期分目录，跨午夜不拆段。每个采集进程使用独立输出目录。
+默认 `data/episodes/YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.h5`；`--output` 优先于 `SPD_EPISODE_OUTPUT` 和配置。按开始日期分目录，跨午夜不拆段。每个采集进程使用独立输出目录。
 
 HDF5 保留 schema-v2，增加可选、metadata 声明的 `trajectory/robot_target` 和 `action_definition`：
 
@@ -515,14 +517,14 @@ max_frames: 0
 
 当前 `provisional-v2` 数值仅保留旧预览的近似方向，不是实测安装尺寸或正式标定。新采集会话将这些局部相机写入 MJB；采集期间不热更新配置，修改后须重建会话。历史轨迹内嵌的 version-1 `look_at` 配置仍按原快照严格读取，不改写旧文件。
 
-新段写入 `episode_<UUID>.partial.h5`。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
+新段写入 `episode_YYYYMMDD_HHMMSS_ffffff.partial.h5`，时间为本机本地开段时间，`ffffff` 为微秒；同名文件会拒绝创建，不覆盖已有数据。每个采样事件是一整帧，所有轨迹数据集严格同长；显式回退使用同一队列的有序裁剪事件。非回退造成的重复／缺失物理步、非递增时间戳、非有限状态、队列溢出或写盘失败都保留不完整段，不静默覆盖或丢帧。显式保存或达到帧数上限后，关闭并校验数据、模型和元数据，完整通过才发布 `.h5`。`complete` 表示数据完成，`success` 表示操作者确认任务成功，二者不同；帧数上限完成为 `complete=true, success=false`。
 
 每天的目录独立保存 `dataset_config.json` 和当天的 HDF5。schema-v2 不与旧的机器人 qpos＋JPEG schema-v1 混写；同日契约不匹配会拒绝追加，不覆盖原配置。默认根目录为项目根目录下的 `data/episodes`；若该目录已有不兼容数据，请用 `--output` 指定新的目录。历史数据不自动迁移、不删除。
 
 ```bash
 # 将路径替换为采集状态输出的实际文件路径
-pixi run validate_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
-pixi run replay_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
+pixi run validate_episode 'data/episodes/YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.h5'
+pixi run replay_episode 'data/episodes/YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.h5'
 ```
 
 `replay_episode` 在独立 MuJoCo 模型中逐帧恢复记录状态，计算机器人状态及物体位姿的最大恢复误差；不发送控制目标，不推进物理，不渲染图像，不修改文件。拒绝不完整段、版本或模型校验不匹配。它是离线渲染前的重建验证，不是检查点继续仿真：文件没有保存重启原控制循环所需的命令和全部积分器内部历史。
@@ -535,7 +537,7 @@ pixi run replay_episode 'data/episodes/YYYYMMDD/episode_<UUID>.h5'
 
 ```bash
 pixi run --locked -e render spd-web \
-  --scene /home/fcl/datasets/spd_sim/episode_2a2d4ae61f7245928d012cb9e66455ba.h5 \
+  --scene 'data/episodes/YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.h5' \
   --port 8765
 ```
 

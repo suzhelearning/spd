@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import date
+from datetime import datetime
 import json
 import time
 from pathlib import Path
@@ -172,8 +172,9 @@ class CollectionSession:
         self.operation = operation
         try:
             if operation == "start":
-                episode_id = uuid4().hex
-                episode_dir = self.config.data_dir / date.today().strftime("%Y%m%d")
+                started_at = datetime.now()
+                episode_id = started_at.strftime("%Y%m%d_%H%M%S_%f")
+                episode_dir = self.config.data_dir / started_at.strftime("%Y%m%d")
                 self.episode_path = str(episode_dir / f"episode_{episode_id}.partial.h5")
                 self._started_ns = self._ended_ns = 0
                 self.state_frames = 0

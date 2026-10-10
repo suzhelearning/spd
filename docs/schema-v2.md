@@ -20,18 +20,18 @@
 ```text
 <data_dir>/YYYYMMDD/
 ├── dataset_config.json
-├── episode_<UUID>.partial.h5
-└── episode_<UUID>.h5
+├── episode_YYYYMMDD_HHMMSS_ffffff.partial.h5
+└── episode_YYYYMMDD_HHMMSS_ffffff.h5
 ```
 
-日期在接受 start 时以本机本地日期固定；跨午夜不拆段，下一段进入新日期。单实例采集，不共享输出目录写入。每天的数据集配置只包含：
+日期在接受 start 时以本机本地日期固定；文件名中的 `HHMMSS_ffffff` 是同一开段时刻的时分秒与微秒。跨午夜不拆段，下一段进入新日期；同名文件拒绝覆盖。单实例采集，不共享输出目录写入。每天的数据集配置只包含：
 
 `schema_version=2`、`robot_config=tianji_wuji2_v1`、`robot_joint_names`、`joint_unit=rad`、`physics_hz=480`、`state_rate_hz=60`。
 
 不同场景的模型、物体数和 qpos 维度可以不同，由每段模型元数据定义。`--output` 优先于 `SPD_EPISODE_OUTPUT`，再使用采集配置的 data_dir；配置内相对路径相对配置文件解析。
 
 ```text
-episode_<UUID>.h5
+episode_YYYYMMDD_HHMMSS_ffffff.h5
 ├── @schema_version = 2
 ├── @robot_config = "tianji_wuji2_v1"
 ├── @task                          UTF-8 任务名称
@@ -148,9 +148,9 @@ Quest／PICO 共用 `spd-quest-teleop`／`spd-pico-teleop --height-m HEIGHT`。�
 ## 独立恢复与当前边界
 
 ```bash
-pixi run validate_episode /path/to/episode_<UUID>.h5
-pixi run replay_episode /path/to/episode_<UUID>.h5
-pixi run replay_episode /path/to/episode_<UUID>.h5 --expected-model-sha256 <SHA256>
+pixi run validate_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5
+pixi run replay_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5
+pixi run replay_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5 --expected-model-sha256 <SHA256>
 ```
 
 replay_episode 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 MjData、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 data.time，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 q 与 -q 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
