@@ -158,6 +158,7 @@ class SplitViewRenderer:
             initialized = True
             glfw.default_window_hints()
             glfw.window_hint(glfw.DOUBLEBUFFER, glfw.TRUE)
+            glfw.window_hint(glfw.MAXIMIZED, glfw.TRUE)
             window = glfw.create_window(1600, 900, "SPD Simulation", None, None)
             if not window:
                 raise RuntimeError("GLFW could not create the simulation window")
