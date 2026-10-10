@@ -1,4 +1,4 @@
-"""Portable, state-only whole-scene snapshots; binary models require exact MuJoCo versions."""
+"""Portable whole-scene snapshots with optional applied targets; exact MuJoCo version required."""
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +16,13 @@ from interfaces.ros_joint_command import JOINT_NAMES
 PHYSICS_HZ = 480
 STATE_RATE_HZ = 60
 HAND_NAMES = ("l_wrist", "r_wrist")
+ACTION_DEFINITION = {
+    "kind": "absolute_joint_position_target", "unit": "rad",
+    "joint_names": list(JOINT_NAMES), "rate_hz": STATE_RATE_HZ,
+    "timing": "target_held_during_just_completed_physics_step",
+    "sample_state": "post_step",
+    "source": "plant.joint_command_targets",
+}
 _DIMENSIONS = ("nq", "nv", "na", "nmocap", "neq", "nbody", "njnt", "ngeom", "ncam", "nmesh", "ntex", "nplugin")
 
 
@@ -38,7 +45,7 @@ def _require_model(model: Any) -> None:
         raise TrajectoryError("trajectory models must use a 480 Hz physics timestep")
 
 
-def _fields(model: Any, object_count: int) -> dict[str, dict[str, Any]]:
+def _fields(model: Any, object_count: int, *, robot_target: bool = False) -> dict[str, dict[str, Any]]:
     def spec(dtype: str, *shape: int) -> dict[str, Any]:
         return {"dtype": dtype, "shape": list(shape)}
 
@@ -48,6 +55,8 @@ def _fields(model: Any, object_count: int) -> dict[str, dict[str, Any]]:
         "robot_qpos": spec("float64", 54), "robot_qvel": spec("float64", 54),
         "hand_contact": spec("bool", 2),
     }
+    if robot_target:
+        fields["robot_target"] = spec("float64", 54)
     if model.na:
         fields["act"] = spec("float64", model.na)
     if model.nmocap:
@@ -228,6 +237,9 @@ class TrajectorySource:
         task_manifest = json.loads(_canonical(task_manifest))
         scene_manifest = json.loads(_canonical(getattr(plant, "scene_manifest", None) or {}))
         mapping = _mapping(self._model, _object_names(scene_manifest))
+        self._targets = getattr(plant, "joint_command_targets", None)
+        if self._targets is not None and not callable(self._targets):
+            raise TrajectoryError("joint_command_targets must be callable")
         provenance, camera_config = _provenance(plant, task_manifest)
         _validate_camera_config(self._model, camera_config)
         # MJB embeds compiled meshes/textures; source paths are provenance only.
@@ -240,13 +252,15 @@ class TrajectorySource:
             "model_sha256": hashlib.sha256(self.model_bytes).hexdigest(),
             "physics_hz": PHYSICS_HZ, "state_rate_hz": STATE_RATE_HZ,
             "dimensions": {name: int(getattr(self._model, name)) for name in _DIMENSIONS},
-            "fields": _fields(self._model, len(mapping["object_names"])),
+            "fields": _fields(self._model, len(mapping["object_names"]), robot_target=self._targets is not None),
             "task_manifest": task_manifest, "scene_manifest": scene_manifest,
             "cameras": _cameras(self._model), "camera_config": camera_config,
             "provenance": provenance, "object_pose_convention": "world_xyz_wxyz",
             "contact_convention": "solver_active_hand_object_contact_any_physics_step_since_previous_capture",
             **mapping,
         }
+        if self._targets is not None:
+            self.metadata["action_definition"] = json.loads(_canonical(ACTION_DEFINITION))
         _canonical(self.metadata)
         self._qpos_indices = np.asarray(mapping["robot_qpos_indices"], dtype=np.intp)
         self._qvel_indices = np.asarray(mapping["robot_qvel_indices"], dtype=np.intp)
@@ -284,6 +298,11 @@ class TrajectorySource:
             "robot_qpos": data.qpos[self._qpos_indices], "robot_qvel": data.qvel[self._qvel_indices],
             "hand_contact": self._contact_collector.hand_contact(),
         }
+        if self._targets is not None:
+            targets = np.asarray(self._targets())
+            if targets.dtype != np.dtype("float64") or targets.shape != (54,) or not np.all(np.isfinite(targets)):
+                raise TrajectoryError("applied joint targets must be finite float64[54]")
+            frame["robot_target"] = targets.copy()
         for key in ("act", "mocap_pos", "mocap_quat", "eq_active"):
             if key in self.metadata["fields"]:
                 frame[key] = np.array(getattr(data, key), dtype=self.metadata["fields"][key]["dtype"], copy=True)
@@ -328,10 +347,16 @@ def load_model(model_bytes: bytes, metadata: dict[str, Any], *, expected_model_s
         expected = _mapping(model, _object_names(metadata["scene_manifest"]))
         expected.update({
             "dimensions": {name: int(getattr(model, name)) for name in _DIMENSIONS},
-            "fields": _fields(model, len(expected["object_names"])), "cameras": _cameras(model),
+            "fields": _fields(model, len(expected["object_names"]),
+                              robot_target="robot_target" in metadata.get("fields", {})),
+            "cameras": _cameras(model),
             "object_pose_convention": "world_xyz_wxyz",
             "contact_convention": "solver_active_hand_object_contact_any_physics_step_since_previous_capture",
         })
+        if "robot_target" in expected["fields"]:
+            expected["action_definition"] = ACTION_DEFINITION
+        elif "action_definition" in metadata:
+            raise TrajectoryError("action definition requires recorded robot_target")
         for key, value in expected.items():
             if _canonical(metadata.get(key)) != _canonical(value):
                 raise TrajectoryError(f"model metadata mismatch: {key}")
@@ -369,4 +394,4 @@ def restore_frame(model: Any, data: Any, frame: dict[str, Any], metadata: dict[s
     mujoco.mj_forward(model, data)
 
 
-__all__ = ["TrajectoryError", "TrajectorySource", "load_model", "restore_frame"]
+__all__ = ["ACTION_DEFINITION", "TrajectoryError", "TrajectorySource", "load_model", "restore_frame"]

@@ -193,7 +193,23 @@ class CollectionControlTests(unittest.TestCase):
         self.assertFalse(self.app.executor.mailbox.enabled)
         self.assertTrue(self.collection.physics_paused)
 
-    def test_each_tracking_loss_rebinds_without_replacing_manual_checkpoint(self):
+    def test_external_target_loss_still_requires_r_after_recovery(self):
+        self.start()
+        self.online = False
+        self.until(lambda: self.control.stage == "auto_paused")
+        frames = self.collection.state_frames
+        self.online = True
+        self.until(self.control._external_ready)
+        for _ in range(5):
+            self.cycle()
+        self.assertEqual(self.control.stage, "auto_paused")
+        self.assertTrue(self.collection.physics_paused)
+        self.assertEqual(self.collection.state_frames, frames)
+        self.control.key("r")
+        self.until(lambda: self.control.stage == "recording"
+                   and self.collection.state_frames > frames)
+
+    def test_each_tracking_loss_auto_rebinds_without_replacing_manual_checkpoint(self):
         from pico2_hands.collection_session import TeleopSnapshot
         from data_collector.recorder import validate_episode_path
         import h5py
@@ -203,7 +219,7 @@ class CollectionControlTests(unittest.TestCase):
         manual_frames = self.collection.state_frames
         self.until(lambda: self.collection.state_frames > manual_frames + 2)
         self.online = False
-        state = SimpleNamespace(tracked=False, generation=0, sequence=0, mode="follow",
+        state = SimpleNamespace(tracked=False, stable=False, generation=0, sequence=0, mode="follow",
                                 targets=self.app.plant.joint_command_targets().copy())
 
         def snapshot():
@@ -211,7 +227,7 @@ class CollectionControlTests(unittest.TestCase):
             now = time.monotonic_ns() - 1_000_000
             return TeleopSnapshot(state.generation, state.sequence, tuple(state.targets),
                                   now, now if state.tracked else now - 200_000_000,
-                                  state.tracked, state.tracked, not state.tracked,
+                                  state.tracked and state.stable, state.tracked, not state.tracked,
                                   0 if state.tracked else 1, ("live", "live"), state.mode, "")
 
         def pause():
@@ -229,7 +245,7 @@ class CollectionControlTests(unittest.TestCase):
         self.app.teleop = SimpleNamespace(snapshot=snapshot, pause=pause, rebind=rebind,
                                          follow=follow, close=lambda: None)
         for _ in range(2):
-            state.tracked = False
+            state.tracked = state.stable = False
             self.until(lambda: self.control.stage == "auto_paused")
             saved_frames = self.collection.state_frames
             saved_tick = self.app.plant.tick
@@ -244,11 +260,10 @@ class CollectionControlTests(unittest.TestCase):
             for _ in range(20):
                 self.cycle()
             self.assertEqual(self.control.stage, "auto_paused")
-            self.control.key("s")
-            self.control.key("d")
-            self.assertEqual(self.control.stage, "auto_paused")
-            self.control.key("r")
-            self.assertEqual(self.control.stage, "rebinding")
+            self.assertTrue(self.collection.physics_paused)
+            self.assertEqual(self.collection.state_frames, saved_frames)
+            state.stable = True
+            self.until(lambda: self.control.stage == "rebinding")
             self.assertEqual(self.collection.state_frames, saved_frames)
             self.assertEqual(self.app.plant.tick, saved_tick)
             np.testing.assert_array_equal(self.app.plant.data.qpos, saved_qpos)
@@ -258,7 +273,7 @@ class CollectionControlTests(unittest.TestCase):
             self.until(lambda: self.control.stage == "recording" and self.control.recovery == 4)
             self.assertIsNone(self.collection.snapshot()["auto_checkpoint_frames"])
             self.until(lambda: self.collection.state_frames > saved_frames + 2)
-        # First r after either loss does not overwrite the original manual point.
+        # Automatic loss recovery leaves the manual checkpoint intact.
         state.tracked = False
         self.control.key("d")
         self.until(lambda: self.control.stage == "rebinding")
@@ -267,7 +282,7 @@ class CollectionControlTests(unittest.TestCase):
             self.cycle()
         self.assertEqual(self.control.stage, "rebinding")
         self.assertTrue(self.collection.physics_paused)
-        state.tracked = True
+        state.tracked = state.stable = True
         self.until(lambda: self.control.stage == "recording" and self.control.recovery == 3)
         self.until(lambda: self.collection.state_frames > manual_frames + 2)
         self.control.key("r")
@@ -287,7 +302,7 @@ class CollectionControlTests(unittest.TestCase):
             self.cycle()
         self.assertEqual(self.control.stage, "rebinding")
         self.assertEqual(self.collection.state_frames, paused_frames)
-        state.tracked = True
+        state.tracked = state.stable = True
         self.until(lambda: self.control.stage == "recording" and self.control.recovery == 2)
         self.until(lambda: self.collection.state_frames > paused_frames + 2)
         final_frames = self.collection.state_frames

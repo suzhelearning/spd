@@ -4,6 +4,8 @@
 
 ## 兼容性
 
+在线仿真记录可独立恢复的完整场景物理轨迹；新文件另外记录实际应用的关节位置目标 `robot_target`，不保存原始网络包、完整 `ctrl` 数组或 RGB。WebXR 输入、相对绑定及 IK 由 `webxr.WebXRBridge`、`pico2_hands.collection_session.TeleopSession` 和统一 `CollectionControl` 编排。旧 state-only 文件与包含目标的文件均可恢复。离线处理由相邻 [data_process](../../data_process/README.md) 消费这些只读原始文件，本规范不定义其产物。
+
 - schema-v1 的机器人 qpos＋JPEG 文件不转换、覆盖或删除。
 - `recovery_transition=4` 和可选 `control_flags` 是 schema-v2 的 `collection_events` 扩展，不改变 trajectory 或每日配置。读取器必须接受值 `4`，不能将其判为损坏或改写为 `0`。
 - 旧文件缺少恢复字段时报告 `recovery_annotated=false`；缺少质量字段时报告 `control_flags_annotated=false`，不能据此断言旧输入正常。
@@ -21,14 +23,14 @@
 ```text
 <data_dir>/YYYYMMDD/
 ├── dataset_config.json
-├── episode_<UUID>.partial.h5
-└── episode_<UUID>.h5
+├── episode_YYYYMMDD_HHMMSS_ffffff.partial.h5
+└── episode_YYYYMMDD_HHMMSS_ffffff.h5
 ```
 
-日期在接受 start 时按本机日期固定，跨午夜不拆段；下一段使用新日期。单实例采集，输出目录不共享写入。当天 `dataset_config.json` 仅包含 `schema_version=2`、`robot_config=tianji_wuji2_v1`、`robot_joint_names`、`joint_unit=rad`、`physics_hz=480`、`state_rate_hz=60`；同日配置冲突时拒绝追加。模型、物体数和 qpos 维度可按段不同，以该段模型元数据为准。
+日期在接受 start 时以本机本地日期固定；文件名中的 `HHMMSS_ffffff` 是同一时刻的时分秒与微秒。跨午夜不拆段，下一段进入新日期；同名文件拒绝覆盖。单实例采集，不共享输出目录写入。当天 `dataset_config.json` 仅包含 `schema_version=2`、`robot_config=tianji_wuji2_v1`、`robot_joint_names`、`joint_unit=rad`、`physics_hz=480`、`state_rate_hz=60`；同日配置冲突时拒绝追加。不同场景的模型、物体数和 qpos 维度可以不同，由每段模型元数据定义。`--output` 优先于 `SPD_EPISODE_OUTPUT`，再使用采集配置的 data_dir；配置内相对路径相对配置文件解析。
 
 ```text
-episode_<UUID>.h5
+episode_YYYYMMDD_HHMMSS_ffffff.h5
 ├── @schema_version = 2
 ├── @robot_config = "tianji_wuji2_v1"
 ├── @task                          UTF-8 任务名称
@@ -52,6 +54,7 @@ episode_<UUID>.h5
     ├── qvel                       float64[N,nv]
     ├── robot_qpos                 float64[N,54]
     ├── robot_qvel                 float64[N,54]
+    ├── robot_target               可选 float64[N,54]，存在时为已应用的绝对关节位置目标
     ├── hand_contact               bool[N,2]
     ├── object_pose                float64[N,O,7]，仅 O>0
     ├── hand_object                bool[N,2,O]，仅 O>0
@@ -83,10 +86,13 @@ flags 是上次采样后所有物理步的按位 OR（首帧仅首步），同�
 
 ## 手–物接触语义
 
-- 手索引固定为 left、right，根 body 分别为 `l_wrist`、`r_wrist`，各自包含全部子树几何；物体来自 scene manifest 的 objects 列表并包含物体子树几何，二者子树不得重叠。
-- 每个物理步在 `mj_step` 后观察 solver-active（`efc_address` 非负）接触，并累计自上次 capture 以来的结果；首帧只覆盖首个物理步，之后通常覆盖 8 步。
-- `hand_object[n,s,o]` 表示区间内手 `s` 曾与物体 `o` 有有效接触，`hand_contact[n,s]` 是该物体维的逻辑 OR。没有任务物体时 `hand_contact` 恒 false，且不创建 `hand_object` 或 `object_pose`。
-- 不计机器人自碰撞和手与桌面／地面的接触。这些布尔值不是完整接触力，也不表示仅采样瞬间的接触。开段的 0 号手动保存点和后续手动点均允许接触。
+- 两个手索引固定为 left、right，根 body 分别为 `l_wrist`、`r_wrist`，包含其全部子树几何。
+- 物体来自 scene manifest 的 objects 列表，包含物体子树几何；手／物体子树必须互不重叠。
+- 每个物理步在 mj_step 后观察 solver-active 接触（efc_address 非负），累计从上次 capture 至今的接触。第一帧只覆盖首个物理步，之后通常覆盖 8 步。
+- `hand_object[n,s,o]` 表示该区间手 s 曾与物体 o 有有效接触；`hand_contact[n,s]` 是对应物体维的逻辑 OR。
+- 没有任务物体时 hand_contact 恒 false，不创建 hand_object 或 object_pose。
+- 不计机器人自碰撞、手与桌面／地面的接触。此布尔标签不等于完整接触力，也不声称只表示采样时刻的瞬时接触。
+- 开段在运动前建立完整 0 号保存点，正常采集中 `r` 可更新；两者都允许接触。本地失跟踪后稳定输入触发自动重新绑定，不创建或覆盖手动保存点。
 
 ## 模型快照与元数据
 
@@ -108,6 +114,8 @@ metadata JSON 使用排序键、紧凑分隔符、UTF-8、不转义非 ASCII 且
 
 ## 发布、partial 与失败
 
+Quest／PICO 共用 `pixi run spd-quest-teleop --height-m HEIGHT`／`pixi run spd-pico-teleop --height-m HEIGHT`。按键由状态解释：首次和新任务按 `r` 开始；本地失跟踪自动暂停后由稳定输入触发重新接手；运动中 `r` 存检查点、`s` 人工暂停、`d` 回退并自动重新绑定续采；人工暂停中 `s` 重新绑定继续、`r` 保存整条、`d` 丢弃整条。本地失跟踪续采、`s` 继续和运动中 `d` 回退都无需额外 `r`；外部 DDS 目标失效仍需发布端对齐后按 `r`。自动接手不回退或覆盖检查点。手指平滑限速、输入新鲜度、非有限拒绝及有限越限饱和规则不变。不提供远程 Trigger 控制；本地模式通过进程内 snapshot() 读取状态。
+
 有界队列每次传递一整帧自有快照；`append_frame` 后不得再修改该帧数组。trajectory、恢复标签和 flags 必须同队列写入或裁剪，失败写入不得留下半行，最终文件只保留选中的前缀及其续采，不保留失败分支为示范。
 
 只有关闭文件并校验行数、标签、类型、有限值、时钟、模型、metadata 和状态投影后，才标记 `complete=true` 并发布 `.h5`。中断、错误、漏 tick、队列溢出以及源/求解故障保留 `.partial.h5`；`max_frames=0` 表示不限，达到正数上限时可发布 `complete=true, success=false`，只有操作者显式保存才标记 `success=true`。公开校验器拒绝 `.partial.h5` 与 `complete=false`；内部 `allow_partial=True` 仅用于发布前验证，`valid=true` 不表示完整或成功。意外终止留下的未关闭 HDF5 是失败数据，不能改扩展名绕过检查。
@@ -122,8 +130,20 @@ metadata JSON 使用排序键、紧凑分隔符、UTF-8、不转义非 ASCII 且
 
 最终轨迹不含从失败现场跳回检查点的状态；训练窗口不得跨 `rewind` 边界或任何新的非零恢复阶段起点，即使跳帧略过该点。文件只记录最终保留轨迹，不是所有尝试的审计日志。
 
-## 独立状态重建
+## 独立恢复与当前边界
 
-回放先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 `MjData`，赋值 qpos/qvel 与存在的 act/mocap/equality 状态，设置 `data.time` 后调用普通 `mj_forward`；不推进物理、不恢复或下发命令、不创建相机渲染器，也不引入 ROS 原生依赖。它核对机器人状态投影和任务物体世界位姿，报告最大误差；四元数 `q` 与 `-q` 视作同一方向。
+```bash
+pixi run validate_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5
+pixi run replay_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5
+pixi run replay_episode /path/to/episode_YYYYMMDD_HHMMSS_ffffff.h5 --expected-model-sha256 <SHA256>
+```
 
-这只是独立状态重建，不是控制循环检查点：文件不保存 ctrl、外加力、求解器 warmstart 等全部推进历史。消费者必须从记录的实际状态开始，不能重跑目标控制来猜测物体轨迹。
+`replay_episode` 先校验完整文件，再从内嵌 MJB 加载独立模型。每帧重置 `MjData`、赋值 qpos/qvel 与存在的 act/mocap/equality 状态、设置 `data.time`，然后调用普通 `mj_forward`；不推进物理，不恢复或下发命令，不创建相机渲染器，不引入 ROS 原生依赖。它核对机器人状态投影和所有任务物体世界位姿，报告最大误差；四元数 `q` 与 `-q` 视作相同方向。对于新材料模型，这只是记录姿态重建，不计算材料策略下的求解力；续跑或接触力诊断须显式调用材料感知接口。
+
+这是独立状态重建，不是恢复原控制循环的检查点：即使新文件含 `robot_target`，也未保存完整 `ctrl`、外加力、求解器 warmstart 等全部推进历史。消费者必须从记录的实际状态开始，不能重跑目标控制来猜测物体轨迹。
+
+采集侧已实现进程内检查点／回退，不实现采后接触裁剪、30 Hz 重采样或动作标签。旧 `align_30hz`／`filter_contacts` 入口已移除；CONTROL-TYPE approach／alignment／grasp／insertion 辅助及其单独标注是**未来计划，尚未实现**。当前提示仅为任务／状态／检查点／手指等待，现有恢复／flags 不是这些辅助动作标签。
+
+## 后处理交接
+
+render schema 2 和训练读取规范位于相邻 [data_process 文档](../../data_process/docs/render-schema-v2.md)，不属于本在线原始轨迹协议。VLA 导出与 Q50 压缩仍未实现，约定仅见 [data_process VLA 规范](../../data_process/docs/schema-vla.md)。

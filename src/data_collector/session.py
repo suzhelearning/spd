@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import date
+from datetime import datetime
 import json
 import time
 from pathlib import Path
@@ -172,8 +172,9 @@ class CollectionSession:
         self.operation = operation
         try:
             if operation == "start":
-                episode_id = uuid4().hex
-                episode_dir = self.config.data_dir / date.today().strftime("%Y%m%d")
+                started_at = datetime.now()
+                episode_id = started_at.strftime("%Y%m%d_%H%M%S_%f")
+                episode_dir = self.config.data_dir / started_at.strftime("%Y%m%d")
                 self.episode_path = str(episode_dir / f"episode_{episode_id}.partial.h5")
                 self._started_ns = self._ended_ns = 0
                 self.state_frames = 0
@@ -298,6 +299,13 @@ class CollectionSession:
                 self._abort(str(self.recorder.error))
             elif self.state == "recording" and not self.executor.mailbox.enabled:
                 self._abort("Control disabled")
+
+    def control_due(self, next_tick: int) -> bool:
+        """Apply 60 Hz targets on the same physical ticks that will be recorded."""
+        stride = PHYSICS_HZ // self.config.state_rate_hz
+        if self.state == "recording":
+            return self._first_tick is None or (next_tick - self._first_tick) % stride == 0
+        return next_tick % stride == 0
 
     def tick(self, step: Any, *, recovery: int = 0, control_flags: int = 0) -> None:
         """Aggregate interval quality and recovery (4=tracking-loss rebind)."""

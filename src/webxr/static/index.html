@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SPD · 沉浸式采集</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/client.js"></script>
+</head>
+<body>
+  <main>
+    <section class="viewport" aria-label="真实 MuJoCo 场景观察窗口">
+      <canvas id="scene" aria-label="场景三维视图"></canvas>
+      <div class="view-label">桌面观察视角 · 拖动旋转 / 滚轮缩放 / 双击复位</div>
+      <div id="scene-message" class="scene-message" role="status">正在连接采集服务…</div>
+    </section>
+    <aside>
+      <header><span class="eyebrow">TIANJI + WUJI HAND2</span><h1>沉浸式采集</h1></header>
+      <div id="connection" role="status">正在连接…</div>
+      <button id="connect" hidden>重新连接</button>
+      <h2 id="task-title">等待任务</h2>
+      <p id="task-goal">加载真实场景后显示任务目标。</p>
+      <dl>
+        <dt>采集状态</dt><dd id="stage">等待服务</dd>
+        <dt>手部跟踪</dt><dd id="tracking">桌面观察模式 · 不发送头手输入</dd>
+        <dt>轨迹帧 / 检查点</dt><dd id="frames">—</dd>
+        <dt>控制接入</dt><dd id="control">—</dd>
+      </dl>
+      <p id="duration" class="hint">参考时长（论文表2均值）：未报告 · 已录 —</p>
+      <p id="notice" role="status"></p>
+      <p id="error" class="error" role="alert" hidden></p>
+      <section aria-label="头显会话">
+        <button id="enter-vr" class="primary" disabled>正在检测 WebXR…</button>
+        <p id="xr-support" class="hint">需要支持手部追踪的 Quest 浏览器。</p>
+      </section>
+      <section aria-label="采集操作">
+        <h2>踏板 / 键盘 / 观察员操作</h2>
+        <div class="controls">
+          <button data-key="r" disabled><kbd>R</kbd> 开始 / 检查点 / 保存</button>
+          <button data-key="s" disabled><kbd>S</kbd> 暂停 / 恢复</button>
+          <button data-key="d" disabled><kbd>D</kbd> 回退 / 暂停时丢弃</button>
+          <button data-key="q" disabled><kbd>Q</kbd> 停止</button>
+        </div>
+        <p class="hint">进入 VR 不会开始运动。保持双手稳定后按 R 开始；录制中 R 更新检查点，D 回退后自动重新接手。S 暂停后，R 保存成功，D 丢弃整段。跟踪丢失自动暂停后，头和双腕重新稳定即可自动接手，无需再按 R。</p>
+      </section>
+      <footer>仅允许一个控制页面。使用头显时请关闭其他连接页面。Quest 可通过 ADB 端口转发访问 http://localhost:8080；远程连接需要 HTTPS。所有渲染依赖均保存在本机。</footer>
+    </aside>
+  </main>
+  <noscript>此页面需要启用 JavaScript 才能渲染场景和启动 WebXR。</noscript>
+</body>
+</html>

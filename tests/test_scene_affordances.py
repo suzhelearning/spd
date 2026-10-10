@@ -49,6 +49,9 @@ class BottleAffordanceTests(unittest.TestCase):
             selected = [obj for obj in scene.objects if obj.class_name == 'bottle']
             self.assertEqual(len(selected), 1, f'seed={scene.seed}')
             self.assertEqual(sum(obj.class_name == 'bin' for obj in scene.objects), 1)
+            bin_object = next(obj for obj in scene.objects if obj.class_name == 'bin')
+            self.assertLessEqual(.4, bin_object.position[0])
+            self.assertLessEqual(bin_object.position[0], .6)
             bottle = selected[0]
             bottles.append(bottle)
             plant = PlantController(scene_result=scene)

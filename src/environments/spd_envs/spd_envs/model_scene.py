@@ -64,7 +64,7 @@ def write_scene_model(base_model: str | Path, result: SceneBuildResult, output_m
         if child.tag == "geom" and any(existing.attrib.get("name") == child.attrib.get("name") for existing in worldbody.findall("geom")):
             raise SceneResetError(f"duplicate scene geom: {child.attrib.get('name')}")
         worldbody.append(deepcopy(child))
-    apply_material_policy(root, result.objects)
+    apply_material_policy(root, result.objects, result.material_coefficients)
     output_model.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(output_model, encoding="utf-8", xml_declaration=True)
     try:

@@ -181,10 +181,17 @@ class RandomTaskEpisodeTests(unittest.TestCase):
         self.app = self.make_app(scene=None, task="bottles/toss_in_bin", repeat_task=True)
         previous_seed = self.app.args.seed
         previous_table = self.app.plant.scene_manifest["table"]
+        saved_paths = set()
         for key in ("r", "d", "r"):
             with self.subTest(completion=key):
                 self.start()
-                self.finish_and_advance(key)
+                saved = self.finish_and_advance(key)
+                if key == "r":
+                    path = Path(saved)
+                    self.assertRegex(path.name, r"^episode_\d{8}_\d{6}_\d{6}\.h5$")
+                    self.assertEqual(path.parent.name, path.name[8:16])
+                    self.assertNotIn(path, saved_paths)
+                    saved_paths.add(path)
                 self.assertEqual((self.app.args.scene, self.app.args.task), ("bottles", "toss_in_bin"))
                 self.assertNotEqual(self.app.args.seed, previous_seed)
                 self.assertNotEqual(self.app.plant.scene_manifest["table"], previous_table)

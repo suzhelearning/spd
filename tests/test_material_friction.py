@@ -1,32 +1,50 @@
 """Material-aware contacts preserve geometry and change actual solver behavior."""
 import copy
+import os
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 import mujoco
 import numpy as np
 
 from _spd_native import material_forward, material_step
 from simulation.scene import build_selected_scene
+from spd_envs.physical_materials import MATERIAL_IDS, save_material_coefficients
 
 
 # IDs follow the portable model policy: unknown, wood, PE, glaze, raw, iron,
 # woven polyester, silicone. Expected values are independent of the producer.
 APPROVED_PAIRS = (
-    (1, 1, .4), (2, 2, .2), (1, 2, .3), (1, 3, .3), (1, 4, .4),
-    (1, 5, .4), (2, 3, .2), (2, 4, .25), (2, 5, .2), (3, 3, .25),
-    (3, 4, .35), (4, 4, .5), (3, 5, .25), (4, 5, .35), (5, 5, .3),
-    (6, 1, .5), (6, 2, .3), (6, 3, .35), (6, 4, .45), (6, 5, .4),
-    (7, 1, .8), (7, 2, .8), (7, 3, .7), (7, 4, .8), (7, 5, .7),
-    (7, 6, .8),
+    (1, 1, .6), (2, 2, .4), (1, 2, .5), (1, 3, .5), (1, 4, .6),
+    (1, 5, .6), (2, 3, .4), (2, 4, .5), (2, 5, .4), (3, 3, .5),
+    (3, 4, .6), (4, 4, .7), (3, 5, .5), (4, 5, .6), (5, 5, .5),
+    (6, 1, .7), (6, 2, .5), (6, 3, .6), (6, 4, .7), (6, 5, .6),
+    (7, 1, .9), (7, 2, .9), (7, 3, .9), (7, 4, .9), (7, 5, .9),
+    (7, 6, .9),
 )
 
 
 class MaterialFrictionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # The editable repository config is user state, not this regression's fixture.
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        config = Path(directory.name) / "material_friction.yaml"
+        names = {material_id: name for name, material_id in MATERIAL_IDS.items()}
+        save_material_coefficients(
+            {(names[first], names[second]): mu for first, second, mu in APPROVED_PAIRS},
+            config,
+        )
+        override = patch.dict(os.environ, {
+            "SPD_MATERIAL_FRICTION_CONFIG": str(config),
+            "SPD_TASK_MATERIAL_FRICTION_DIR": str(Path(directory.name) / "profiles"),
+        })
+        override.start()
+        cls.addClassCleanup(override.stop)
         # Use the real scene producer's matrix, not a test-only policy.
         scene = build_selected_scene(None, "jenga/hollow_tower", 0)
         cls.scene_xml = scene.xml_string()
@@ -96,7 +114,7 @@ class MaterialFrictionTests(unittest.TestCase):
                                     7, region=region, direction=(0, face, 0),
                                     rotated=rotated, reverse=reverse, name=f"{side}_{part}")
                                 contact = self.assert_contact_mu(
-                                    model, data, .8 if face == front else .17)
+                                    model, data, .9 if face == front else .17)
                                 observed_orders.add(int(contact.geom[0]) == model.geom("surface").id)
         self.assertEqual(observed_orders, {False, True})
 
@@ -109,11 +127,11 @@ class MaterialFrictionTests(unittest.TestCase):
                     with self.subTest(side=side, axis=axis, sign=sign):
                         model, data = self.touching(
                             7, direction=direction, rotated=True, name=f"{side}_distal")
-                        self.assert_contact_mu(model, data, .8)
+                        self.assert_contact_mu(model, data, .9)
 
     def test_ceramic_bottom_is_raw_but_sides_and_top_are_glazed(self):
-        for direction, expected in (((0, 0, -1), .4), ((0, 0, 1), .3),
-                                    ((1, 0, 0), .3), ((0, 1, 0), .3)):
+        for direction, expected in (((0, 0, -1), .6), ((0, 0, 1), .5),
+                                    ((1, 0, 0), .5), ((0, 1, 0), .5)):
             for rotated in (False, True):
                 for reverse in (False, True):
                     with self.subTest(direction=direction, rotated=rotated, reverse=reverse):
@@ -165,9 +183,9 @@ class MaterialFrictionTests(unittest.TestCase):
         self.assertTrue(object_contacts)
         self.assertTrue(table_contacts)
         for contact in object_contacts:
-            np.testing.assert_allclose(contact.friction[:2], [.4, .4], atol=1e-12)
+            np.testing.assert_allclose(contact.friction[:2], [.6, .6], atol=1e-12)
         for contact in table_contacts:
-            np.testing.assert_allclose(contact.friction[:2], [.5, .5], atol=1e-12)
+            np.testing.assert_allclose(contact.friction[:2], [.7, .7], atol=1e-12)
 
     def sliding_model(self):
         return self.model('''<geom name="floor" type="plane" size="1 1 0.1" user="0 0 2 0"/>
