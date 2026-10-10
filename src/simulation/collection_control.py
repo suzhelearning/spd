@@ -85,7 +85,9 @@ class CollectionControl:
         if self.collection.state not in {"recording", "paused"}:
             return
         if automatic:
-            self._stage("auto_paused", "跟踪丢失：保持当前姿态；摆好现实姿态后按 r 重新接手")
+            self._stage("auto_paused", ("跟踪丢失：保持当前姿态；头和双腕稳定后自动重新接手"
+                                        if self.teleop is not None else
+                                        "外部目标失效：现场已冻结；发布端对齐后按 r 重新接手"))
         else:
             self._stage("paused", "人工暂停：s 重新绑定继续；r 保存整条并进入下一条；d 丢弃整条并进入下一条")
 
@@ -184,10 +186,9 @@ class CollectionControl:
                 self._begin_bind(1)
             return
         if self.stage == "auto_paused":
-            if key == "r":
-                ready = self.teleop.snapshot().can_bind if self.teleop is not None else self._external_ready()
-                if not ready:
-                    self.notice = "跟踪尚未稳定；保持头和双腕可见，摆好姿态后再按 r 重新接手"
+            if key == "r" and self.teleop is None:
+                if not self._external_ready():
+                    self.notice = "外部目标尚未就绪；发布端对齐后按 r 重新接手"
                     return
                 self._begin_bind(4)
             return
@@ -291,6 +292,10 @@ class CollectionControl:
                 self._pause(automatic=True)
                 return
             self._activate(now)
+            return
+        if self.stage == "auto_paused":
+            if snapshot is not None and snapshot.can_bind:
+                self._begin_bind(4)
             return
         if self.stage != "recording":
             return

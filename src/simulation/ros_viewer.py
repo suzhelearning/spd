@@ -31,7 +31,7 @@ _STATE_ZH = {
     "reverting": "回退中", "saving": "保存中",
     "aborting": "保留未完成数据", "discarding": "结束中", "error": "异常",
     "binding": "等待稳定跟踪并绑定", "rebinding": "冻结重绑定",
-    "auto_paused": "跟踪丢失，等待 r 重新接手",
+    "auto_paused": "输入失效，已暂停",
 }
 _NOTICE_ZH = {
     "No checkpoint in this episode": "本段还没有检查点",
@@ -333,7 +333,7 @@ class RosViewerApp:
         if stage == "idle":
             values["双手"] = "机器人停在 Home；双手放在腰间，按 r 重新绑定并开始"
         if auto_checkpoint is not None:
-            values["失跟踪现场"] = f"帧 {auto_checkpoint}；r 仅重新接手，不回退、不更新保存点"
+            values["失跟踪现场"] = f"帧 {auto_checkpoint}；重新接手不回退、不更新保存点"
         error = self.collection.error or mailbox.last_reject_reason
         if local is not None:
             error = error or local.fault
@@ -386,8 +386,11 @@ class RosViewerApp:
                 print(f"SPD subscriber ready: {TOPIC}; 外部源独立运行，不提供本地相对绑定保证。", flush=True)
             else:
                 print("SPD local collection ready: 本进程拥有 PICO 接收、双臂/双手求解与采集控制。", flush=True)
-            print("待开始/失跟踪：r 开始或重新接手；运动：s 暂停，r 存检查点，d 回退并自动续采；"
-                  "人工暂停：s 重新绑定继续，r 保存整条，d 丢弃整条。s 继续和 d 回退均无需额外按 r。"
+            print("待开始：r 开始；"
+                  + ("本地失跟踪：稳定后自动重新接手；" if self.teleop is not None
+                     else "外部目标失效：对齐后按 r 重新接手；")
+                  + "运动：s 暂停，r 存检查点，d 回退并自动续采；"
+                  "人工暂停：s 重新绑定继续，r 保存整条，d 丢弃整条。"
                   "单键按下立即生效；q/Esc/Ctrl+C 退出但不保存。"
                   "保存或丢弃完成后生成下一条场景、Home 等待 r。", flush=True)
             self._announce_task()
