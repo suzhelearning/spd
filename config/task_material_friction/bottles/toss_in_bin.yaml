@@ -10,7 +10,7 @@ pairs:
 - materials:
   - polyethylene
   - polyethylene
-  sliding_mu: 0.45
+  sliding_mu: 0.2
 - materials:
   - wood
   - polyethylene

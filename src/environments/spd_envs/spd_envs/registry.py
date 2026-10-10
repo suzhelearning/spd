@@ -66,7 +66,7 @@ PROMPTS = {
     ("cups", "pyramid"): "Build a pyramid from the cups.",
     ("cups", "stack_two_threes"): "Build two stacks of three cups.",
     ("cups", "unstack"): "Unstack the nested cups.",
-    ("bottles", "toss_in_bin"): "Toss the bottle into the bin.",
+    ("bottles", "toss_in_bin"): "Toss the bottles into the bin.",
 }
 TASK_TEXT_ZH = {
     ("jenga", "hollow_tower"): ("空心积木塔", "用积木搭建一座空心塔。"),
@@ -89,7 +89,7 @@ TASK_TEXT_ZH = {
     ("cups", "pyramid"): ("杯子金字塔", "用杯子搭建金字塔。"),
     ("cups", "stack_two_threes"): ("两组三杯叠放", "将杯子叠成两组，每组三个。"),
     ("cups", "unstack"): ("拆分套叠杯", "将套叠在一起的杯子逐个分开。"),
-    ("bottles", "toss_in_bin"): ("投瓶入箱", "将瓶子投入收纳箱。"),
+    ("bottles", "toss_in_bin"): ("投瓶入箱", "将两个瓶子投入收纳箱。"),
 }
 
 

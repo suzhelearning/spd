@@ -16,4 +16,7 @@ set +u
 source "$root/.ros/install/setup.sh"
 set -u
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_DOMAIN_ID=120
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export ROS_STATIC_PEERS=""
 exec "$root/.ros/install/lib/spd_native/spd_executor" "$@"

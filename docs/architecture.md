@@ -127,7 +127,7 @@ MJB 的 custom numeric `spd_material_friction` 保存版本 2 的 row-major 8×8
 
 每次接受 start 均以本机开段时间生成 `YYYYMMDD/episode_YYYYMMDD_HHMMSS_ffffff.partial.h5`；完成并校验后发布同名 `.h5`。跨午夜不拆当前段，下一段重新选择日期；同日 `dataset_config.json` 只约束模型无关的 schema 契约。输出优先级为 `--output`、`SPD_EPISODE_OUTPUT`、采集配置的 `data_dir`。回退只保留选中的前缀和续采，主机单调时间不倒退；`recovery_transition` 和 `control_flags` 与轨迹同事务写入或裁剪，重新接手本身不生成 `rewind`。
 
-任务注册为六类 18 项：17 项来自论文 Table 2，另加 Jenga playing。物体资产、位置、质量、摩擦、桌高和桌距的随机结果都写入 manifest；任务只提示目标，成功由操作者在人工暂停后按 `r` 显式确认，没有自动任务策略或评分。`bottles/toss_in_bin` 每条生成一个自由运动瓶子和一个收纳箱，保留瓶子的种子化位置/姿态、六种资产型号与半径/高度随机采样；箱体最终世界 X 坐标采样于 `0.40–0.60 m`，不会因桌距平移而越界。`--repeat-task` 固定任务类型但每段仍使用新 seed 与新布局；暂停和回退不重采样，保存或丢弃完成后才生成新的 Home 场景并清空授权。
+任务注册为六类 18 项：17 项来自论文 Table 2，另加 Jenga playing。物体资产、位置、质量、摩擦、桌高和桌距的随机结果都写入 manifest；任务只提示目标，成功由操作者在人工暂停后按 `r` 显式确认，没有自动任务策略或评分。`bottles/toss_in_bin` 每条生成两个自由运动瓶子和一个收纳箱，保留两只瓶子分别种子化的位置/姿态、六种资产型号与半径/高度随机采样；箱体最终世界 X 坐标采样于 `0.40–0.60 m`，不会因桌距平移而越界。`--repeat-task` 固定任务类型但每段仍使用新 seed 与新布局；暂停和回退不重采样，保存或丢弃完成后才生成新的 Home 场景并清空授权。
 
 `replay_episode` 从内嵌 MJB 在独立 `MjData` 中逐帧恢复并普通前向计算，验证机器人投影和物体位姿；它不调用 `mj_step`、不发送目标、不渲染，也不是能重启原控制循环的检查点。SPD 生成、校验并通过 `spd-web` 网页回放原始 schema-v2 轨迹，不在线保存 RGB、完整执行器 `ctrl`、动作或训练文件。
 

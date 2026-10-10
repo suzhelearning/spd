@@ -534,7 +534,11 @@ class ProceduralSceneBuilder:
             if task == "unstack":
                 return [("cup", (0.45, 0.0, TABLE_Z + i * CUP_NEST_STEP), True) for i in range(3)]
         if scene == "bottles" and task == "toss_in_bin":
-            return [("bottle", (0.22, -0.20, TABLE_Z), False), ("bin", (0.59, 0.0, TABLE_Z), True)]
+            return [
+                ("bottle", (0.22, -0.20, TABLE_Z), False),
+                ("bottle", (0.22, 0.20, TABLE_Z), False),
+                ("bin", (0.59, 0.0, TABLE_Z), True),
+            ]
         raise KeyError(f"unknown SPD task: {scene}/{task}")
 
     @staticmethod

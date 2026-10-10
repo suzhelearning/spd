@@ -41,32 +41,44 @@ class DrawerAffordanceTests(unittest.TestCase):
 
 
 class BottleAffordanceTests(unittest.TestCase):
-    def test_single_free_bottle_keeps_seeded_position_and_shape_variation(self):
+    def test_two_free_bottles_keep_seeded_positions_and_shape_variation(self):
         scenes = [build_selected_scene(None, 'bottles/toss_in_bin', seed)
                   for seed in range(4)]
-        bottles = []
+        bottle_sets = []
         for scene in scenes:
             selected = [obj for obj in scene.objects if obj.class_name == 'bottle']
-            self.assertEqual(len(selected), 1, f'seed={scene.seed}')
+            self.assertEqual(len(selected), 2, f'seed={scene.seed}')
             self.assertEqual(sum(obj.class_name == 'bin' for obj in scene.objects), 1)
             bin_object = next(obj for obj in scene.objects if obj.class_name == 'bin')
             self.assertLessEqual(.4, bin_object.position[0])
             self.assertLessEqual(bin_object.position[0], .6)
-            bottle = selected[0]
-            bottles.append(bottle)
+            bottle_sets.append(selected)
             plant = PlantController(scene_result=scene)
             try:
-                body = plant.model.body(bottle.name)
-                self.assertEqual(int(plant.model.body_jntnum[body.id]), 1)
-                joint_id = int(plant.model.body_jntadr[body.id])
-                self.assertEqual(int(plant.model.jnt_type[joint_id]), 0)  # MuJoCo free joint.
-                self.assertAlmostEqual(bottle.position[2], scene.manifest()['table']['top_z_m'])
+                for bottle in selected:
+                    body = plant.model.body(bottle.name)
+                    self.assertEqual(int(plant.model.body_jntnum[body.id]), 1)
+                    joint_id = int(plant.model.body_jntadr[body.id])
+                    self.assertEqual(int(plant.model.jnt_type[joint_id]), 0)  # MuJoCo free joint.
+                    self.assertAlmostEqual(bottle.position[2], scene.manifest()['table']['top_z_m'])
             finally:
                 plant.close()
-        self.assertNotEqual(bottles[0].position[:2], bottles[1].position[:2])
-        self.assertNotEqual(bottles[0].yaw_rad, bottles[1].yaw_rad)
-        self.assertNotEqual(bottles[0].size, bottles[1].size)
-        self.assertNotEqual({bottle.asset_id for bottle in bottles}, {bottles[0].asset_id})
+        self.assertNotEqual(
+            {bottle.position[:2] for bottle in bottle_sets[0]},
+            {bottle.position[:2] for bottle in bottle_sets[1]},
+        )
+        self.assertNotEqual(
+            {bottle.yaw_rad for bottle in bottle_sets[0]},
+            {bottle.yaw_rad for bottle in bottle_sets[1]},
+        )
+        self.assertNotEqual(
+            {bottle.size for bottle in bottle_sets[0]},
+            {bottle.size for bottle in bottle_sets[1]},
+        )
+        self.assertNotEqual(
+            {bottle.asset_id for bottles in bottle_sets for bottle in bottles},
+            {bottle_sets[0][0].asset_id},
+        )
         repeated = build_selected_scene(None, 'bottles/toss_in_bin', 0)
         self.assertEqual(repeated.manifest(), scenes[0].manifest())
 

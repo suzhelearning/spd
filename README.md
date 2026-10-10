@@ -110,9 +110,9 @@ pixi run --locked spd-webxr --height-m 1.75 --task mugs/hang_mug --repeat-task
 | 杯子 | `cups/pyramid` | 杯子金字塔 |
 | 杯子 | `cups/stack_two_threes` | 两组三杯叠放 |
 | 杯子 | `cups/unstack` | 拆分套叠杯 |
-| 瓶子 | `bottles/toss_in_bin` | 单个自由运动瓶子投入收纳箱 |
+| 瓶子 | `bottles/toss_in_bin` | 两个自由运动瓶子投入收纳箱 |
 
-`bottles/toss_in_bin` 每条只生成 1 个自由运动瓶子和 1 个收纳箱，瓶子位置、朝向、6 种瓶型以及半径／高度均按 seed 随机采样。默认随机桌距下，收纳箱底部中心的世界坐标 X（机器人前方）在 `0.40–0.60 m` 内采样；场景生成检查箱体与瓶子不重叠且箱体留在桌面上。显式 `--table-distance` 会平移整张桌子及任务物体，因此收纳箱可能超出该默认 X 范围。
+`bottles/toss_in_bin` 每条生成 2 个自由运动瓶子和 1 个收纳箱。两个瓶子的位置、朝向、6 种瓶型以及半径／高度均按 seed 随机采样。默认随机桌距下，收纳箱底部中心的世界坐标 X（机器人前方）在 `0.40–0.60 m` 内采样；场景生成检查两个瓶子与箱体之间不重叠且箱体留在桌面上。显式 `--table-distance` 会平移整张桌子及任务物体，因此收纳箱可能超出该默认 X 范围。
 
 ## 3. 按键、暂停与恢复
 
